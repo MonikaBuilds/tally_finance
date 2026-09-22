@@ -18,6 +18,8 @@ Financial calculation logic is not being redesigned during this
 modularization.
 """
 
+import re
+
 from app.financial.calculations import normalize_account_name
 
 from app.tally.parsers.common import (
@@ -27,6 +29,33 @@ from app.tally.parsers.common import (
     _first_text,
     format_tally_date,
 )
+
+
+_TRADING_PREFIX_RE = re.compile(r"^(add:|less:)\s*", re.IGNORECASE)
+
+
+def _strip_trading_prefix(name):
+    return _TRADING_PREFIX_RE.sub("", name or "").strip()
+
+
+def _move_closing_stock_last(rows):
+    """
+    Tally's raw XML feed emits trading-section rows in a different order
+    than Tally's own screen: 'Less: Closing Stock' arrives right after
+    Purchase Accounts, before Direct Expenses. But Tally always
+    *displays* Closing Stock as the last Dr-side line, after Direct
+    Expenses. Re-order the left column to match what Tally shows.
+    """
+    closing = []
+    rest = []
+
+    for row in rows:
+        if _strip_trading_prefix(row["name"]).lower() == "closing stock":
+            closing.append(row)
+        else:
+            rest.append(row)
+
+    return rest + closing
 
 
 # ============================================================
@@ -333,11 +362,25 @@ def parse_profit_loss(xml_text: str):
         """
         Convert an internal entry into the left/right row structure
         expected by the existing frontend.
+
+        'Less:' is a real operator, not decoration - it means "subtract
+        from whichever side the raw sign would put it on", which is the
+        same as placing it on the *opposite* side. 'Add:' needs no
+        special handling; a naturally positive/negative amount already
+        lands on the correct side by sign alone.
         """
-        side = (
+        naive_side = (
             "right"
             if entry["amount"] >= 0
             else "left"
+        )
+
+        is_less = (entry["name"] or "").strip().lower().startswith("less:")
+
+        side = (
+            ("left" if naive_side == "right" else "right")
+            if is_less
+            else naive_side
         )
 
         row = {
@@ -386,6 +429,10 @@ def parse_profit_loss(xml_text: str):
 
         trading_left, trading_right = _split(
             trading_entries
+        )
+
+        trading_left = _move_closing_stock_last(
+            trading_left
         )
 
         total_left = round(
@@ -448,12 +495,43 @@ def parse_profit_loss(xml_text: str):
 
             carry_side = "left"
 
+        # Tally shows an unlabelled subtotal row right after the trading
+        # section, on both sides, before the Indirect Expenses / P&L
+        # section starts. It's guaranteed to be equal on both sides by
+        # construction (that's exactly what Gross Profit c/o balances),
+        # so one shared amount serves both columns.
+        trading_subtotal = round(
+            sum(
+                row["amount"]
+                for row in trading_left
+            ),
+            2,
+        )
+
         left_rows.extend(
             trading_left
         )
 
+        left_rows.append(
+            {
+                "name": "",
+                "amount": trading_subtotal,
+                "is_group": True,
+                "is_subtotal": True,
+            }
+        )
+
         right_rows.extend(
             trading_right
+        )
+
+        right_rows.append(
+            {
+                "name": "",
+                "amount": trading_subtotal,
+                "is_group": True,
+                "is_subtotal": True,
+            }
         )
 
     else:
@@ -534,10 +612,28 @@ def parse_profit_loss(xml_text: str):
     left_rows.extend(pl_left)
     right_rows.extend(pl_right)
 
+    final_total_left = round(
+        sum(
+            row["amount"]
+            for row in pl_left
+        ),
+        2,
+    )
+
+    final_total_right = round(
+        sum(
+            row["amount"]
+            for row in pl_right
+        ),
+        2,
+    )
+
     return {
         "success": True,
         "left": left_rows,
         "right": right_rows,
+        "total_left": final_total_left,
+        "total_right": final_total_right,
         "summary": {
             "trading_income_total": trading_income_total,
             "trading_expense_total": trading_expense_total,
