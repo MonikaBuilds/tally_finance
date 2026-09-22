@@ -1,0 +1,46 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Secrets / environment files
+.env
+.env.*
+!.env.example
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local authentication databases
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+
+# Test-generated databases
+backend/tests/.test_data/
+
+# Logs
+*.log
+
+# Coverage / caches
+.coverage
+htmlcov/
+.mypy_ cache/
+.ruff_cache/

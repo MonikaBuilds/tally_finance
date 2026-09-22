@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+pydantic
+pydantic-settings
+pytest
+openpyxl
+reportlab
+
+PyJWT 
+google-genai
+pytest-asyncio
+
+# database
+mysql-connector-python
