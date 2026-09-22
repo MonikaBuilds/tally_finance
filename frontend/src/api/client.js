@@ -88,6 +88,19 @@ export async function apiPost(path, body) {
   return handleResponse(response);
 }
 
+export async function apiPatch(path, body) {
+  const response = await fetch(
+    `${API_BASE_URL}${path}`,
+    {
+      method: "PATCH",
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    }
+  );
+
+  return handleResponse(response);
+}
+
 export async function apiDelete(path) {
   const response = await fetch(
     `${API_BASE_URL}${path}`,

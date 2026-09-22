@@ -1,4 +1,4 @@
-import os
+﻿import os
 import uuid
 from dataclasses import dataclass
 
@@ -195,7 +195,52 @@ def delete_user(
     finally:
         cursor.close()
         connection.close()
-        
+
+def set_user_active_status(
+    user_id: str,
+    is_active: bool,
+) -> bool:
+    """
+    Activate or deactivate a user without deleting the account.
+
+    Returns True when the user exists and was updated.
+    Returns False when the user does not exist.
+    """
+    clean_user_id = user_id.strip()
+
+    if not clean_user_id:
+        return False
+
+    connection = _connect()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET is_active = %s
+            WHERE user_id = %s
+            """,
+            (
+                is_active,
+                clean_user_id,
+            ),
+        )
+
+        updated = cursor.rowcount > 0
+
+        connection.commit()
+
+        return updated
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
+
 def get_user_by_username(
     username: str,
 ) -> StoredUser | None:

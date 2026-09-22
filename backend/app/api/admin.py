@@ -12,9 +12,11 @@ from app.security.permissions import (
     require_admin,
     role_exists,
 )
+
 from app.security.user_store import (
     create_user,
     get_all_users,
+    set_user_active_status,
 )
 
 
@@ -43,6 +45,9 @@ class AdminUserResponse(BaseModel):
 
 class AssignPermissionRequest(BaseModel):
     permission_code: str
+
+class UpdateUserStatusRequest(BaseModel):
+    is_active: bool
 
 
 class CreateUserRequest(BaseModel):
@@ -239,4 +244,40 @@ def remove_user_permission(
         "message": "Permission removed successfully.",
         "user_id": user_id,
         "permission_code": permission_code,
+    }
+
+@router.patch(
+    "/users/{user_id}/status",
+)
+def update_user_status(
+    user_id: str,
+    request: UpdateUserStatusRequest,
+    current_user: UserContext = Depends(require_admin),
+):
+    """
+    Activate or deactivate a user account.
+
+    Only authenticated administrators may perform
+    this operation.
+    """
+    updated = set_user_active_status(
+        user_id=user_id,
+        is_active=request.is_active,
+    )
+
+    if not updated:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    return {
+        "success": True,
+        "message": (
+            "User activated successfully."
+            if request.is_active
+            else "User deactivated successfully."
+        ),
+        "user_id": user_id,
+        "is_active": request.is_active,
     }

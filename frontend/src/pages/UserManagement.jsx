@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   apiGet,
   apiPost,
+  apiPatch,
   apiDelete,
 } from '../api/client'
 import {
@@ -185,7 +186,31 @@ function UserManagement() {
     }
   }
 
+  async function handleUserStatusChange(userId, isActive) {
+    const operationKey = `${userId}-status`
 
+    setUpdating(operationKey)
+    setMessage(null)
+    setError(null)
+
+    try {
+      const result = await apiPatch(
+        `/admin/users/${encodeURIComponent(userId)}/status`,
+        {
+          is_active: isActive,
+        }
+      )
+
+      setMessage(result.message)
+
+      // Refresh data without showing the full-page loader.
+      await loadAdminData(false)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setUpdating(null)
+    }
+  }
   return (
     <>
       <PageHeader
@@ -357,23 +382,62 @@ function UserManagement() {
                             </div>
 
                             <div className="tag-list">
-                              {user.roles.length > 0 ? (
-                                user.roles.map((role) => (
-                                  <span
-                                    key={role}
-                                    className={
-                                      role === 'admin'
-                                        ? 'tag tag--accent'
-                                        : 'tag'
-                                    }
-                                  >
-                                    {role}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="tag">No role</span>
-                              )}
-                            </div>
+                            <span
+                              className={
+                                user.is_active
+                                  ? 'tag tag--accent'
+                                  : 'tag'
+                              }
+                            >
+                              {user.is_active ? 'Active' : 'Inactive'}
+                            </span>
+
+                            {user.roles.length > 0 ? (
+                              user.roles.map((role) => (
+                                <span
+                                  key={role}
+                                  className={
+                                    role === 'admin'
+                                      ? 'tag tag--accent'
+                                      : 'tag'
+                                  }
+                                >
+                                  {role}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="tag">No role</span>
+                            )}
+
+                            <button
+                              type="button"
+                              className={
+                                user.is_active
+                                  ? 'btn btn--sm btn--danger'
+                                  : 'btn btn--sm btn-secondary'
+                              }
+                              disabled={
+                                updating === `${user.user_id}-status`
+                              }
+                              onClick={() =>
+                                handleUserStatusChange(
+                                  user.user_id,
+                                  !user.is_active
+                                )
+                              }
+                            >
+                              {updating === `${user.user_id}-status`
+                                ? (
+                                  <>
+                                    <Loader2 size={14} className="spin" />
+                                    Updating...
+                                  </>
+                                )
+                                : user.is_active
+                                  ? 'Deactivate'
+                                  : 'Activate'}
+                            </button>
+                          </div>
                           </div>
 
                           {isAdmin ? (
