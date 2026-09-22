@@ -300,6 +300,8 @@ async def get_profit_loss_report(
             "report": {
                 "left": report.get("left", []),
                 "right": report.get("right", []),
+                "total_left": report.get("total_left", 0),
+                "total_right": report.get("total_right", 0),
             },
         }
 

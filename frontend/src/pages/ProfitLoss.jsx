@@ -28,6 +28,8 @@ function normalizeParticular(name) {
 }
 
 function drillDownPathFor(name) {
+  if (!name) return null
+
   const normalized = normalizeParticular(name)
 
   if (normalized === 'opening stock' || normalized === 'closing stock') {
@@ -77,15 +79,21 @@ function buildColumns(navigate) {
   ]
 }
 
-// Only top-level group rows (Cost of Sales, Indirect Expenses, Gross
-// Profit c/o, Sales Accounts, Gross Profit b/f, Nett Loss, ...) count
-// toward the page total. Their indented breakdown lines (Opening Stock,
-// Purchase Accounts, Closing Stock, Direct Expenses, etc.) are
-// informational only - summing them too double-counts the group they
-// already belong to.
+// The backend (parse_profit_loss) never emits a container's own summary
+// row into left/right - container entries are consumed structurally and
+// skipped (see the `is_container` handling in financial.py). So every
+// row that reaches this page, group or leaf, appears exactly once and
+// must be counted exactly once. Filtering to is_group-only rows drops
+// leaf lines (Opening Stock, Direct Expenses, Sales Accounts, Purchase
+// Accounts, ...) from the footer total - that's the bug that produced
+// the wrong total on screen.
+//
+// NOTE: this is now only a fallback - the backend sends total_left /
+// total_right directly (the true Tally bottom-line total, which
+// excludes the trading-section rows already folded into Gross Profit
+// c/o). This function is kept in case those fields are ever missing.
 function sumGroupAmounts(rows) {
   return (rows || [])
-    .filter((row) => row.is_group)
     .reduce((total, row) => total + (Number(row.amount) || 0), 0)
 }
 
@@ -104,8 +112,8 @@ function ProfitLoss() {
   const leftRows = response.report?.left || []
   const rightRows = response.report?.right || []
 
-  const leftTotal = sumGroupAmounts(leftRows)
-  const rightTotal = sumGroupAmounts(rightRows)
+  const leftTotal = response.report?.total_left ?? sumGroupAmounts(leftRows)
+  const rightTotal = response.report?.total_right ?? sumGroupAmounts(rightRows)
 
   const columns = buildColumns(navigate)
 
