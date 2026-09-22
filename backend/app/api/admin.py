@@ -46,7 +46,6 @@ class AssignPermissionRequest(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    user_id: str
     username: str
     password: str
     companies: list[str]
@@ -145,15 +144,14 @@ def create_admin_user(
         )
 
     try:
-        create_user(
-            user_id=request.user_id,
+        user_id = create_user(
             username=request.username,
             password=request.password,
             companies=request.companies,
         )
 
         role_assigned = assign_role_to_user(
-            user_id=request.user_id,
+            user_id=user_id,
             role_name=request.role_name,
         )
 
@@ -172,7 +170,7 @@ def create_admin_user(
     return {
         "success": True,
         "message": "User created successfully.",
-        "user_id": request.user_id,
+        "user_id": user_id,
         "username": request.username,
         "role_name": request.role_name,
     }

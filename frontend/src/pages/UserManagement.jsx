@@ -31,7 +31,6 @@ function UserManagement() {
   const [creatingUser, setCreatingUser] = useState(false)
 
   const [newUser, setNewUser] = useState({
-    user_id: '',
     username: '',
     password: '',
     companies: '',
@@ -39,8 +38,11 @@ function UserManagement() {
   })
 
 
-  async function loadAdminData() {
-    setLoading(true)
+  async function loadAdminData(showLoader = true) {
+    if (showLoader) {
+      setLoading(true)
+    }
+
     setError(null)
 
     try {
@@ -60,7 +62,9 @@ function UserManagement() {
     } catch (err) {
       setError(err.message)
     } finally {
-      setLoading(false)
+      if (showLoader) {
+        setLoading(false)
+      }
     }
   }
 
@@ -96,7 +100,6 @@ function UserManagement() {
       await apiPost(
         '/admin/users',
         {
-          user_id: newUser.user_id.trim(),
           username: newUser.username.trim(),
           password: newUser.password,
           companies: companyList,
@@ -109,7 +112,6 @@ function UserManagement() {
       )
 
       setNewUser({
-        user_id: '',
         username: '',
         password: '',
         companies: '',
@@ -145,7 +147,7 @@ function UserManagement() {
         `${permissionCode} permission assigned successfully.`
       )
 
-      await loadAdminData()
+      await loadAdminData(false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -175,7 +177,7 @@ function UserManagement() {
         `${permissionCode} permission removed successfully.`
       )
 
-      await loadAdminData()
+      await loadAdminData(false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -212,21 +214,6 @@ function UserManagement() {
           >
             <form onSubmit={handleCreateUser}>
               <div className="form-grid">
-                <div className="form-field">
-                  <label htmlFor="user_id">
-                    User ID
-                  </label>
-
-                  <input
-                    id="user_id"
-                    name="user_id"
-                    type="text"
-                    value={newUser.user_id}
-                    onChange={handleNewUserChange}
-                    required
-                    disabled={creatingUser}
-                  />
-                </div>
 
                 <div className="form-field">
                   <label htmlFor="username">
@@ -367,10 +354,6 @@ function UserManagement() {
                               <strong>
                                 {user.username}
                               </strong>
-
-                              <span>
-                                User ID: {user.user_id}
-                              </span>
                             </div>
 
                             <div className="tag-list">

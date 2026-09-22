@@ -1,4 +1,5 @@
 import os
+import uuid
 from dataclasses import dataclass
 
 import mysql.connector
@@ -72,16 +73,12 @@ def initialize_user_store() -> None:
 
 def create_user(
     *,
-    user_id: str,
     username: str,
     password: str,
     companies: list[str],
-) -> None:
-    clean_user_id = user_id.strip()
+) -> str:
+    clean_user_id = str(uuid.uuid4())
     clean_username = username.strip()
-
-    if not clean_user_id:
-        raise ValueError("user_id is required")
 
     if not clean_username:
         raise ValueError("username is required")
@@ -145,6 +142,8 @@ def create_user(
         )
 
         connection.commit()
+
+        return clean_user_id
 
     except Exception:
         connection.rollback()
