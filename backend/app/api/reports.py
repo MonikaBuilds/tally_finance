@@ -425,20 +425,53 @@ async def get_group_summary_report(
 # TRIAL BALANCE
 # ============================================================
 
+def _trial_balance_kwargs(
+    company_name: str | None,
+    from_date: date | None,
+    to_date: date | None,
+) -> dict:
+    """
+    Keyword arguments for fetch_trial_balance().
+
+    from_date is only forwarded when the caller actually supplied
+    one, so a request without a From Date behaves exactly as it did
+    before the From/To filter was added.
+    """
+    kwargs = {
+        "company_name": company_name,
+        "to_date": to_date,
+    }
+
+    if from_date:
+        kwargs["from_date"] = from_date
+
+    return kwargs
+
+
 @router.get("/trial-balance")
 async def get_trial_balance_report(
     company_name: str | None = Depends(get_authorized_company),
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
         report = await fetch_trial_balance(
-            company_name=company_name,
-            to_date=to_date,
+            **_trial_balance_kwargs(
+                company_name, from_date, to_date
+            )
         )
 
         return {
             "success": True,
             "source": "tally",
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
             "report": _as_rows(report),
         }
 
@@ -455,12 +488,20 @@ async def get_trial_balance_report(
 async def export_trial_balance_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
         report = await fetch_trial_balance(
-            company_name=company_name,
-            to_date=to_date,
+            **_trial_balance_kwargs(
+                company_name, from_date, to_date
+            )
         )
 
     except Exception as e:
@@ -495,8 +536,73 @@ async def export_trial_balance_report(
             "key": "debit",
             "value": total_debit,
         },
-        period=_period_label(to_date=to_date),
+        period=_period_label(from_date=from_date, to_date=to_date),
     )
+
+
+# ------------------------------------------------------------
+# Trial Balance drill-down: Purchase Bills Pending
+#
+# Reached from Trial Balance -> Purchase Accounts -> Purchase Bills
+# to Come. Tally's "Purchase Bills Pending" screen lists goods that
+# have been received (Receipt Notes) but not yet billed, item by
+# item. The rows are built from the company's real Receipt Note
+# vouchers for the selected period, using the same voucher/stock
+# parser the Stock Item Vouchers screen already uses.
+# ------------------------------------------------------------
+
+@router.get("/trial-balance/purchase-bills-pending")
+async def get_trial_balance_purchase_bills_pending(
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
+    try:
+        report = await fetch_stock_movement(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+        rows = [
+            {
+                "date": row.get("date"),
+                "tracking_number": row.get("voucher_number"),
+                "voucher_type": row.get("voucher_type"),
+                "stock_item": row.get("stock_item"),
+                "party": row.get("party"),
+                "quantity": row.get("quantity", 0),
+                "rate": row.get("rate", 0),
+                "value": row.get("amount", 0),
+            }
+            for row in report.get("rows", [])
+            if "receipt note" in (row.get("voucher_type") or "").casefold()
+        ]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+            "total_value": sum(row["value"] or 0 for row in rows),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("Trial Balance Purchase Bills Pending error:", repr(e))
+
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Purchase Bills Pending from Tally",
+        )
 
 
 # ============================================================

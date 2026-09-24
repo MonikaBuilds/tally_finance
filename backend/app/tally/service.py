@@ -149,6 +149,7 @@ async def fetch_trial_balance(
     response = await client.send_xml(
         build_trial_balance_request(
             company_name=company_name,
+            from_date=from_date,
             to_date=to_date,
         )
     )
