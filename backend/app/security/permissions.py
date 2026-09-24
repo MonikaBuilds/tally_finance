@@ -7,11 +7,17 @@ from app.security.auth import (
 from app.security.user_store import _connect
 
 
-def is_admin(user_id: str) -> bool:
+def has_role(
+    user_id: str,
+    role_name: str,
+) -> bool:
     """
-    Return True when the user has the admin role.
+    Return True when the user has the requested role.
     """
-    if not user_id:
+    clean_user_id = user_id.strip()
+    clean_role_name = role_name.strip()
+
+    if not clean_user_id or not clean_role_name:
         return False
 
     connection = _connect()
@@ -25,10 +31,13 @@ def is_admin(user_id: str) -> bool:
             INNER JOIN roles r
                 ON r.role_id = ur.role_id
             WHERE ur.user_id = %s
-              AND r.role_name = 'admin'
+              AND r.role_name = %s
             LIMIT 1
             """,
-            (user_id,),
+            (
+                clean_user_id,
+                clean_role_name,
+            ),
         )
 
         return cursor.fetchone() is not None
@@ -37,6 +46,56 @@ def is_admin(user_id: str) -> bool:
         cursor.close()
         connection.close()
 
+
+def is_superadmin(
+    user_id: str,
+) -> bool:
+    """
+    Return True when the user has the superadmin role.
+    """
+    return has_role(
+        user_id,
+        "superadmin",
+    )
+
+
+def is_admin(
+    user_id: str,
+) -> bool:
+    """
+    Return True when the user has the admin role.
+    """
+    return has_role(
+        user_id,
+        "admin",
+    )
+
+def can_manage_role(
+    manager_user_id: str,
+    target_role_name: str,
+) -> bool:
+    """
+    Return True when the manager is allowed
+    to create a user with the requested role.
+
+    Superadmin may create admin or user.
+    Admin may create user only.
+    """
+    clean_role_name = target_role_name.strip()
+
+    if not clean_role_name:
+        return False
+
+    if is_superadmin(manager_user_id):
+        return clean_role_name in {
+            "admin",
+            "user",
+        }
+
+    if is_admin(manager_user_id):
+        return clean_role_name == "user"
+
+    return False
 
 async def require_admin(
     current_user: UserContext = Depends(get_current_user),
@@ -47,7 +106,10 @@ async def require_admin(
     Authentication is handled by get_current_user().
     Admin authorization is resolved dynamically from MySQL.
     """
-    if not is_admin(current_user.user_id):
+    if not (
+        is_superadmin(current_user.user_id)
+        or is_admin(current_user.user_id)
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrator access required.",
@@ -475,15 +537,18 @@ def can_execute_tool(
     """
     Decide whether a user may execute a chatbot tool.
 
-    Admin users may execute every mapped tool.
-    Normal users require the tool's assigned permission.
+    Superadmin may execute every mapped tool.
+
+    Admin and normal users require the permission
+    assigned to the requested tool.
 
     Unknown or unmapped tools are denied.
     """
     if not user_id or not tool_name:
         return False
 
-    # Fail closed: the tool must have a permission mapping.
+    # Fail closed: every executable tool must have
+    # an explicit permission mapping.
     required_permission = get_required_permission(
         tool_name
     )
@@ -491,11 +556,12 @@ def can_execute_tool(
     if required_permission is None:
         return False
 
-    # Admin bypasses individual permission assignments,
-    # but not authentication or company authorization.
-    if is_admin(user_id):
+    # Superadmin has full access to mapped tools.
+    if is_superadmin(user_id):
         return True
 
+    # Admin and User must have the permission
+    # required by this tool.
     return user_has_permission(
         user_id,
         required_permission,

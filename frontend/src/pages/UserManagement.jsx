@@ -7,14 +7,13 @@ import {
 } from '../api/client'
 import {
   CheckCircle2,
-  KeyRound,
   Loader2,
   Minus,
   Plus,
-  ShieldCheck,
   UserPlus,
   Users,
 } from 'lucide-react'
+
 import PageHeader from '../components/layout/PageHeader'
 import Card from '../components/common/Card'
 import Loader from '../components/common/Loader'
@@ -31,10 +30,40 @@ function UserManagement() {
   const [message, setMessage] = useState(null)
   const [creatingUser, setCreatingUser] = useState(false)
 
+  const currentUser = (() => {
+    try {
+      const storedUser = sessionStorage.getItem('chat_user')
+
+      return storedUser
+        ? JSON.parse(storedUser)
+        : null
+    } catch {
+      return null
+    }
+  })()
+
+  const currentUserRoles = Array.isArray(currentUser?.roles)
+    ? currentUser.roles
+    : []
+
+  const isSuperadmin =
+    currentUserRoles.includes('superadmin')
+
+  const allowedRoles = roles.filter((role) => {
+    if (isSuperadmin) {
+      return (
+        role.role_name === 'admin' ||
+        role.role_name === 'user'
+      )
+    }
+
+    return role.role_name === 'user'
+  })
+
   const [newUser, setNewUser] = useState({
     username: '',
     password: '',
-    companies: '',
+    companies: [],
     role_name: '',
   })
 
@@ -78,8 +107,8 @@ function UserManagement() {
   function handleNewUserChange(event) {
     const { name, value } = event.target
 
-    setNewUser((currentUser) => ({
-      ...currentUser,
+    setNewUser((current) => ({
+      ...current,
       [name]: value,
     }))
   }
@@ -93,17 +122,13 @@ function UserManagement() {
     setMessage(null)
 
     try {
-      const companyList = newUser.companies
-        .split(',')
-        .map((company) => company.trim())
-        .filter(Boolean)
 
       await apiPost(
         '/admin/users',
         {
           username: newUser.username.trim(),
           password: newUser.password,
-          companies: companyList,
+          companies: newUser.companies,
           role_name: newUser.role_name,
         }
       )
@@ -115,7 +140,7 @@ function UserManagement() {
       setNewUser({
         username: '',
         password: '',
-        companies: '',
+        companies: [],
         role_name: '',
       })
 
@@ -186,6 +211,7 @@ function UserManagement() {
     }
   }
 
+
   async function handleUserStatusChange(userId, isActive) {
     const operationKey = `${userId}-status`
 
@@ -203,7 +229,6 @@ function UserManagement() {
 
       setMessage(result.message)
 
-      // Refresh data without showing the full-page loader.
       await loadAdminData(false)
     } catch (err) {
       setError(err.message)
@@ -211,6 +236,8 @@ function UserManagement() {
       setUpdating(null)
     }
   }
+
+
   return (
     <>
       <PageHeader
@@ -239,7 +266,6 @@ function UserManagement() {
           >
             <form onSubmit={handleCreateUser}>
               <div className="form-grid">
-
                 <div className="form-field">
                   <label htmlFor="username">
                     Username
@@ -279,25 +305,37 @@ function UserManagement() {
                 </div>
 
                 <div className="form-field">
-                  <label htmlFor="companies">
-                    Companies
+                  <label htmlFor="company">
+                    Company
                   </label>
 
-                  <input
-                    id="companies"
-                    name="companies"
-                    type="text"
-                    value={newUser.companies}
-                    onChange={handleNewUserChange}
+                  <select
+                    id="company"
+                    value={newUser.companies[0] || ''}
+                    onChange={(event) =>
+                      setNewUser((current) => ({
+                        ...current,
+                        companies: event.target.value
+                          ? [event.target.value]
+                          : [],
+                      }))
+                    }
                     required
                     disabled={creatingUser}
-                    placeholder="Enter company name"
-                  />
+                  >
+                    <option value="">
+                      Select a company
+                    </option>
 
-                  <p className="form-hint">
-                    For multiple companies, separate
-                    names with commas.
-                  </p>
+                    {(currentUser?.companies || []).map((company) => (
+                      <option
+                        key={company}
+                        value={company}
+                      >
+                        {company}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="form-field">
@@ -317,7 +355,7 @@ function UserManagement() {
                       Select a role
                     </option>
 
-                    {roles.map((role) => (
+                    {allowedRoles.map((role) => (
                       <option
                         key={role.role_id}
                         value={role.role_name}
@@ -333,13 +371,21 @@ function UserManagement() {
                 <button
                   type="submit"
                   className="btn"
-                  disabled={creatingUser}
+                  disabled={
+                    creatingUser ||
+                    newUser.companies.length === 0 ||
+                    !newUser.role_name
+                  }
                 >
                   {creatingUser ? (
-                    <Loader2 size={16} className="spin" />
+                    <Loader2
+                      size={16}
+                      className="spin"
+                    />
                   ) : (
                     <UserPlus size={16} />
                   )}
+
                   {creatingUser
                     ? 'Creating...'
                     : 'Create User'}
@@ -352,36 +398,42 @@ function UserManagement() {
             <>
               <Card
                 title="Users"
-                subtitle={`${users.length} ${users.length === 1 ? 'user' : 'users'}`}
+                subtitle={`${users.length} ${
+                  users.length === 1
+                    ? 'user'
+                    : 'users'
+                }`}
               >
                 {users.length === 0 ? (
                   <div className="empty-state">
-                    <Users size={28} strokeWidth={1.5} />
+                    <Users
+                      size={28}
+                      strokeWidth={1.5}
+                    />
                     <span>No users found.</span>
                   </div>
                 ) : (
                   <div className="user-list">
-                    {users.map((user) => {
-                      const isAdmin =
-                        user.roles.includes('admin')
+                    {users.map((user) => (
+                      <div
+                        key={user.user_id}
+                        className="user-row"
+                      >
+                        <div className="user-row-header">
+                          <div className="sidebar-avatar">
+                            {(user.username || 'U')
+                              .trim()
+                              .charAt(0)
+                              .toUpperCase()}
+                          </div>
 
-                      return (
-                        <div
-                          key={user.user_id}
-                          className="user-row"
-                        >
-                          <div className="user-row-header">
-                            <div className="sidebar-avatar">
-                              {(user.username || 'U').trim().charAt(0).toUpperCase()}
-                            </div>
+                          <div className="user-row-identity">
+                            <strong>
+                              {user.username}
+                            </strong>
+                          </div>
 
-                            <div className="user-row-identity">
-                              <strong>
-                                {user.username}
-                              </strong>
-                            </div>
-
-                            <div className="tag-list">
+                          <div className="tag-list">
                             <span
                               className={
                                 user.is_active
@@ -389,7 +441,9 @@ function UserManagement() {
                                   : 'tag'
                               }
                             >
-                              {user.is_active ? 'Active' : 'Inactive'}
+                              {user.is_active
+                                ? 'Active'
+                                : 'Inactive'}
                             </span>
 
                             {user.roles.length > 0 ? (
@@ -397,7 +451,8 @@ function UserManagement() {
                                 <span
                                   key={role}
                                   className={
-                                    role === 'admin'
+                                    role === 'admin' ||
+                                    role === 'superadmin'
                                       ? 'tag tag--accent'
                                       : 'tag'
                                   }
@@ -406,7 +461,9 @@ function UserManagement() {
                                 </span>
                               ))
                             ) : (
-                              <span className="tag">No role</span>
+                              <span className="tag">
+                                No role
+                              </span>
                             )}
 
                             <button
@@ -417,7 +474,8 @@ function UserManagement() {
                                   : 'btn btn--sm btn-secondary'
                               }
                               disabled={
-                                updating === `${user.user_id}-status`
+                                updating ===
+                                `${user.user_id}-status`
                               }
                               onClick={() =>
                                 handleUserStatusChange(
@@ -426,168 +484,119 @@ function UserManagement() {
                                 )
                               }
                             >
-                              {updating === `${user.user_id}-status`
-                                ? (
-                                  <>
-                                    <Loader2 size={14} className="spin" />
-                                    Updating...
-                                  </>
-                                )
-                                : user.is_active
-                                  ? 'Deactivate'
-                                  : 'Activate'}
+                              {updating ===
+                              `${user.user_id}-status` ? (
+                                <>
+                                  <Loader2
+                                    size={14}
+                                    className="spin"
+                                  />
+                                  Updating...
+                                </>
+                              ) : user.is_active ? (
+                                'Deactivate'
+                              ) : (
+                                'Activate'
+                              )}
                             </button>
                           </div>
-                          </div>
+                        </div>
 
-                          {isAdmin ? (
-                            <p className="user-row-note">
-                              <ShieldCheck size={14} />
-                              Admin has access to all
-                              permission categories.
-                            </p>
-                          ) : (
-                            <div className="permission-grid">
-                              {permissions.map(
-                                (permission) => {
-                                  const assigned =
-                                    user.permissions.includes(
-                                      permission.permission_code
-                                    )
+                        <div className="permission-grid">
+                          {permissions.map((permission) => {
+                            const assigned =
+                              user.permissions.includes(
+                                permission.permission_code
+                              )
 
-                                  const operationKey =
-                                    `${user.user_id}-${permission.permission_code}`
+                            const operationKey =
+                              `${user.user_id}-${permission.permission_code}`
 
-                                  const isUpdating =
-                                    updating === operationKey
+                            const isUpdating =
+                              updating === operationKey
 
-                                  return (
-                                    <div
-                                      key={
-                                        permission.permission_id
-                                      }
-                                      className={
-                                        assigned
-                                          ? 'permission-tile permission-tile--assigned'
-                                          : 'permission-tile'
-                                      }
-                                    >
-                                      <div className="permission-tile-copy">
-                                        <strong>
-                                          {
-                                            permission.permission_name
-                                          }
-                                        </strong>
-
-                                        <span>
-                                          {assigned
-                                            ? 'Assigned'
-                                            : 'Not assigned'}
-                                        </span>
-                                      </div>
-
-                                      {assigned ? (
-                                        <button
-                                          type="button"
-                                          className="btn btn--sm btn--danger"
-                                          disabled={isUpdating}
-                                          onClick={() =>
-                                            handleRemove(
-                                              user.user_id,
-                                              permission.permission_code
-                                            )
-                                          }
-                                        >
-                                          {isUpdating ? (
-                                            <Loader2 size={14} className="spin" />
-                                          ) : (
-                                            <Minus size={14} />
-                                          )}
-                                          {isUpdating
-                                            ? 'Removing...'
-                                            : 'Remove'}
-                                        </button>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          className="btn btn--sm btn-secondary"
-                                          disabled={isUpdating}
-                                          onClick={() =>
-                                            handleAssign(
-                                              user.user_id,
-                                              permission.permission_code
-                                            )
-                                          }
-                                        >
-                                          {isUpdating ? (
-                                            <Loader2 size={14} className="spin" />
-                                          ) : (
-                                            <Plus size={14} />
-                                          )}
-                                          {isUpdating
-                                            ? 'Assigning...'
-                                            : 'Assign'}
-                                        </button>
-                                      )}
-                                    </div>
-                                  )
+                            return (
+                              <div
+                                key={permission.permission_id}
+                                className={
+                                  assigned
+                                    ? 'permission-tile permission-tile--assigned'
+                                    : 'permission-tile'
                                 }
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </Card>
+                              >
+                                <div className="permission-tile-copy">
+                                  <strong>
+                                    {permission.permission_name}
+                                  </strong>
 
-              <Card
-                title="Available Permissions"
-                subtitle="What each permission unlocks"
-              >
-                {permissions.length === 0 ? (
-                  <div className="empty-state">
-                    <KeyRound size={28} strokeWidth={1.5} />
-                    <span>No permissions found.</span>
-                  </div>
-                ) : (
-                  <div className="definition-list">
-                    {permissions.map((permission) => (
-                      <div
-                        key={permission.permission_id}
-                        className="definition-row"
-                      >
-                        <div>
-                          <strong>
-                            {permission.permission_name}
-                          </strong>
+                                  <span>
+                                    {assigned
+                                      ? 'Assigned'
+                                      : 'Not assigned'}
+                                  </span>
+                                </div>
 
-                          <p className="card-note">
-                            Code:{' '}
-                            {permission.permission_code}
-                          </p>
-                        </div>
+                                {assigned ? (
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--danger"
+                                    disabled={isUpdating}
+                                    onClick={() =>
+                                      handleRemove(
+                                        user.user_id,
+                                        permission.permission_code
+                                      )
+                                    }
+                                  >
+                                    {isUpdating ? (
+                                      <Loader2
+                                        size={14}
+                                        className="spin"
+                                      />
+                                    ) : (
+                                      <Minus size={14} />
+                                    )}
 
-                        <div>
-                          <p className="card-note">
-                            {permission.category}
-                            {permission.subcategory && (
-                              <> · {permission.subcategory}</>
-                            )}
-                          </p>
+                                    {isUpdating
+                                      ? 'Removing...'
+                                      : 'Remove'}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn-secondary"
+                                    disabled={isUpdating}
+                                    onClick={() =>
+                                      handleAssign(
+                                        user.user_id,
+                                        permission.permission_code
+                                      )
+                                    }
+                                  >
+                                    {isUpdating ? (
+                                      <Loader2
+                                        size={14}
+                                        className="spin"
+                                      />
+                                    ) : (
+                                      <Plus size={14} />
+                                    )}
 
-                          {permission.description && (
-                            <p>
-                              {permission.description}
-                            </p>
-                          )}
+                                    {isUpdating
+                                      ? 'Assigning...'
+                                      : 'Assign'}
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
               </Card>
+
             </>
           )}
         </>
