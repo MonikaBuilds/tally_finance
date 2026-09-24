@@ -14,7 +14,8 @@ const COLUMNS = [
   { key: 'tracking_number', label: 'Tracking Number' },
   { key: 'stock_item', label: 'Name of Item' },
   { key: 'party', label: 'From' },
-  { key: 'quantity', label: 'Quantity', align: 'right', render: (row) => formatQuantity(row.quantity) },
+  { key: 'initial_quantity', label: 'Initial Quantity', align: 'right', render: (row) => formatQuantity(row.initial_quantity) },
+  { key: 'pending_quantity', label: 'Pending Quantity', align: 'right', render: (row) => formatQuantity(row.pending_quantity) },
   { key: 'rate', label: 'Rate', align: 'right', render: (row) => formatCurrency(row.rate) },
   { key: 'value', label: 'Value', align: 'right', render: (row) => formatCurrency(row.value) },
 ]

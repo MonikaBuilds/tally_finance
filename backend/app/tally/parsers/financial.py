@@ -153,13 +153,19 @@ def _parse_dspacc_rows(root):
 
         if debit_text or credit_text:
 
-            # Preserve the existing parser behaviour.
-            debit = abs(
-                to_float(debit_text)
+            # Preserve the sign Tally itself returns. Tally shows a
+            # contra/negative balance inside the Debit or Credit
+            # column as e.g. "(-)1,58,60,100.00" rather than moving it
+            # to the other column - abs() here used to throw that sign
+            # away, which is why a credit balance like Sundry
+            # Creditors could show up as a plain positive number
+            # instead of the negative Tally itself displays.
+            debit = to_float(
+                debit_text
             )
 
-            credit = abs(
-                to_float(credit_text)
+            credit = to_float(
+                credit_text
             )
 
         else:
@@ -687,10 +693,18 @@ def parse_group_summary(
         root
     )
 
-    # Preserve the totals returned by the existing parser.
+    # Tally's own Group Summary footer sums the magnitude of each
+    # row's debit/credit, even though a row itself can show a
+    # negative ("(-)") amount when that account's true balance runs
+    # the other way (e.g. Sundry Creditors showing a negative credit
+    # because it actually carries a debit balance) - verified against
+    # a live Tally screen: Duties & Taxes 13,33,800 + Provisions
+    # 2,05,000 + Sundry Creditors (-)1,58,60,100 still totals
+    # 1,73,98,900, not a netted 0. Summing abs() here matches that;
+    # summing the signed values would not.
     total_debit = round(
         sum(
-            row["debit"]
+            abs(row["debit"])
             for row in rows
         ),
         2,
@@ -698,7 +712,7 @@ def parse_group_summary(
 
     total_credit = round(
         sum(
-            row["credit"]
+            abs(row["credit"])
             for row in rows
         ),
         2,

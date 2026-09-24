@@ -13,7 +13,6 @@ import Payables from './pages/Payables'
 import PendingInvoices from './pages/PendingInvoices'
 import TrialBalance from './pages/TrialBalance'
 import TrialBalanceGroup from './pages/trialBalance/TrialBalanceGroup'
-import TrialBalanceLedgerMonthly from './pages/trialBalance/TrialBalanceLedgerMonthly'
 import TrialBalanceOpeningStock from './pages/trialBalance/TrialBalanceOpeningStock'
 import TrialBalancePurchaseBillsPending from './pages/trialBalance/TrialBalancePurchaseBillsPending'
 import BalanceSheet from './pages/BalanceSheet'
@@ -122,7 +121,6 @@ function App() {
         <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
         <Route path="/reports/trial-balance" element={<TrialBalance />} />
         <Route path="/reports/trial-balance/group" element={<TrialBalanceGroup />} />
-        <Route path="/reports/trial-balance/ledger" element={<TrialBalanceLedgerMonthly />} />
         <Route path="/reports/trial-balance/opening-stock" element={<TrialBalanceOpeningStock />} />
         <Route path="/reports/trial-balance/purchase-bills-pending" element={<TrialBalancePurchaseBillsPending />} />
         {/* Ledger Reports */}

@@ -568,6 +568,15 @@ def parse_stock_movement(xml_text: str):
                 "BATCH",
             )
 
+            # Present on Receipt Note / Purchase entries that use
+            # Tally's Tracking Number (Order/Bill pending) feature -
+            # already present in the raw XML via ALLINVENTORYENTRIES.*,
+            # just not previously extracted.
+            tracking_number = _first_text(
+                entry,
+                "TRACKINGNUMBER",
+            )
+
             # Build a key from existing Tally fields so duplicate
             # entries are not returned twice.
             key = (
@@ -578,6 +587,7 @@ def parse_stock_movement(xml_text: str):
                 stock_item,
                 quantity,
                 amount,
+                tracking_number,
             )
 
             if key in seen:
@@ -600,6 +610,7 @@ def parse_stock_movement(xml_text: str):
                     "godown": godown,
                     "batch": batch,
                     "narration": narration,
+                    "tracking_number": tracking_number,
                 }
             )
 

@@ -514,13 +514,16 @@ async def export_trial_balance_report(
 
     rows = _as_rows(report)
 
+    # See parse_group_summary in parsers/financial.py: Tally's own
+    # footer sums the magnitude of each row, not the signed value, so
+    # a negative ("(-)") row still adds its full amount to the total.
     total_debit = sum(
-        row.get("debit") or 0
+        abs(row.get("debit") or 0)
         for row in rows
     )
 
     total_credit = sum(
-        row.get("credit") or 0
+        abs(row.get("credit") or 0)
         for row in rows
     )
 
@@ -570,20 +573,66 @@ async def get_trial_balance_purchase_bills_pending(
             to_date=to_date,
         )
 
+        # Tally's "Purchase Bills Pending" screen is built from its
+        # Tracking Number (Order/Bill pending) feature: goods received
+        # against a tracking number (usually a Receipt Note) minus
+        # whatever has since been billed against that same tracking
+        # number (a Purchase voucher referencing it). Filtering by
+        # voucher type name (e.g. only "Receipt Note") dropped items
+        # whose bill has been partially raised, which is exactly the
+        # case Tally's own screen is meant to surface - so every
+        # voucher type is considered here and the two are netted per
+        # (stock item, tracking number) instead.
+        groups: dict[tuple[str, str], dict] = {}
+
+        for row in report.get("rows", []):
+            tracking_number = row.get("tracking_number")
+            stock_item = row.get("stock_item")
+
+            if not tracking_number or not stock_item:
+                continue
+
+            key = (stock_item, tracking_number)
+
+            quantity = row.get("quantity", 0) or 0
+            amount = row.get("amount", 0) or 0
+
+            if key not in groups:
+                groups[key] = {
+                    "date": row.get("date"),
+                    "tracking_number": tracking_number,
+                    "stock_item": stock_item,
+                    "party": row.get("party"),
+                    "rate": row.get("rate", 0),
+                    "initial_quantity": 0,
+                    "pending_quantity": 0,
+                    "value": 0,
+                }
+
+            group = groups[key]
+
+            # The largest single movement against a tracking number is
+            # the original goods-received quantity; later, smaller
+            # movements are partial billings against it.
+            if abs(quantity) > abs(group["initial_quantity"]):
+                group["initial_quantity"] = quantity
+                group["date"] = row.get("date")
+                group["party"] = row.get("party") or group["party"]
+                group["rate"] = row.get("rate", 0) or group["rate"]
+
+            group["pending_quantity"] += quantity
+            group["value"] += amount
+
+        # Only tracking numbers that still have an outstanding
+        # quantity are "pending" - a fully billed one has netted to
+        # zero and Tally would no longer show it on this screen.
         rows = [
-            {
-                "date": row.get("date"),
-                "tracking_number": row.get("voucher_number"),
-                "voucher_type": row.get("voucher_type"),
-                "stock_item": row.get("stock_item"),
-                "party": row.get("party"),
-                "quantity": row.get("quantity", 0),
-                "rate": row.get("rate", 0),
-                "value": row.get("amount", 0),
-            }
-            for row in report.get("rows", [])
-            if "receipt note" in (row.get("voucher_type") or "").casefold()
+            group
+            for group in groups.values()
+            if round(group["pending_quantity"], 4) != 0
         ]
+
+        rows.sort(key=lambda r: (r["date"] or "", r["tracking_number"] or ""))
 
         return {
             "success": True,

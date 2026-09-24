@@ -71,7 +71,15 @@ export function drillPathForRow(row, { from_date, to_date }) {
   }
 
   if (row.is_ledger) {
-    return tbPath('/ledger', { ledger: name, ...dates })
+    // Route to the app's one real Ledger Report (the same page and
+    // API the Profit & Loss drill-down uses), not a separate Trial
+    // Balance-only ledger view - that duplicate was reading a
+    // `monthly_summary` field the /reports/ledger API never returns,
+    // which is why it showed incomplete data.
+    const params = new URLSearchParams({ ledger: name, view: 'monthly' })
+    if (from_date) params.set('from_date', from_date)
+    if (to_date) params.set('to_date', to_date)
+    return `/reports/ledger?${params.toString()}`
   }
 
   return tbPath('/group', { group: name, ...dates })

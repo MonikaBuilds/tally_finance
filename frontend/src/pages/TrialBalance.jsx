@@ -135,8 +135,12 @@ function TrialBalance() {
     body = <ErrorMessage message={response?.error || response?.message} />
   } else {
     const report = response.report
-    const totalDebit = report.reduce((sum, row) => sum + (row.debit || 0), 0)
-    const totalCredit = report.reduce((sum, row) => sum + (row.credit || 0), 0)
+    // Tally's own footer sums the magnitude of each row - a row can
+    // show a signed "(-)" amount without that flipping the grand
+    // total (verified against a live Tally Group Summary: 13,33,800 +
+    // 2,05,000 + (-)1,58,60,100 still totals 1,73,98,900, not 0).
+    const totalDebit = report.reduce((sum, row) => sum + Math.abs(row.debit || 0), 0)
+    const totalCredit = report.reduce((sum, row) => sum + Math.abs(row.credit || 0), 0)
 
     body = (
       <Card>
