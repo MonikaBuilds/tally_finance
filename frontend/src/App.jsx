@@ -38,7 +38,30 @@ function App() {
     () => Boolean(getAccessToken())
   )
 
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const storedUser = sessionStorage.getItem('chat_user')
+
+      return storedUser
+        ? JSON.parse(storedUser)
+        : null
+    } catch {
+      return null
+    }
+  })
   function handleLogin() {
+    try {
+      const storedUser = sessionStorage.getItem('chat_user')
+
+      setCurrentUser(
+        storedUser
+          ? JSON.parse(storedUser)
+          : null
+      )
+    } catch {
+      setCurrentUser(null)
+    }
+
     setIsAuthenticated(true)
   }
 
@@ -55,6 +78,13 @@ function App() {
     return <Login onLogin={handleLogin} />
   }
 
+  const roles = Array.isArray(currentUser?.roles)
+    ? currentUser.roles
+    : []
+
+  const canManageUsers =
+    roles.includes('superadmin') ||
+    roles.includes('admin')
   return (
     <Routes>
       <Route element={<Layout onLogout={handleLogout} />}>
@@ -103,7 +133,14 @@ function App() {
           element={<TallyStatus />}
         />
         <Route path="/chatbot" element={<Chatbot />} />
-        <Route path="/admin/users" element={<UserManagement />} />
+        <Route
+          path="/admin/users"
+          element={
+            canManageUsers
+              ? <UserManagement />
+              : <Navigate to="/" replace />
+          }
+        />
         <Route path="/tally-status" element={<TallyStatus />} />
 
         <Route path="/reports" element={<ReportsIndex />} />

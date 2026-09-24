@@ -10,6 +10,9 @@ from app.api.dashboard import router as dashboard_router
 from app.api.reports import router as reports_router
 from app.api.tally import router as tally_router
 from app.core.logging_config import configure_logging
+from app.security.organization_store import (
+    initialize_organization_store,
+)
 from app.security.user_store import initialize_user_store
 from app.tally.client import TallyClient
 
@@ -19,7 +22,8 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create authentication tables if they do not exist.
+    # Create authentication tables in dependency order.
+    initialize_organization_store()
     initialize_user_store()
 
     # Start shared HTTP client for Tally connections.

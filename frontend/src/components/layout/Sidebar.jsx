@@ -56,6 +56,13 @@ function Sidebar({
         ? `${companies.length} companies`
         : 'No company'
 
+  const roles = Array.isArray(user?.roles)
+    ? user.roles
+    : []
+
+  const canManageUsers =
+    roles.includes('superadmin') ||
+    roles.includes('admin')
   // Tooltips are only needed when labels are hidden.
   const tooltip = (label) => (collapsed ? label : undefined)
 
@@ -105,8 +112,14 @@ function Sidebar({
               {section.label}
             </span>
 
-            {section.links.map((link) => {
-              const Icon = link.icon
+            {section.links
+              .filter(
+                (link) =>
+                  link.to !== '/admin/users' ||
+                  canManageUsers
+              )
+              .map((link) => {
+                const Icon = link.icon
 
               return (
                 <NavLink

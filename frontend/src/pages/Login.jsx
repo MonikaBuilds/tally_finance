@@ -9,7 +9,11 @@ import {
     ShieldCheck,
     User,
 } from 'lucide-react'
-import { apiPost, setAccessToken } from '../api/client'
+import {
+    apiGet,
+    apiPost,
+    setAccessToken,
+} from '../api/client'
 import './Login.css'
 
 function Login({ onLogin }) {
@@ -39,23 +43,26 @@ function Login({ onLogin }) {
             })
 
             setAccessToken(response.access_token)
+            const currentUser = await apiGet('/auth/me')
 
             sessionStorage.setItem(
                 'chat_user',
                 JSON.stringify({
                     user_id: response.user_id,
                     username: response.username,
-                    companies: response.companies,
+                    companies: currentUser.companies,
+                    roles: currentUser.roles,
+                    permissions: currentUser.permissions,
                 }),
             )
 
             if (
-                Array.isArray(response.companies) &&
-                response.companies.length === 1
+                Array.isArray(currentUser.companies) &&
+                currentUser.companies.length === 1
             ) {
                 sessionStorage.setItem(
                     'selected_company',
-                    response.companies[0],
+                    currentUser.companies[0],
                 )
             } else {
                 sessionStorage.removeItem(
