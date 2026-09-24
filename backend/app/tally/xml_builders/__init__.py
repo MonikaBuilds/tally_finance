@@ -44,6 +44,7 @@ from .inventory import (
     build_stock_movement_request,
     build_inventory_register_request,
     build_stock_item_list_request,
+    build_stock_group_items_request,
 )
 
 
@@ -81,4 +82,5 @@ __all__ = [
     "build_stock_movement_request",
     "build_inventory_register_request",
     "build_stock_item_list_request",
+    "build_stock_group_items_request",
 ]

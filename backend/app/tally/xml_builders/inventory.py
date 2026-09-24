@@ -471,6 +471,83 @@ def build_inventory_register_request(
 
 
 # ============================================================
+# STOCK GROUP ITEMS (Stock Group Summary -> items in that group)
+# ============================================================
+
+def build_stock_group_items_request(
+    group_name: str,
+    company_name: str | None = None,
+    to_date: date | None = None,
+) -> str:
+    """
+    Stock items belonging to a single Stock Group.
+
+    Mirrors build_stock_item_request, but filters by $Parent
+    (the stock group name) instead of $Name, matching Tally's
+    "Stock Group Summary" drill-down into a group's items.
+    """
+
+    company_xml = build_company_variable(company_name)
+    to_date_xml = _date_variable("SVTODATE", to_date)
+
+    safe_group = escape(group_name)
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Stock Group Items</ID>
+    </HEADER>
+
+    <BODY>
+        <DESC>
+
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+
+                {company_xml}
+                {to_date_xml}
+
+            </STATICVARIABLES>
+
+            <TDL>
+                <TDLMESSAGE>
+
+                    <COLLECTION NAME="Stock Group Items">
+                        <TYPE>Stock Item</TYPE>
+
+                        <FILTER>StockGroupItemFilter</FILTER>
+
+                        <FETCH>
+                            NAME,
+                            PARENT,
+                            BASEUNITS,
+                            OPENINGBALANCE,
+                            OPENINGVALUE,
+                            CLOSINGBALANCE,
+                            CLOSINGVALUE,
+                            RATE
+                        </FETCH>
+
+                    </COLLECTION>
+
+                    <SYSTEM TYPE="Formulae"
+                            NAME="StockGroupItemFilter">
+                        $Parent = "{safe_group}"
+                    </SYSTEM>
+
+                </TDLMESSAGE>
+            </TDL>
+
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+
+
+# ============================================================
 # STOCK ITEM LIST (chatbot)
 # ============================================================
 

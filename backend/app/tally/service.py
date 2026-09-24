@@ -25,6 +25,7 @@ from app.tally.xml_builders import (
     build_inventory_register_request,
     build_stock_item_list_request,
     build_chatbot_ledger_request,
+    build_stock_group_items_request,
 )
 
 from app.tally.parsers import (
@@ -51,9 +52,14 @@ from app.tally.parsers import (
     parse_stock_item_list,
 )
 
+from app.tally.parsers.inventory import (
+    filter_stock_movement_by_godown,
+)
+
 from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
+
 
 
 client = TallyClient()
@@ -68,7 +74,9 @@ async def fetch_companies():
         build_company_request()
     )
 
-    return parse_companies(response)
+    # parse_companies() returns {"success", "companies", "count"} -
+    # callers (api/tally.py) expect the plain list of companies.
+    return parse_companies(response)["companies"]
 
 
 # ============================================================
@@ -889,6 +897,7 @@ async def fetch_stock_movement(
     from_date: date | None = None,
     to_date: date | None = None,
     stock_item_name: str | None = None,
+    godown_name: str | None = None,
 ):
     response = await client.send_xml(
         build_stock_movement_request(
@@ -899,7 +908,45 @@ async def fetch_stock_movement(
         )
     )
 
-    return parse_stock_movement(response)
+    result = parse_stock_movement(response)
+
+    # Tally's TDL formulas cannot easily filter vouchers by the
+    # godown of a nested inventory entry, so a location (godown)
+    # is applied here in Python, against the already-parsed rows,
+    # for the Location Summary / Location Monthly Summary screens.
+    if godown_name:
+        rows = filter_stock_movement_by_godown(
+            result.get("rows", []),
+            godown_name,
+        )
+
+        result = {
+            "success": True,
+            "rows": rows,
+            "count": len(rows),
+        }
+
+    return result
+
+
+# ============================================================
+# STOCK GROUP ITEMS (Stock Group Summary -> items in that group)
+# ============================================================
+
+async def fetch_stock_group_items(
+    group_name: str,
+    company_name: str | None = None,
+    to_date: date | None = None,
+):
+    response = await client.send_xml(
+        build_stock_group_items_request(
+            group_name=group_name,
+            company_name=company_name,
+            to_date=to_date,
+        )
+    )
+
+    return parse_stock_summary(response)
 
 
 # ============================================================

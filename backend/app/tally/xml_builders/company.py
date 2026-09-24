@@ -32,10 +32,7 @@ def build_company_request() -> str:
                         <FETCH>
                             NAME,
                             GUID,
-                            BOOKSFROM,
-                            STARTINGFROM,
-                            GSTREGISTRATIONTYPE,
-                            GSTIN
+                            BOOKSFROM
                         </FETCH>
                     </COLLECTION>
 

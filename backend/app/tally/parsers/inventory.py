@@ -611,6 +611,36 @@ def parse_stock_movement(xml_text: str):
 
 
 # ============================================================
+# STOCK MOVEMENT - LOCATION (GODOWN) FILTER
+# ============================================================
+
+def filter_stock_movement_by_godown(
+    rows: list[dict],
+    godown_name: str,
+) -> list[dict]:
+    """
+    Keep only stock-movement rows that happened at the given
+    location (godown).
+
+    Tally does not expose a simple object-level TDL filter for
+    "godown of an inventory entry", so this filtering is applied
+    in Python against rows already parsed by parse_stock_movement,
+    instead of adding filtering logic to the XML request itself.
+    """
+
+    if not godown_name:
+        return rows
+
+    target = godown_name.strip().casefold()
+
+    return [
+        row
+        for row in rows
+        if (row.get("godown") or "").strip().casefold() == target
+    ]
+
+
+# ============================================================
 # INVENTORY REGISTER
 # ============================================================
 

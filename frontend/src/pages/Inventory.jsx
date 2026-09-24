@@ -1,7 +1,9 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { AlertCircle, PackageSearch } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
+import { useDefaultAsOnDate } from '../hooks/useDefaultAsOnDate'
 
 import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
@@ -9,7 +11,7 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
-import { formatCurrency, formatQuantity } from '../utils/format'
+import { formatCurrency, formatQuantity, financialYearRange } from '../utils/format'
 
 // ------------------------------------------------------------------
 // Shared bits
@@ -27,19 +29,35 @@ function toQuery(params) {
   return query ? `?${query}` : ''
 }
 
-function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase, footer }) {
+function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase, footer, onRowClick }) {
   const { data: response, loading, error } = useFetch(path)
 
-  if (loading) return <Loader />
-  if (error) return <ErrorMessage message={error} />
+  // TEMP DEBUG - shows the exact request + raw response, so this can be
+  // read straight off the page (no DevTools needed). Remove once the
+  // "no records" issue is confirmed fixed.
+  const debugLine = (
+    <p style={{ fontSize: 12, color: '#888' }}>
+      Debug: GET {path || '(no path - missing required params)'}
+      {' | '}
+      {loading
+        ? 'loading…'
+        : error
+        ? `fetch error: ${error}`
+        : `response: ${JSON.stringify(response)?.slice(0, 500)}`}
+    </p>
+  )
+
+  if (loading) return (<>{debugLine}<Loader /></>)
+  if (error) return (<>{debugLine}<ErrorMessage message={error} /></>)
   if (!response?.success) {
-    return <ErrorMessage message={response?.error || response?.message} />
+    return (<>{debugLine}<ErrorMessage message={response?.error || response?.message} /></>)
   }
 
   const report = response.report || []
 
   return (
     <>
+      {debugLine}
       <div className="card-toolbar">
         <ExportButtons
           basePath={exportBasePath}
@@ -48,7 +66,7 @@ function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase,
         />
       </div>
 
-      <DataTable columns={columns} rows={report} />
+      <DataTable columns={columns} rows={report} onRowClick={onRowClick} />
 
       {footer && footer(report)}
     </>
@@ -163,18 +181,56 @@ const STOCK_SUMMARY_COLUMNS = [
 ]
 
 function StockSummaryTab() {
+  const navigate = useNavigate()
   const [toDate, setToDate] = useState('')
+  const [touched, setTouched] = useState(false)
+  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+
+  // Prefill with the end of the company's current financial year (once
+  // we know it) so the report isn't silently run "as on" today's date,
+  // which is often past the end of the period that actually has data.
+  useEffect(() => {
+    if (!touched && defaultAsOnDate && !toDate) {
+      setToDate(defaultAsOnDate)
+    }
+  }, [defaultAsOnDate, touched, toDate])
+
   const params = { to_date: toDate || undefined }
 
   return (
     <>
-      <DateFilter label="As on Date" value={toDate} onChange={setToDate} />
+      <DateFilter
+        label="As on Date"
+        value={toDate}
+        onChange={(value) => {
+          setTouched(true)
+          setToDate(value)
+        }}
+      />
+      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
+      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
+      <p className="table-hint">Click a stock item to view its Stock Monthly Summary.</p>
       <ReportBody
         path={`/reports/stock-summary${toQuery(params)}`}
         columns={STOCK_SUMMARY_COLUMNS}
         exportBasePath="/reports/stock-summary/export"
         exportParams={params}
         filenameBase="stock_summary"
+        onRowClick={(row) => {
+          // Anchor the monthly-summary drill-down to the financial year
+          // that contains the "As on Date" the user actually picked here,
+          // instead of letting that page default to *today's* real-world
+          // financial year (which, once you're past year-end, is a year
+          // with no data at all).
+          const anchor = toDate ? financialYearRange(0, new Date(toDate)) : null
+          navigate(
+            `/reports/stock-item-monthly${toQuery({
+              item: row.stock_item,
+              from: anchor?.from,
+              to: anchor?.to,
+            })}`
+          )
+        }}
         footer={(rows) => {
           const totalValue = rows.reduce((sum, row) => sum + (Number(row.closing_value) || 0), 0)
           return (
@@ -199,14 +255,22 @@ const STOCK_GROUP_COLUMNS = [
 ]
 
 function StockGroupsTab() {
+  const navigate = useNavigate()
+
   return (
-    <ReportBody
-      path="/reports/stock-groups"
-      columns={STOCK_GROUP_COLUMNS}
-      exportBasePath="/reports/stock-groups/export"
-      exportParams={{}}
-      filenameBase="stock_group_summary"
-    />
+    <>
+      <p className="table-hint">Click a stock group to view the items inside it.</p>
+      <ReportBody
+        path="/reports/stock-groups"
+        columns={STOCK_GROUP_COLUMNS}
+        exportBasePath="/reports/stock-groups/export"
+        exportParams={{}}
+        filenameBase="stock_group_summary"
+        onRowClick={(row) =>
+          navigate(`/reports/stock-group-items?group=${encodeURIComponent(row.stock_group)}`)
+        }
+      />
+    </>
   )
 }
 
@@ -242,14 +306,22 @@ const GODOWN_COLUMNS = [
 ]
 
 function GodownsTab() {
+  const navigate = useNavigate()
+
   return (
-    <ReportBody
-      path="/reports/godowns"
-      columns={GODOWN_COLUMNS}
-      exportBasePath="/reports/godowns/export"
-      exportParams={{}}
-      filenameBase="locations"
-    />
+    <>
+      <p className="table-hint">Click a location to view its Location Summary.</p>
+      <ReportBody
+        path="/reports/godowns"
+        columns={GODOWN_COLUMNS}
+        exportBasePath="/reports/godowns/export"
+        exportParams={{}}
+        filenameBase="locations"
+        onRowClick={(row) =>
+          navigate(`/reports/location-summary?location=${encodeURIComponent(row.godown)}`)
+        }
+      />
+    </>
   )
 }
 
@@ -380,11 +452,29 @@ const STOCK_VALUATION_COLUMNS = [
 
 function StockValuationTab() {
   const [toDate, setToDate] = useState('')
+  const [touched, setTouched] = useState(false)
+  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+
+  useEffect(() => {
+    if (!touched && defaultAsOnDate && !toDate) {
+      setToDate(defaultAsOnDate)
+    }
+  }, [defaultAsOnDate, touched, toDate])
+
   const params = { to_date: toDate || undefined }
 
   return (
     <>
-      <DateFilter label="As on Date" value={toDate} onChange={setToDate} />
+      <DateFilter
+        label="As on Date"
+        value={toDate}
+        onChange={(value) => {
+          setTouched(true)
+          setToDate(value)
+        }}
+      />
+      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
+      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
       <ReportBody
         path={`/reports/stock-valuation${toQuery(params)}`}
         columns={STOCK_VALUATION_COLUMNS}
@@ -419,11 +509,29 @@ const NEGATIVE_STOCK_COLUMNS = [
 
 function NegativeStockTab() {
   const [toDate, setToDate] = useState('')
+  const [touched, setTouched] = useState(false)
+  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+
+  useEffect(() => {
+    if (!touched && defaultAsOnDate && !toDate) {
+      setToDate(defaultAsOnDate)
+    }
+  }, [defaultAsOnDate, touched, toDate])
+
   const params = { to_date: toDate || undefined }
 
   return (
     <>
-      <DateFilter label="As on Date" value={toDate} onChange={setToDate} />
+      <DateFilter
+        label="As on Date"
+        value={toDate}
+        onChange={(value) => {
+          setTouched(true)
+          setToDate(value)
+        }}
+      />
+      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
+      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
       <ReportBody
         path={`/reports/negative-stock${toQuery(params)}`}
         columns={NEGATIVE_STOCK_COLUMNS}

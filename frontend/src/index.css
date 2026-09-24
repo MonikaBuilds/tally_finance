@@ -1044,6 +1044,14 @@ textarea {
   font-size: 13px;
 }
 
+/* Stock & Inventory drill-down hint text, e.g. "Click a stock item
+   to view its Stock Monthly Summary." above a clickable DataTable. */
+.table-hint {
+  margin: 0 0 12px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+}
+
 /* ==========================================================
    Cards
    ========================================================== */

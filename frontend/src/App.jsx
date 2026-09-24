@@ -14,6 +14,11 @@ import PendingInvoices from './pages/PendingInvoices'
 import TrialBalance from './pages/TrialBalance'
 import BalanceSheet from './pages/BalanceSheet'
 import Inventory from './pages/Inventory'
+import StockItemMonthlySummary from './pages/StockItemMonthlySummary'
+import StockItemVouchers from './pages/StockItemVouchers'
+import StockGroupItems from './pages/StockGroupItems'
+import LocationSummary from './pages/LocationSummary'
+import LocationMonthlySummary from './pages/LocationMonthlySummary'
 import TallyStatus from './pages/TallyStatus'
 import Chatbot from './pages/Chatbot'
 import Login from './pages/Login'
@@ -122,6 +127,11 @@ function App() {
         <Route path="/reports/pending-invoices" element={<PendingInvoices />} />
         {/* Stock Reports */}
         <Route path="/reports/inventory" element={<Inventory />} />
+        <Route path="/reports/stock-item-monthly" element={<StockItemMonthlySummary />} />
+        <Route path="/reports/stock-item-vouchers" element={<StockItemVouchers />} />
+        <Route path="/reports/stock-group-items" element={<StockGroupItems />} />
+        <Route path="/reports/location-summary" element={<LocationSummary />} />
+        <Route path="/reports/location-monthly" element={<LocationMonthlySummary />} />
 
         {LEGACY_REPORT_REDIRECTS.map(([from, to]) => (
           <Route key={from} path={from} element={<Navigate to={to} replace />} />

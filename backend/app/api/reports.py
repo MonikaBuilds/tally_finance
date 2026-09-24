@@ -25,6 +25,7 @@ from app.tally.service import (
     fetch_stock_valuation,
     fetch_negative_stock,
     fetch_inventory_register,
+    fetch_stock_group_items,
 )
 
 from app.financial.service import (
@@ -1173,6 +1174,626 @@ async def export_pending_invoices_report(
         rows=data["invoices"],
         company_name=company_name,
         filename_base="pending_invoices",
+    )
+
+
+# ============================================================
+# STOCK & INVENTORY
+# ============================================================
+#
+# These endpoints back the "Stock" section of the app:
+#   Stock -> Stock Summary
+#   Inventory:
+#     1. Stock Item     -> List of Stock Items -> Stock Monthly Summary
+#     2. Location        -> Select Location -> Location Summary
+#                            -> Location Monthly Summary
+#     3. Stock Group     -> Stock Group Summary -> Stock Monthly Summary
+#
+# All data is fetched live from the Tally server via app.tally.service
+# (which in turn uses the same TallyClient/XML pipeline as every other
+# report in this file) - nothing here is hardcoded.
+
+
+def _stock_summary_row(row: dict) -> dict:
+    """
+    Normalize a parse_stock_summary()/parse_stock_group_items() row
+    (name, parent, base_units, opening_quantity, opening_value,
+    closing_quantity, closing_value, rate) into the field names the
+    Stock Summary / Stock Item / Stock Group Items tables use.
+    """
+    return {
+        "stock_item": row.get("name"),
+        "stock_group": row.get("parent"),
+        "unit": row.get("base_units"),
+        "opening_quantity": row.get("opening_quantity", 0),
+        "opening_value": row.get("opening_value", 0),
+        "closing_quantity": row.get("closing_quantity", 0),
+        "closing_rate": row.get("rate", 0),
+        "closing_value": row.get("closing_value", 0),
+    }
+
+
+def _stock_group_row(row: dict) -> dict:
+    return {
+        "stock_group": row.get("name"),
+        "parent": row.get("parent"),
+        "base_units": row.get("base_units"),
+    }
+
+
+def _stock_category_row(row: dict) -> dict:
+    return {
+        "stock_category": row.get("name"),
+        "parent": row.get("parent"),
+    }
+
+
+def _godown_row(row: dict) -> dict:
+    return {
+        "godown": row.get("name"),
+        "parent": row.get("parent"),
+        "is_internal": row.get("is_internal"),
+    }
+
+
+def _stock_movement_row(row: dict) -> dict:
+    quantity = row.get("quantity", 0) or 0
+    return {
+        **row,
+        "value": row.get("amount", 0),
+        "direction": "Inward" if quantity >= 0 else "Outward",
+    }
+
+
+def _stock_valuation_row(row: dict) -> dict:
+    return {
+        "stock_item": row.get("name"),
+        "unit": row.get("base_units"),
+        "closing_quantity": row.get("quantity", 0),
+        "valuation_rate": row.get("rate", 0),
+        "valuation_value": row.get("value", 0),
+    }
+
+
+@router.get("/stock-summary")
+async def get_stock_summary_report(
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_summary(
+            company_name=company_name,
+            to_date=to_date,
+        )
+
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Stock Summary error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Summary from Tally",
+        )
+
+
+@router.get("/stock-summary/export/{file_format}")
+async def export_stock_summary_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_summary(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Summary export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Summary from Tally",
+        )
+
+    total_value = sum(row.get("closing_value") or 0 for row in rows)
+
+    return _export_response(
+        file_format=file_format,
+        title="Stock Summary",
+        columns=STOCK_SUMMARY_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="stock_summary",
+        footer={
+            "label": "Total Closing Value",
+            "key": "closing_value",
+            "value": total_value,
+        },
+        period=_period_label(to_date=to_date),
+    )
+
+
+# ------------------------------------------------------------------
+# Stock Item (single item detail - used to seed "opening balance"
+# for the Stock Item Monthly Summary screen)
+# ------------------------------------------------------------------
+
+@router.get("/stock-item")
+async def get_stock_item_report(
+    stock_item_name: str,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_item(
+            company_name=company_name,
+            stock_item_name=stock_item_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "item": rows[0] if rows else None,
+        }
+
+    except Exception as e:
+        print("Stock Item error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to fetch stock item '{stock_item_name}' from Tally",
+        )
+
+
+# ------------------------------------------------------------------
+# Stock Group Summary (list) + Stock Group Items (drill-down)
+# ------------------------------------------------------------------
+
+@router.get("/stock-groups")
+async def get_stock_groups_report(
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_stock_groups(company_name=company_name)
+        rows = [_stock_group_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Stock Groups error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Group Summary from Tally",
+        )
+
+
+@router.get("/stock-groups/export/{file_format}")
+async def export_stock_groups_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_stock_groups(company_name=company_name)
+        rows = [_stock_group_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Groups export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Group Summary from Tally",
+        )
+
+    return _export_response(
+        file_format=file_format,
+        title="Stock Group Summary",
+        columns=STOCK_GROUP_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="stock_group_summary",
+    )
+
+
+@router.get("/stock-group-items")
+async def get_stock_group_items_report(
+    group: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    """
+    Stock items that belong to a single Stock Group - what Tally
+    shows when you drill into a group from Stock Group Summary.
+    """
+    try:
+        report = await fetch_stock_group_items(
+            group_name=group,
+            company_name=company_name,
+            to_date=to_date,
+        )
+
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "group_name": group,
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Stock Group Items error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to fetch items for stock group '{group}' from Tally",
+        )
+
+
+@router.get("/stock-group-items/export/{file_format}")
+async def export_stock_group_items_report(
+    file_format: str,
+    group: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_group_items(
+            group_name=group,
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Group Items export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to fetch items for stock group '{group}' from Tally",
+        )
+
+    return _export_response(
+        file_format=file_format,
+        title=f"Stock Group: {group}",
+        columns=STOCK_SUMMARY_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base=f"stock_group_{group.strip().replace(' ', '_')}",
+        period=_period_label(to_date=to_date),
+    )
+
+
+# ------------------------------------------------------------------
+# Stock Categories
+# ------------------------------------------------------------------
+
+@router.get("/stock-categories")
+async def get_stock_categories_report(
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_stock_categories(company_name=company_name)
+        rows = [_stock_category_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Stock Categories error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Category Summary from Tally",
+        )
+
+
+@router.get("/stock-categories/export/{file_format}")
+async def export_stock_categories_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_stock_categories(company_name=company_name)
+        rows = [_stock_category_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Categories export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Category Summary from Tally",
+        )
+
+    return _export_response(
+        file_format=file_format,
+        title="Stock Category Summary",
+        columns=STOCK_CATEGORY_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="stock_category_summary",
+    )
+
+
+# ------------------------------------------------------------------
+# Locations (Godowns)
+# ------------------------------------------------------------------
+
+@router.get("/godowns")
+async def get_godowns_report(
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_godowns(company_name=company_name)
+        rows = [_godown_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Locations error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Locations from Tally",
+        )
+
+
+@router.get("/godowns/export/{file_format}")
+async def export_godowns_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_godowns(company_name=company_name)
+        rows = [_godown_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Locations export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Locations from Tally",
+        )
+
+    return _export_response(
+        file_format=file_format,
+        title="Locations",
+        columns=GODOWN_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="locations",
+    )
+
+
+# ------------------------------------------------------------------
+# Stock Movement - powers Stock Item Monthly Summary (stock_item_name),
+# Stock Item Vouchers (stock_item_name + from/to = one month) and
+# Location Summary / Location Monthly Summary (godown_name).
+# ------------------------------------------------------------------
+
+@router.get("/stock-movement")
+async def get_stock_movement_report(
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    stock_item_name: str | None = None,
+    godown_name: str | None = None,
+):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
+    try:
+        report = await fetch_stock_movement(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            stock_item_name=stock_item_name,
+            godown_name=godown_name,
+        )
+
+        rows = [_stock_movement_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("Stock Movement error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Movement from Tally",
+        )
+
+
+@router.get("/stock-movement/export/{file_format}")
+async def export_stock_movement_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    stock_item_name: str | None = None,
+    godown_name: str | None = None,
+):
+    try:
+        report = await fetch_stock_movement(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            stock_item_name=stock_item_name,
+            godown_name=godown_name,
+        )
+        rows = [_stock_movement_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Movement export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Movement from Tally",
+        )
+
+    title = "Stock Movement"
+    if stock_item_name:
+        title = f"Stock Movement: {stock_item_name}"
+    elif godown_name:
+        title = f"Stock Movement: {godown_name}"
+
+    return _export_response(
+        file_format=file_format,
+        title=title,
+        columns=STOCK_MOVEMENT_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="stock_movement",
+        period=_period_label(from_date=from_date, to_date=to_date),
+    )
+
+
+# ------------------------------------------------------------------
+# Stock Valuation / Negative Stock (additional reports already
+# wired into the Inventory Books screen)
+# ------------------------------------------------------------------
+
+@router.get("/stock-valuation")
+async def get_stock_valuation_report(
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_valuation(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_valuation_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Stock Valuation error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Valuation from Tally",
+        )
+
+
+@router.get("/stock-valuation/export/{file_format}")
+async def export_stock_valuation_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_stock_valuation(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_valuation_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Stock Valuation export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Valuation from Tally",
+        )
+
+    total_value = sum(row.get("valuation_value") or 0 for row in rows)
+
+    return _export_response(
+        file_format=file_format,
+        title="Stock Valuation",
+        columns=STOCK_VALUATION_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="stock_valuation",
+        footer={
+            "label": "Total Valuation",
+            "key": "valuation_value",
+            "value": total_value,
+        },
+        period=_period_label(to_date=to_date),
+    )
+
+
+@router.get("/negative-stock")
+async def get_negative_stock_report(
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_negative_stock(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+        }
+
+    except Exception as e:
+        print("Negative Stock error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Negative Stock from Tally",
+        )
+
+
+@router.get("/negative-stock/export/{file_format}")
+async def export_negative_stock_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = None,
+):
+    try:
+        report = await fetch_negative_stock(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    except Exception as e:
+        print("Negative Stock export error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Negative Stock from Tally",
+        )
+
+    return _export_response(
+        file_format=file_format,
+        title="Negative Stock",
+        columns=NEGATIVE_STOCK_COLUMNS,
+        rows=rows,
+        company_name=company_name,
+        filename_base="negative_stock",
+        period=_period_label(to_date=to_date),
     )
 
 
