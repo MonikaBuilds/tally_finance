@@ -1,7 +1,12 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.security.auth import create_access_token
+from app.security.auth import (
+    UserContext,
+    create_access_token,
+    get_current_user,
+)
+from app.security.permissions import get_user_access
 from app.security.user_store import authenticate_user
 
 
@@ -26,6 +31,11 @@ class LoginResponse(BaseModel):
     username: str
     companies: list[str]
 
+class CurrentUserResponse(BaseModel):
+    user_id: str
+    companies: list[str]
+    roles: list[str]
+    permissions: list[str]
 
 @router.post(
     "/login",
@@ -65,4 +75,26 @@ def login(request: LoginRequest) -> LoginResponse:
         user_id=user.user_id,
         username=user.username,
         companies=list(companies),
+    )
+
+@router.get(
+    "/me",
+    response_model=CurrentUserResponse,
+)
+def get_me(
+    current_user: UserContext = Depends(get_current_user),
+) -> CurrentUserResponse:
+    """
+    Return the authenticated user's current access information.
+    """
+
+    access = get_user_access(
+        current_user.user_id
+    )
+
+    return CurrentUserResponse(
+        user_id=current_user.user_id,
+        companies=list(current_user.allowed_companies),
+        roles=access["roles"],
+        permissions=access["permissions"],
     )
