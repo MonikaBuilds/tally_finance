@@ -146,34 +146,44 @@ def _ledger_entry_nodes(voucher):
     """
     Return all ledger-entry nodes inside a voucher.
 
-    Different Tally exports may use either:
+    Different Tally exports use either:
         ALLLEDGERENTRIES.LIST
         LEDGERENTRIES.LIST
 
-    Both direct and nested forms are checked.
+    These are ALTERNATES for the same entries, not two separate sets
+    - a GST-enabled voucher type commonly exports both tags for the
+    same ledger legs (once under each name, for compatibility with
+    older parsers), so collecting from all four path variants summed
+    every entry twice. ALLLEDGERENTRIES.LIST is preferred (Tally's
+    fuller, modern tag); LEDGERENTRIES.LIST is only used as a
+    fallback when a voucher has no ALLLEDGERENTRIES.LIST entries at
+    all.
     """
 
     result = []
     seen = set()
 
-    paths = [
+    def _collect(paths):
+        for path in paths:
+            for node in voucher.findall(path):
+                object_id = id(node)
+
+                if object_id in seen:
+                    continue
+
+                seen.add(object_id)
+                result.append(node)
+
+    _collect([
         "./ALLLEDGERENTRIES.LIST",
-        "./LEDGERENTRIES.LIST",
         ".//ALLLEDGERENTRIES.LIST",
-        ".//LEDGERENTRIES.LIST",
-    ]
+    ])
 
-    for path in paths:
-
-        for node in voucher.findall(path):
-
-            object_id = id(node)
-
-            if object_id in seen:
-                continue
-
-            seen.add(object_id)
-            result.append(node)
+    if not result:
+        _collect([
+            "./LEDGERENTRIES.LIST",
+            ".//LEDGERENTRIES.LIST",
+        ])
 
     return result
 
@@ -1571,7 +1581,7 @@ def parse_ledger_report(
         )
     )
 
-    return {
+    result = {
         "ledger_name": ledger_name,
         "opening_balance": period_opening,
         "closing_balance": period_closing,
@@ -1593,3 +1603,25 @@ def parse_ledger_report(
             else None
         ),
     }
+
+    # DEBUG: not a logic change - just prints what this function is
+    # about to return, so a ledger showing wrong data (reported for
+    # Input CGST / Output CGST / Cost of Sub-Contracting / Office Exp
+    # / Domestic Professional Services, while Bajaj Finance is fine)
+    # can be compared entry-by-entry against Tally's own screen
+    # instead of guessing where the mismatch is.
+    print(f"\n========== LEDGER REPORT PARSED: {ledger_name!r} ==========")
+    print(f"native_rows={len(native_rows)}  custom_rows={len(custom_rows)}")
+    print(f"opening_balance={period_opening}  closing_balance={period_closing}")
+    print(f"total_debit={total_debit}  total_credit={total_credit}")
+    for row in final_rows[:15]:
+        print(
+            f'  {row.get("date")}  {row.get("particulars")!r}  '
+            f'debit={row.get("debit")}  credit={row.get("credit")}  '
+            f'running_balance={row.get("running_balance")}'
+        )
+    if len(final_rows) > 15:
+        print(f"  ... and {len(final_rows) - 15} more entries")
+    print("========== END LEDGER REPORT PARSED ==========\n")
+
+    return result

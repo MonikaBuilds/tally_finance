@@ -103,7 +103,7 @@ def _nested_amount_text(node, *tags):
     return ""
 
 
-def _parse_dspacc_rows(root):
+def _parse_dspacc_rows(root, preserve_sign=False):
     """
     Parse the common DSPACCNAME / DSPACCINFO structure used by
     Tally's Trial Balance and Group Summary reports.
@@ -112,9 +112,34 @@ def _parse_dspacc_rows(root):
     values in the following DSPACCINFO element.
 
     This function preserves the behaviour of the original parser.
+
+    preserve_sign:
+        False (default, unchanged): every debit/credit value is
+        returned as a positive magnitude, exactly as before. Used by
+        Group Summary (shared with the Profit & Loss drill-down) -
+        left untouched.
+
+        True (Trial Balance only): the debit/credit value is returned
+        exactly as Tally's own DSPCLDRAMT/DSPCLDRAMT-style tag sent it,
+        sign included. Tally itself sometimes reports a group's
+        debit or credit as negative (shown on-screen as "(-)") when
+        that group's ledgers net to the opposite of what that column
+        normally holds - e.g. this company's Purchase Accounts shows
+        as (-)1,68,00,000 Debit, and Current Liabilities shows as
+        (-)1,43,21,300 Credit, on the live Tally screen. Parsing this
+        with abs() (the old behaviour) silently turned those into
+        positive numbers instead of matching Tally.
     """
     rows = []
     pending_name = None
+
+    # DEBUG: exact raw text Tally sent for debit/credit per row, so
+    # the correct sign mapping can be worked out from real data
+    # instead of guessed. Printed unconditionally (matching this
+    # project's existing debug-print convention elsewhere, e.g. the
+    # Ledger report) - safe to leave in, and remove once the sign
+    # rule is confirmed and implemented for good.
+    debug_rows = []
 
     for node in root.iter():
 
@@ -153,19 +178,24 @@ def _parse_dspacc_rows(root):
 
         if debit_text or credit_text:
 
-            # Preserve the sign Tally itself returns. Tally shows a
-            # contra/negative balance inside the Debit or Credit
-            # column as e.g. "(-)1,58,60,100.00" rather than moving it
-            # to the other column - abs() here used to throw that sign
-            # away, which is why a credit balance like Sundry
-            # Creditors could show up as a plain positive number
-            # instead of the negative Tally itself displays.
-            debit = to_float(
-                debit_text
-            )
+            # Read the amount exactly as Tally sent it (sign included).
+            # preserve_sign decides, per caller, whether that sign is
+            # then kept (Trial Balance) or discarded via abs() (Group
+            # Summary / Profit & Loss, unchanged from before) - see the
+            # preserve_sign note in this function's docstring.
+            debit = to_float(debit_text)
+            credit = to_float(credit_text)
 
-            credit = to_float(
-                credit_text
+            if not preserve_sign:
+                debit = abs(debit)
+                credit = abs(credit)
+
+            debug_rows.append(
+                {
+                    "name": pending_name,
+                    "debit_text": debit_text,
+                    "credit_text": credit_text,
+                }
             )
 
         else:
@@ -204,6 +234,14 @@ def _parse_dspacc_rows(root):
         )
 
         pending_name = None
+
+    print("\n========== TRIAL BALANCE / GROUP SUMMARY - RAW SIGN DEBUG ==========")
+    for row in debug_rows:
+        print(
+            f'{row["name"]!r}: debit_text={row["debit_text"]!r}  '
+            f'credit_text={row["credit_text"]!r}'
+        )
+    print("========== END RAW SIGN DEBUG ==========\n")
 
     return rows
 
@@ -663,7 +701,21 @@ def parse_trial_balance(xml_text: str):
     root = parse_xml(xml_text)
 
     rows = _parse_dspacc_rows(
-        root
+        root,
+        # preserve_sign is temporarily False again: an initial attempt
+        # to pass Tally's raw DSPCLDRAMT/DSPCLCRAMT sign straight
+        # through (preserve_sign=True) was tested against the live
+        # server and got MORE rows wrong than it fixed (Current
+        # Liabilities Debit, Current Assets Debit+Credit, Purchase
+        # Accounts Debit, Direct/Indirect Expenses Debit all came out
+        # with the wrong sign - only Loans, Sales and Current
+        # Liabilities Credit were right). So Tally's raw tag sign does
+        # NOT map 1:1 onto the "(-)" shown on screen, confirming the
+        # concern already raised above. Flip this back to True only
+        # once the correct mapping has been worked out from the
+        # debug_rows console output above (see chat/README) - guessing
+        # a third time is not worth the risk of a wrong TB going live.
+        preserve_sign=False,
     )
 
     return {
