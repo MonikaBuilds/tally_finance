@@ -425,20 +425,53 @@ async def get_group_summary_report(
 # TRIAL BALANCE
 # ============================================================
 
+def _trial_balance_kwargs(
+    company_name: str | None,
+    from_date: date | None,
+    to_date: date | None,
+) -> dict:
+    """
+    Keyword arguments for fetch_trial_balance().
+
+    from_date is only forwarded when the caller actually supplied
+    one, so a request without a From Date behaves exactly as it did
+    before the From/To filter was added.
+    """
+    kwargs = {
+        "company_name": company_name,
+        "to_date": to_date,
+    }
+
+    if from_date:
+        kwargs["from_date"] = from_date
+
+    return kwargs
+
+
 @router.get("/trial-balance")
 async def get_trial_balance_report(
     company_name: str | None = Depends(get_authorized_company),
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
         report = await fetch_trial_balance(
-            company_name=company_name,
-            to_date=to_date,
+            **_trial_balance_kwargs(
+                company_name, from_date, to_date
+            )
         )
 
         return {
             "success": True,
             "source": "tally",
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
             "report": _as_rows(report),
         }
 
@@ -455,12 +488,20 @@ async def get_trial_balance_report(
 async def export_trial_balance_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
         report = await fetch_trial_balance(
-            company_name=company_name,
-            to_date=to_date,
+            **_trial_balance_kwargs(
+                company_name, from_date, to_date
+            )
         )
 
     except Exception as e:
@@ -473,13 +514,16 @@ async def export_trial_balance_report(
 
     rows = _as_rows(report)
 
+    # See parse_group_summary in parsers/financial.py: Tally's own
+    # footer sums the magnitude of each row, not the signed value, so
+    # a negative ("(-)") row still adds its full amount to the total.
     total_debit = sum(
-        row.get("debit") or 0
+        abs(row.get("debit") or 0)
         for row in rows
     )
 
     total_credit = sum(
-        row.get("credit") or 0
+        abs(row.get("credit") or 0)
         for row in rows
     )
 
@@ -495,8 +539,119 @@ async def export_trial_balance_report(
             "key": "debit",
             "value": total_debit,
         },
-        period=_period_label(to_date=to_date),
+        period=_period_label(from_date=from_date, to_date=to_date),
     )
+
+
+# ------------------------------------------------------------
+# Trial Balance drill-down: Purchase Bills Pending
+#
+# Reached from Trial Balance -> Purchase Accounts -> Purchase Bills
+# to Come. Tally's "Purchase Bills Pending" screen lists goods that
+# have been received (Receipt Notes) but not yet billed, item by
+# item. The rows are built from the company's real Receipt Note
+# vouchers for the selected period, using the same voucher/stock
+# parser the Stock Item Vouchers screen already uses.
+# ------------------------------------------------------------
+
+@router.get("/trial-balance/purchase-bills-pending")
+async def get_trial_balance_purchase_bills_pending(
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
+    try:
+        report = await fetch_stock_movement(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+        # Tally's "Purchase Bills Pending" screen is built from its
+        # Tracking Number (Order/Bill pending) feature: goods received
+        # against a tracking number (usually a Receipt Note) minus
+        # whatever has since been billed against that same tracking
+        # number (a Purchase voucher referencing it). Filtering by
+        # voucher type name (e.g. only "Receipt Note") dropped items
+        # whose bill has been partially raised, which is exactly the
+        # case Tally's own screen is meant to surface - so every
+        # voucher type is considered here and the two are netted per
+        # (stock item, tracking number) instead.
+        groups: dict[tuple[str, str], dict] = {}
+
+        for row in report.get("rows", []):
+            tracking_number = row.get("tracking_number")
+            stock_item = row.get("stock_item")
+
+            if not tracking_number or not stock_item:
+                continue
+
+            key = (stock_item, tracking_number)
+
+            quantity = row.get("quantity", 0) or 0
+            amount = row.get("amount", 0) or 0
+
+            if key not in groups:
+                groups[key] = {
+                    "date": row.get("date"),
+                    "tracking_number": tracking_number,
+                    "stock_item": stock_item,
+                    "party": row.get("party"),
+                    "rate": row.get("rate", 0),
+                    "initial_quantity": 0,
+                    "pending_quantity": 0,
+                    "value": 0,
+                }
+
+            group = groups[key]
+
+            # The largest single movement against a tracking number is
+            # the original goods-received quantity; later, smaller
+            # movements are partial billings against it.
+            if abs(quantity) > abs(group["initial_quantity"]):
+                group["initial_quantity"] = quantity
+                group["date"] = row.get("date")
+                group["party"] = row.get("party") or group["party"]
+                group["rate"] = row.get("rate", 0) or group["rate"]
+
+            group["pending_quantity"] += quantity
+            group["value"] += amount
+
+        # Only tracking numbers that still have an outstanding
+        # quantity are "pending" - a fully billed one has netted to
+        # zero and Tally would no longer show it on this screen.
+        rows = [
+            group
+            for group in groups.values()
+            if round(group["pending_quantity"], 4) != 0
+        ]
+
+        rows.sort(key=lambda r: (r["date"] or "", r["tracking_number"] or ""))
+
+        return {
+            "success": True,
+            "source": "tally",
+            "report": rows,
+            "count": len(rows),
+            "total_value": sum(row["value"] or 0 for row in rows),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("Trial Balance Purchase Bills Pending error:", repr(e))
+
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Purchase Bills Pending from Tally",
+        )
 
 
 # ============================================================
