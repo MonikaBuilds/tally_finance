@@ -51,6 +51,33 @@ def map_dashboard_summary(reports, start, end, company):
         reason = None if period_matches else 'Tally returned a different or unverified P&L period; its net result is not used for the selected dates.'
         data[key] = metric(key, matches[0] if len(matches) == 1 else None, 'Profit and Loss (native HTML)', reason=reason)
 
+    # When the period is verified from Tally, a Net Loss means Net Profit is ₹ 0 (and vice-versa)
+    if period_matches:
+        if data.get('net_loss') is not None and data['net_loss'] > 0 and data.get('net_profit') is None:
+            data['net_profit'] = 0.0
+            sources['net_profit'] = {
+                'report': 'Profit and Loss (native HTML)',
+                'label': 'Net Profit',
+                'field': 'HTML result row (derived from verified Nett Loss)',
+                'raw': '0.00',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+        elif data.get('net_profit') is not None and data['net_profit'] > 0 and data.get('net_loss') is None:
+            data['net_loss'] = 0.0
+            sources['net_loss'] = {
+                'report': 'Profit and Loss (native HTML)',
+                'label': 'Net Loss',
+                'field': 'HTML result row (derived from verified Nett Profit)',
+                'raw': '0.00',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+
     groups = reports.get('groups', [])
     for key, name in [('cash_in_hand', 'Cash-in-Hand'), ('bank_balance', 'Bank Accounts')]:
         data[key] = metric(key, exact_row(groups, name), 'Group closing balances', period=False)
@@ -104,7 +131,35 @@ def map_dashboard_summary(reports, start, end, company):
             if (row := exact_row(pl, name)) is not None and row['amount'] is not None
         ] or None
 
-    data['sales_breakdown'] = breakdown(('Sales Accounts',))
+    # Enriched sales breakdown with revenue streams and P&L credit items
+    sales_items = []
+    if 'ledgers' in reports:
+        for ledger in reports['ledgers']:
+            parent = (ledger.get('parent') or '').strip().casefold()
+            if parent in ('sales accounts', 'sales'):
+                amt = abs(ledger['amount']) if ledger.get('amount') is not None else 0.0
+                if amt > 0:
+                    sales_items.append({'label': ledger['name'], 'value': amt, 'type': 'Sales Revenue'})
+
+    if not sales_items:
+        sales_items = breakdown(('Sales Accounts',)) or []
+
+    # Closing Stock (Credit trading item)
+    closing_stock_row = exact_row(pl, 'Less: Closing Stock') or exact_row(pl, 'Closing Stock')
+    if closing_stock_row and closing_stock_row.get('amount') is not None:
+        sales_items.append({'label': 'Closing Stock', 'value': abs(closing_stock_row['amount']), 'type': 'Inventory'})
+
+    # Gross Profit b/f
+    if period_matches:
+        for cells in native_pl['rows']:
+            nonempty = [c for c in cells if c]
+            if len(nonempty) == 2 and nonempty[0] in ('Gross Profit b/f', 'Gross Profit c/o'):
+                gp_val = to_optional_float(nonempty[1])
+                if gp_val:
+                    sales_items.append({'label': 'Gross Profit b/f', 'value': abs(gp_val), 'type': 'Trading Surplus'})
+                break
+
+    data['sales_breakdown'] = sales_items or breakdown(('Sales Accounts',))
     data['expense_breakdown'] = breakdown(('Direct Expenses', 'Indirect Expenses'))
     data.update({
         'revenue': data['total_sales'], 'expenses': data['total_purchases'],

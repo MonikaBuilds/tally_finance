@@ -62,7 +62,7 @@ def test_sales_and_expenses_do_not_include_stock_purchase_or_profit():
     assert result['sales_breakdown'] == [{'label': 'Sales Accounts', 'value': 7410000.0}]
     assert result['expense_breakdown'] == [{'label': 'Indirect Expenses', 'value': -270000.0}]
     assert result['net_loss'] == 265000.0
-    assert result['net_profit'] is None  # No opposite-result zero is fabricated.
+    assert result['net_profit'] == 0.0  # Verified period with Net Loss derives Net Profit of 0.0
 
 
 def test_net_result_requires_same_company_and_period():

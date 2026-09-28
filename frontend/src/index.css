@@ -278,6 +278,28 @@ textarea {
   font-size: 12px;
 }
 
+.sidebar-top-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sidebar-top-toggle:hover {
+  background: var(--surface-3, #f1f5f9);
+  color: var(--text-h);
+  border-color: var(--border-strong, #cbd5e1);
+}
+
 .sidebar-company {
   display: flex;
   align-items: center;
@@ -470,8 +492,22 @@ textarea {
 /* ---- Collapsed rail ---- */
 
 .app-shell[data-sidebar='collapsed'] .sidebar-brand {
+  position: relative;
   padding: 0;
   justify-content: center;
+}
+
+.app-shell[data-sidebar='collapsed'] .sidebar-brand .sidebar-top-toggle {
+  position: absolute;
+  top: 16px;
+  right: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong, #cbd5e1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  z-index: 20;
 }
 
 .app-shell[data-sidebar='collapsed'] .sidebar-brand-copy,
@@ -2521,6 +2557,122 @@ textarea {
   color: #dc2626 !important;
 }
 
+/* Unified KPI Grid: 10 Cards with Exact Uniform Size, Height, Width */
+.unified-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 1300px) {
+  .unified-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .unified-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .unified-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.unified-kpi-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 16px 14px 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 126px;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.unified-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong, #cbd5e1);
+}
+
+.unified-kpi-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.unified-kpi-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.unified-kpi-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unified-kpi-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  margin: 6px 0 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unified-kpi-subtext {
+  font-size: 11px;
+  color: var(--text-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dashboard-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 12px 0 4px 0;
+}
+
+.dashboard-section-title .section-icon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 /* Row 1: Executive KPI Cards */
 .kpi-cards-grid {
   display: grid;
@@ -2978,6 +3130,149 @@ textarea {
   font-weight: 600;
   color: var(--text-h);
 }
+
+/* Refined Donut Chart Component */
+.refined-donut-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.donut-visual-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.donut-segment {
+  cursor: pointer;
+  transition: stroke-width 0.2s ease, opacity 0.2s ease;
+}
+
+.donut-segment:hover {
+  stroke-width: 17px;
+  opacity: 0.9;
+}
+
+.donut-legend-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.legend-item-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-2, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  transition: all 0.15s ease;
+}
+
+.legend-item-card:hover {
+  background: var(--surface-3, #f1f5f9);
+  border-color: var(--border-strong, #cbd5e1);
+}
+
+.legend-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.legend-card-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.legend-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-item-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend-tag-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.legend-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.legend-card-amount {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-card-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.legend-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.legend-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.sales-breakdown-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: #166534;
+  margin-bottom: 8px;
+}
+
+.sales-breakdown-summary strong {
+  font-weight: 700;
+}
+
 
 .no-data-banner {
   padding: 24px 12px;

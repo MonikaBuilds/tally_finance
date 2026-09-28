@@ -37,6 +37,136 @@ function formatCurrency(val, isOffline = false, isLoading = false) {
   return '₹ ' + num.toLocaleString('en-IN')
 }
 
+// Color palettes for refined segmented donut charts
+const EXPENSE_PALETTE = ['#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#64748b']
+const SALES_PALETTE = ['#10b981', '#3b82f6', '#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899']
+
+function RefinedDonutChart({ items, centerTotal, centerLabel, palette = EXPENSE_PALETTE, isOffline, loading }) {
+  if (!items || items.length === 0) {
+    return (
+      <div className="unconnected-chart-banner">
+        <span>{isOffline ? 'Tally data unavailable' : 'No breakdown data available from Tally'}</span>
+      </div>
+    )
+  }
+
+  const validItems = items.filter(it => it && it.value !== undefined && it.value !== null)
+  const total = validItems.reduce((acc, curr) => acc + Math.abs(Number(curr.value) || 0), 0)
+
+  if (total === 0) {
+    return (
+      <div className="refined-donut-wrapper">
+        <div className="donut-visual-row">
+          <div className="donut-svg-container">
+            <svg viewBox="0 0 100 100" className="donut-svg">
+              <circle cx="50" cy="50" r="38" fill="none" stroke="var(--border)" strokeWidth="14" />
+            </svg>
+            <div className="donut-center-text">
+              <strong className="center-value">{centerTotal}</strong>
+              <span className="center-label">{centerLabel}</span>
+            </div>
+          </div>
+        </div>
+        <div className="donut-legend-card-list">
+          {validItems.map((item, idx) => (
+            <div key={idx} className="legend-item-card">
+              <div className="legend-card-top">
+                <div className="legend-card-identity">
+                  <span className="legend-color-dot" style={{ background: '#94a3b8' }} />
+                  <span className="legend-item-title">{item.label}</span>
+                </div>
+                <div className="legend-card-stats">
+                  <span className="legend-card-amount">₹ 0</span>
+                  <span className="legend-card-pct">0%</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const circumference = 2 * Math.PI * 38
+  let cumulative = 0
+
+  const segments = validItems.map((item, idx) => {
+    const val = Math.abs(Number(item.value) || 0)
+    const pct = (val / total) * 100
+    const arcLen = (pct / 100) * circumference
+    const strokeDash = Math.max(arcLen - 1.5, 0.5)
+    const offset = -cumulative
+    cumulative += arcLen
+    const color = palette[idx % palette.length]
+
+    return {
+      ...item,
+      val,
+      pct: pct.toFixed(1),
+      strokeDasharray: `${strokeDash} ${circumference}`,
+      strokeDashoffset: offset,
+      color,
+    }
+  })
+
+  return (
+    <div className="refined-donut-wrapper">
+      <div className="donut-visual-row">
+        <div className="donut-svg-container">
+          <svg viewBox="0 0 100 100" className="donut-svg">
+            <circle cx="50" cy="50" r="38" fill="none" stroke="var(--surface-2)" strokeWidth="14" />
+            {segments.map((seg, idx) => (
+              <circle
+                key={idx}
+                cx="50"
+                cy="50"
+                r="38"
+                fill="none"
+                stroke={seg.color}
+                strokeWidth="14"
+                strokeDasharray={seg.strokeDasharray}
+                strokeDashoffset={seg.strokeDashoffset}
+                strokeLinecap="round"
+                className="donut-segment"
+              >
+                <title>{`${seg.label}: ₹ ${Math.round(seg.val).toLocaleString('en-IN')} (${seg.pct}%)`}</title>
+              </circle>
+            ))}
+          </svg>
+          <div className="donut-center-text">
+            <strong className="center-value">{centerTotal}</strong>
+            <span className="center-label">{centerLabel}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="donut-legend-card-list">
+        {segments.map((seg, idx) => (
+          <div key={idx} className="legend-item-card">
+            <div className="legend-card-top">
+              <div className="legend-card-identity">
+                <span className="legend-color-dot" style={{ background: seg.color }} />
+                <span className="legend-item-title" title={seg.label}>{seg.label}</span>
+                {seg.type && <span className="legend-tag-badge">{seg.type}</span>}
+              </div>
+              <div className="legend-card-stats">
+                <span className="legend-card-amount">₹ {Math.round(seg.val).toLocaleString('en-IN')}</span>
+                <span className="legend-card-pct">{seg.pct}%</span>
+              </div>
+            </div>
+            <div className="legend-progress-bar">
+              <div
+                className="legend-progress-fill"
+                style={{ width: `${seg.pct}%`, background: seg.color }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Dashboard() {
   const navigate = useNavigate()
   const outletCtx = useOutletContext()
@@ -306,125 +436,160 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Row 1: Executive KPI Cards (4 Cards) */}
-      <div className="kpi-cards-grid">
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-box sales-icon">
-              <TrendingUp size={20} />
+      {/* Key Financial Indicators & Operational Balances (10 Equal Cards: 5x2 Grid) */}
+      <div className="dashboard-section-title">
+        <span className="section-icon-badge"><BarChart3 size={14} /></span>
+        <span>Key Financial Indicators & Operational Balances</span>
+      </div>
+
+      <div className="unified-kpi-grid">
+        {/* Card 1: Total Sales */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon sales-icon">
+              <TrendingUp size={18} />
             </div>
-            <div className="kpi-meta">
-              <span className="kpi-label">Total Sales</span>
-            </div>
+            <span className="unified-kpi-label">Total Sales</span>
           </div>
-          <div className="kpi-value">{formatCurrency(totalSales, isOffline, loading)}</div>
-          <div className="kpi-subtext">Selected P&L Period</div>
+          <div className="unified-kpi-value">{formatCurrency(totalSales, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Selected P&L Period</span>
+          </div>
         </div>
 
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-box purchases-icon">
-              <TrendingDown size={20} />
+        {/* Card 2: Total Purchases */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon purchases-icon">
+              <TrendingDown size={18} />
             </div>
-            <div className="kpi-meta">
-              <span className="kpi-label">Total Purchases</span>
-            </div>
+            <span className="unified-kpi-label">Total Purchases</span>
           </div>
-          <div className="kpi-value">{formatCurrency(totalPurchases, isOffline, loading)}</div>
-          <div className="kpi-subtext">Selected P&L Period</div>
+          <div className="unified-kpi-value">{formatCurrency(totalPurchases, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Selected P&L Period</span>
+          </div>
         </div>
 
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-box profit-icon">
-              <Wallet size={20} />
+        {/* Card 3: Net Profit */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon profit-icon">
+              <Wallet size={18} />
             </div>
-            <div className="kpi-meta">
-              <span className="kpi-label">Net Profit</span>
-            </div>
+            <span className="unified-kpi-label">Net Profit</span>
           </div>
-          <div className="kpi-value">{formatCurrency(netProfit, isOffline, loading)}</div>
-          <div className="kpi-subtext">Selected P&L Period</div>
+          <div className="unified-kpi-value">{formatCurrency(netProfit, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>After Tax & Overheads</span>
+          </div>
         </div>
 
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-box loss-icon">
-              <TrendingDown size={20} />
+        {/* Card 4: Net Loss */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon loss-icon">
+              <TrendingDown size={18} />
             </div>
-            <div className="kpi-meta">
-              <span className="kpi-label">Net Loss</span>
-            </div>
+            <span className="unified-kpi-label">Net Loss</span>
           </div>
-          <div className="kpi-value">{formatCurrency(netLoss, isOffline, loading)}</div>
-          <div className="kpi-subtext">Selected P&L Period</div>
+          <div className="unified-kpi-value">{formatCurrency(netLoss, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Operational Deficit</span>
+          </div>
+        </div>
+
+        {/* Card 5: Cash in Hand */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon green-icon">
+              <Wallet size={18} />
+            </div>
+            <span className="unified-kpi-label">Cash in Hand</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(cashInHand, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Liquid Cash Ledger</span>
+          </div>
+        </div>
+
+        {/* Card 6: Bank Balance */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon blue-icon">
+              <Landmark size={18} />
+            </div>
+            <span className="unified-kpi-label">Bank Balance</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(bankBalance, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Bank Accounts</span>
+          </div>
+        </div>
+
+        {/* Card 7: Receivables */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon orange-icon">
+              <UserCheck size={18} />
+            </div>
+            <span className="unified-kpi-label">Receivables</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(receivables, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Debtors Due</span>
+          </div>
+        </div>
+
+        {/* Card 8: Payables */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon purple-icon">
+              <ArrowUpRight size={18} />
+            </div>
+            <span className="unified-kpi-label">Payables</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(payables, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Creditors Due</span>
+          </div>
+        </div>
+
+        {/* Card 9: TDS Payable */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon red-icon">
+              <Receipt size={18} />
+            </div>
+            <span className="unified-kpi-label">TDS Payable</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(tdsPayable, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Statutory Liability</span>
+          </div>
+        </div>
+
+        {/* Card 10: GST Payable */}
+        <div className="unified-kpi-card">
+          <div className="unified-kpi-header">
+            <div className="unified-kpi-icon teal-icon">
+              <Percent size={18} />
+            </div>
+            <span className="unified-kpi-label">GST Payable</span>
+          </div>
+          <div className="unified-kpi-value">{formatCurrency(gstPayable, isOffline, loading)}</div>
+          <div className="unified-kpi-subtext">
+            <span>Tax Provision</span>
+          </div>
         </div>
       </div>
 
-      {/* Row 2: Quick Stat Cards Grid (6 Cards) */}
-      <div className="quick-stats-grid">
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon green-icon">
-            <Wallet size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">Cash in Hand</span>
-            <span className="stat-pill-value">{formatCurrency(cashInHand, isOffline, loading)}</span>
-          </div>
-        </div>
-
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon blue-icon">
-            <Landmark size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">Bank Balance</span>
-            <span className="stat-pill-value">{formatCurrency(bankBalance, isOffline, loading)}</span>
-          </div>
-        </div>
-
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon orange-icon">
-            <UserCheck size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">Receivables</span>
-            <span className="stat-pill-value">{formatCurrency(receivables, isOffline, loading)}</span>
-          </div>
-        </div>
-
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon purple-icon">
-            <ArrowUpRight size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">Payables</span>
-            <span className="stat-pill-value">{formatCurrency(payables, isOffline, loading)}</span>
-          </div>
-        </div>
-
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon red-icon">
-            <Receipt size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">TDS Payable</span>
-            <span className="stat-pill-value">{formatCurrency(tdsPayable, isOffline, loading)}</span>
-          </div>
-        </div>
-
-        <div className="stat-pill-card">
-          <div className="stat-pill-icon teal-icon">
-            <Percent size={16} />
-          </div>
-          <div className="stat-pill-content">
-            <span className="stat-pill-label">GST Payable</span>
-            <span className="stat-pill-value">{formatCurrency(gstPayable, isOffline, loading)}</span>
-          </div>
-        </div>
+      {/* Operational Balances & Ledger Outstandings */}
+      <div className="dashboard-section-title">
+        <span className="section-icon-badge"><Receipt size={14} /></span>
+        <span>Operational Balances & Ledger Outstandings</span>
       </div>
 
-      {/* Row 3: Middle Tables Grid (3 Cards) */}
       <div className="middle-tables-grid">
         {/* Card 1: Top Receivables (Debtors) */}
         <div className="table-card">
@@ -547,7 +712,12 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Row 4: Visual Analytics Charts Grid (3 Cards) */}
+      {/* Visual Analytics & Breakdown */}
+      <div className="dashboard-section-title">
+        <span className="section-icon-badge"><PieChart size={14} /></span>
+        <span>Financial Analytics & Expense Distributions</span>
+      </div>
+
       <div className="charts-grid">
         {/* Chart 1: Income vs Expense Bar Chart */}
         <div className="chart-card flex-2">
@@ -607,63 +777,35 @@ function Dashboard() {
           <div className="chart-card-header">
             <h3>Expense Breakdown</h3>
           </div>
-          {expenseBreakdown && expenseBreakdown.length > 0 ? (
-            <div className="donut-chart-wrapper">
-              <div className="donut-svg-container">
-                <svg viewBox="0 0 100 100" className="donut-svg">
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#e4e7ec" strokeWidth="18" />
-                </svg>
-                <div className="donut-center-text">
-                  <strong className="center-value">{formatCurrency(totalPurchases, isOffline, loading)}</strong>
-                  <span className="center-label">Total Expenses</span>
-                </div>
-              </div>
-              <div className="donut-legend-list">
-                {expenseBreakdown.map((item, idx) => (
-                  <div key={idx} className="legend-row">
-                    <span className="legend-name">{item.label}</span>
-                    <span className="legend-pct">₹ {Number(item.value).toLocaleString('en-IN')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="unconnected-chart-banner">
-              <span>{isOffline ? 'Tally data unavailable' : 'No category breakdown provided by Tally P&L'}</span>
-            </div>
-          )}
+          <RefinedDonutChart
+            items={expenseBreakdown}
+            centerTotal={formatCurrency(totalPurchases, isOffline, loading)}
+            centerLabel="Total Expenses"
+            palette={EXPENSE_PALETTE}
+            isOffline={isOffline}
+            loading={loading}
+          />
         </div>
 
         {/* Chart 3: Sales Breakdown Donut Chart */}
         <div className="chart-card">
           <div className="chart-card-header">
-            <h3>Sales Breakdown</h3>
+            <h3>Sales & Revenue Breakdown</h3>
           </div>
-          {salesBreakdown && salesBreakdown.length > 0 ? (
-            <div className="donut-chart-wrapper">
-              <div className="donut-svg-container">
-                <svg viewBox="0 0 100 100" className="donut-svg">
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#e4e7ec" strokeWidth="18" />
-                </svg>
-                <div className="donut-center-text">
-                  <strong className="center-value">{formatCurrency(totalSales, isOffline, loading)}</strong>
-                  <span className="center-label">Total Sales</span>
-                </div>
-              </div>
-              <div className="donut-legend-list">
-                {salesBreakdown.map((item, idx) => (
-                  <div key={idx} className="legend-row">
-                    <span className="legend-name">{item.label}</span>
-                    <span className="legend-pct">₹ {Number(item.value).toLocaleString('en-IN')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="unconnected-chart-banner">
-              <span>{isOffline ? 'Tally data unavailable' : 'No category breakdown provided by Tally P&L'}</span>
+          {salesBreakdown && salesBreakdown.length > 0 && (
+            <div className="sales-breakdown-summary">
+              <span>Gross Operating Turnover:</span>
+              <strong>{formatCurrency(totalSales, isOffline, loading)}</strong>
             </div>
           )}
+          <RefinedDonutChart
+            items={salesBreakdown}
+            centerTotal={formatCurrency(totalSales, isOffline, loading)}
+            centerLabel="Total Inflow"
+            palette={SALES_PALETTE}
+            isOffline={isOffline}
+            loading={loading}
+          />
         </div>
       </div>
     </div>

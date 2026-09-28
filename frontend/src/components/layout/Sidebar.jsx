@@ -78,7 +78,7 @@ function Sidebar({
           <span>Intelligence</span>
         </div>
 
-        {isMobile && (
+        {isMobile ? (
           <button
             type="button"
             className="sidebar-icon-button sidebar-close"
@@ -86,6 +86,17 @@ function Sidebar({
             aria-label="Close navigation"
           >
             <X size={18} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="sidebar-top-toggle"
+            onClick={onToggle}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
         )}
       </div>
@@ -183,22 +194,6 @@ function Sidebar({
             <LogOut size={18} />
           </button>
         )}
-
-        <button
-          type="button"
-          className="sidebar-toggle"
-          onClick={onToggle}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-expanded={!collapsed}
-          data-tooltip={tooltip('Expand sidebar')}
-        >
-          {collapsed ? (
-            <PanelLeftOpen size={18} />
-          ) : (
-            <PanelLeftClose size={18} />
-          )}
-          <span className="sidebar-toggle-label">Collapse</span>
-        </button>
       </div>
     </aside>
   )
