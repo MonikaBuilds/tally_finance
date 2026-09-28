@@ -25,6 +25,7 @@ from app.financial.calculations import normalize_account_name
 from app.tally.parsers.common import (
     parse_xml,
     to_float,
+    to_optional_float,
     _text,
     _first_text,
     format_tally_date,
@@ -790,6 +791,24 @@ def parse_balance_sheet(xml_text: str):
     """
     root = parse_xml(xml_text)
 
+    # Native Balance Sheet names and amounts are adjacent siblings.
+    # Keep blank/missing amounts attached to their own account, not the next one.
+    native_amounts = {}
+    for parent in root.iter():
+        children = list(parent)
+        for index, child in enumerate(children):
+            if child.tag != "BSNAME":
+                continue
+            account = child.find("DSPACCNAME")
+            if account is None:
+                continue
+            sibling = children[index + 1] if index + 1 < len(children) else None
+            native_amounts[account] = (
+                sibling.findtext("BSMAINAMT")
+                if sibling is not None and sibling.tag == "BSAMT"
+                else None
+            )
+
     rows = []
 
     for node in root.findall(
@@ -805,7 +824,7 @@ def parse_balance_sheet(xml_text: str):
         if not name:
             continue
 
-        amount = _first_text(
+        amount = native_amounts[node] if node in native_amounts else _first_text(
             node,
             "DSPCLAMT",
             "DSPAMOUNT",
@@ -815,7 +834,7 @@ def parse_balance_sheet(xml_text: str):
         rows.append(
             {
                 "name": name,
-                "amount": to_float(amount),
+                "amount": to_optional_float(amount),
             }
         )
 
@@ -902,6 +921,26 @@ def parse_bill_allocations(xml_text: str):
 # OUTSTANDING / RECEIVABLE / PAYABLE
 # ============================================================
 
+class OutstandingResult(list):
+    def __init__(self, items, report_type="receivable"):
+        super().__init__(items)
+        self.report_type = report_type
+        self.success = True
+        self.rows = items
+        self.count = len(items)
+
+    def get(self, key, default=None):
+        if key == "rows":
+            return self
+        if key == "count":
+            return len(self)
+        if key == "success":
+            return True
+        if key == "report_type":
+            return self.report_type
+        return default
+
+
 def parse_outstanding_report(
     xml_text: str,
     report_type: str = "receivable",
@@ -909,44 +948,65 @@ def parse_outstanding_report(
     """
     Parse Tally's outstanding report.
 
-    The report_type tells the caller whether these rows belong to
-    a receivable or payable request.
+    Supports native BILLFIXED bill collections and DSPACCNAME rows.
+    Returns an OutstandingResult list compatible with both dict and list consumers.
     """
     root = parse_xml(xml_text)
+    children = list(root)
+    bills = []
 
+    # 1. Native Tally Bills Receivable / Bills Payable (BILLFIXED)
+    for i, child in enumerate(children):
+        if child.tag.upper() == "BILLFIXED":
+            party = _first_text(child, "BILLPARTY", "PARTY", "NAME") or ""
+            ref = _first_text(child, "BILLREF", "REF") or ""
+            bdate = format_tally_date(_first_text(child, "BILLDATE", "DATE"))
+            amount = 0.0
+            due_date = None
+            overdue_days = 0
+
+            for j in range(i + 1, min(i + 6, len(children))):
+                sib = children[j]
+                stag = sib.tag.upper()
+                if stag == "BILLFIXED":
+                    break
+                if stag in ("BILLCL", "DSPCLAMT", "AMOUNT"):
+                    amount = abs(to_float(sib.text or "0"))
+                elif stag in ("BILLDUE", "DUEDATE"):
+                    due_date = format_tally_date(sib.text)
+                elif stag in ("BILLOVERDUE", "OVERDUEDAYS"):
+                    overdue_days = int(to_float(sib.text or "0"))
+
+            bills.append({
+                "party": party,
+                "bill_reference": ref,
+                "bill_date": bdate,
+                "outstanding_amount": amount,
+                "due_date": due_date,
+                "overdue_days": overdue_days,
+                "type": report_type,
+            })
+
+    if bills:
+        return OutstandingResult(bills, report_type=report_type)
+
+    # 2. Legacy / alternative DSPACCNAME report structure
     rows = []
-
-    for node in root.findall(
-        ".//DSPACCNAME"
-    ):
-
-        name = _first_text(
-            node,
-            "DSPDISPNAME",
-            "NAME",
-        )
-
+    for node in root.findall(".//DSPACCNAME"):
+        name = _first_text(node, "DSPDISPNAME", "NAME")
         if not name:
             continue
+        amount = _first_text(node, "DSPCLAMT", "DSPAMOUNT", "AMOUNT")
+        rows.append({
+            "party": name,
+            "name": name,
+            "bill_reference": "",
+            "bill_date": None,
+            "due_date": None,
+            "overdue_days": 0,
+            "outstanding_amount": to_float(amount),
+            "amount": to_float(amount),
+            "type": report_type,
+        })
 
-        amount = _first_text(
-            node,
-            "DSPCLAMT",
-            "DSPAMOUNT",
-            "AMOUNT",
-        )
-
-        rows.append(
-            {
-                "name": name,
-                "amount": to_float(amount),
-                "type": report_type,
-            }
-        )
-
-    return {
-        "success": True,
-        "report_type": report_type,
-        "rows": rows,
-        "count": len(rows),
-    }
+    return OutstandingResult(rows, report_type=report_type)

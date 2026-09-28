@@ -79,7 +79,7 @@ function Layout({ onLogout }) {
 
         <main className="app-content">
           <div className="content-inner">
-            <Outlet />
+            <Outlet context={{ onLogout }} />
           </div>
         </main>
       </div>

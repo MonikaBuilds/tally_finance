@@ -159,22 +159,23 @@ function Sidebar({
             </strong>
             <span>Authorized user</span>
           </div>
-
-          <button
-            type="button"
-            className="sidebar-icon-button sidebar-logout"
-            onClick={onLogout}
-            aria-label="Sign out"
-            title="Sign out"
-          >
-            <LogOut size={17} />
-          </button>
         </div>
 
-        {collapsed && (
+        {!collapsed ? (
           <button
             type="button"
-            className="sidebar-toggle"
+            className="sidebar-industrial-logout"
+            onClick={onLogout}
+            aria-label="Sign out"
+            title="Sign out of account"
+          >
+            <LogOut size={16} />
+            <span>Sign Out</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="sidebar-toggle sidebar-logout-collapsed"
             onClick={onLogout}
             aria-label="Sign out"
             data-tooltip="Sign out"

@@ -78,6 +78,7 @@ function App() {
 
     sessionStorage.removeItem('chat_user')
     sessionStorage.removeItem('selected_company')
+    sessionStorage.removeItem('tfi.dashboard.date_filter')
 
     setIsAuthenticated(false)
   }
