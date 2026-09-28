@@ -827,6 +827,235 @@ def parse_balance_sheet(xml_text: str):
 
 
 # ============================================================
+# BALANCE SHEET - structured (two-sided) report
+#
+# parse_balance_sheet() above is kept exactly as it was because the
+# chatbot tool still calls it. It looks for the amount *inside* the
+# DSPACCNAME element, but Tally sends the amount in the sibling
+# BSAMT element that follows it (BSMAINAMT / BSSUBAMT) - which is why
+# the Balance Sheet page showed 0 for every line. This function reads
+# the real structure and returns the Liabilities | Assets layout Tally
+# itself shows.
+# ============================================================
+
+# Tally reports credit balances as positive and debit balances as
+# negative (the same convention parse_profit_loss() relies on: a
+# positive amount lands on the credit/right side, a negative amount on
+# the debit/left side). On the Balance Sheet a credit balance sits on
+# the Liabilities side and a debit balance on the Assets side.
+# If the raw dump printed by parse_balance_sheet_report() ever shows
+# the opposite sign convention on a given Tally build, flip this one
+# flag - nothing else needs to change.
+BS_CREDIT_IS_POSITIVE = True
+
+# Sub-lines Tally prints under a Balance Sheet line (e.g. under
+# "Profit & Loss A/c"). They have no amount of their own when the
+# amount is blank, so they cannot be told apart from a top-level line
+# by the amount alone.
+_BS_CHILD_NAMES = {"opening balance", "current period"}
+
+# Reserved Tally primary groups whose nature is Assets. Used ONLY to
+# choose a side for a line whose amount is zero/blank (a non-zero
+# amount is always placed by its sign). Everything else defaults to
+# Liabilities, e.g. "Capital Account" with no balance.
+_BS_ASSET_GROUPS = {
+    "fixed assets",
+    "investments",
+    "current assets",
+    "misc. expenses (asset)",
+    "misc expenses (asset)",
+}
+
+_BS_DIFFERENCE_NAME = "difference in opening balances"
+
+
+def _bs_key(name):
+    return re.sub(r"\s+", " ", (name or "").strip()).lower()
+
+
+def parse_balance_sheet_report(xml_text: str):
+    """
+    Parse Tally's Balance Sheet report into Liabilities and Assets.
+
+    Tally sends, for every line, a DSPACCNAME element (the name)
+    followed by a BSAMT element holding BSMAINAMT (the line's amount)
+    and/or BSSUBAMT (the amount of a sub-line). Every value comes from
+    that response; nothing is hardcoded.
+
+    Returns:
+        {
+          "success": True,
+          "liabilities": [ {name, amount, is_group, children:[...] } ],
+          "assets":      [ ... ],
+          "total_liabilities": float,
+          "total_assets": float,
+          "difference": float,     # total_liabilities - total_assets
+        }
+
+    Amounts are positive magnitudes; the side a line sits on already
+    says whether it is a credit or a debit balance. A sub-line's
+    amount is signed relative to its parent (negative = opposite
+    direction, shown by Tally as "(-)").
+    """
+    root = parse_xml(xml_text)
+
+    # ---- 1. Pair every name with the amount element that follows ----
+    raw = []
+    pending_name = None
+
+    for node in root.iter():
+        tag = (node.tag or "").upper()
+
+        if tag == "DSPACCNAME":
+            name = _first_text(node, "DSPDISPNAME", "NAME")
+            pending_name = name or None
+            continue
+
+        if tag != "BSAMT" or pending_name is None:
+            continue
+
+        raw.append(
+            {
+                "name": pending_name,
+                "main_text": _text(node, "BSMAINAMT"),
+                "sub_text": _text(node, "BSSUBAMT"),
+            }
+        )
+        pending_name = None
+
+    # Same convention as the other financial fetchers: leave the raw
+    # values in the console so signs can be checked against Tally.
+    print("\n========== BALANCE SHEET - RAW LINES ==========")
+    for item in raw:
+        print(
+            f'{item["name"]!r}: BSMAINAMT={item["main_text"]!r}  '
+            f'BSSUBAMT={item["sub_text"]!r}'
+        )
+    print("========== END BALANCE SHEET - RAW LINES ==========\n")
+
+    # ---- 2. Group sub-lines under their parent line ----
+    lines = []
+
+    for item in raw:
+        has_main = bool(item["main_text"].strip())
+        has_sub = bool(item["sub_text"].strip())
+
+        is_child = bool(lines) and (
+            (has_sub and not has_main)
+            or (not has_main and _bs_key(item["name"]) in _BS_CHILD_NAMES)
+        )
+
+        if is_child:
+            lines[-1]["children"].append(
+                {
+                    "name": item["name"],
+                    "raw": to_float(item["sub_text"]),
+                    "has_amount": has_sub,
+                }
+            )
+            continue
+
+        lines.append(
+            {
+                "name": item["name"],
+                "raw": to_float(item["main_text"]),
+                "has_amount": has_main,
+                "children": [],
+            }
+        )
+
+    # ---- 3. Put each line on its side ----
+    liabilities = []
+    assets = []
+
+    for line in lines:
+        signed = line["raw"] if BS_CREDIT_IS_POSITIVE else -line["raw"]
+        # signed > 0 : credit balance  -> Liabilities side
+        # signed < 0 : debit balance   -> Assets side
+
+        if signed > 0:
+            side = "liabilities"
+        elif signed < 0:
+            side = "assets"
+        else:
+            side = (
+                "assets"
+                if _bs_key(line["name"]) in _BS_ASSET_GROUPS
+                else "liabilities"
+            )
+
+        direction = 1 if signed >= 0 else -1
+
+        row = {
+            "name": line["name"],
+            "amount": round(abs(signed), 2),
+            "is_group": True,
+            "children": [
+                {
+                    "name": child["name"],
+                    # Relative to the parent: same direction = positive.
+                    # None when Tally left the sub-line blank.
+                    "amount": (
+                        round(
+                            (child["raw"] if BS_CREDIT_IS_POSITIVE else -child["raw"])
+                            * direction,
+                            2,
+                        )
+                        if child["has_amount"]
+                        else None
+                    ),
+                    "is_group": False,
+                }
+                for child in line["children"]
+            ],
+        }
+
+        (liabilities if side == "liabilities" else assets).append(row)
+
+    total_liabilities = round(sum(r["amount"] for r in liabilities), 2)
+    total_assets = round(sum(r["amount"] for r in assets), 2)
+
+    # ---- 4. Difference in opening balances ----
+    # Tally shows this line itself when the opening balances do not
+    # tally, as the figure that makes the two sides equal. If the
+    # export already carried it, it was placed above like any other
+    # line and the sides already balance. If it did not, derive it
+    # from the two totals in exactly the way Tally defines it.
+    has_difference_line = any(
+        _bs_key(r["name"]) == _BS_DIFFERENCE_NAME
+        for r in liabilities + assets
+    )
+
+    gap = round(total_liabilities - total_assets, 2)
+
+    if not has_difference_line and abs(gap) >= 0.01:
+        derived = {
+            "name": "Difference in opening balances",
+            "amount": abs(gap),
+            "is_group": True,
+            "children": [],
+            "derived": True,
+        }
+
+        if gap < 0:
+            liabilities.append(derived)
+            total_liabilities = round(total_liabilities + abs(gap), 2)
+        else:
+            assets.append(derived)
+            total_assets = round(total_assets + abs(gap), 2)
+
+    return {
+        "success": True,
+        "liabilities": liabilities,
+        "assets": assets,
+        "total_liabilities": total_liabilities,
+        "total_assets": total_assets,
+        "difference": round(total_liabilities - total_assets, 2),
+        "count": len(liabilities) + len(assets),
+    }
+
+
+# ============================================================
 # BILL ALLOCATIONS
 # ============================================================
 

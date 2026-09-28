@@ -10,6 +10,7 @@ from app.tally.service import (
     fetch_group_summary,
     fetch_trial_balance,
     fetch_balance_sheet,
+    fetch_balance_sheet_report,
     fetch_bill_allocations,
     fetch_bills_receivable,
     fetch_bills_payable,
@@ -71,9 +72,13 @@ TRIAL_BALANCE_COLUMNS = [
     {"key": "credit", "label": "Credit"},
 ]
 
+# Balance Sheet is two-sided (Liabilities | Assets), like Tally's own
+# screen, so the export uses four columns - see _bs_rows_to_two_columns.
 BALANCE_SHEET_COLUMNS = [
-    {"key": "name", "label": "Particulars"},
-    {"key": "amount", "label": "Amount"},
+    {"key": "left_name", "label": "Liabilities"},
+    {"key": "left_amount", "label": "Amount"},
+    {"key": "right_name", "label": "Assets"},
+    {"key": "right_amount", "label": "Amount"},
 ]
 
 BILLS_COLUMNS = [
@@ -658,21 +663,82 @@ async def get_trial_balance_purchase_bills_pending(
 # BALANCE SHEET
 # ============================================================
 
+def _bs_rows_to_two_columns(report: dict) -> list:
+    """
+    Lay the Balance Sheet out the way Tally prints it: Liabilities on
+    the left, Assets on the right, sub-lines (e.g. Profit & Loss A/c ->
+    Current Period) directly under their parent, and a Total row.
+    """
+
+    def flatten(rows):
+        flat = []
+        for row in rows:
+            flat.append((row["name"], row["amount"]))
+            for child in row.get("children", []):
+                flat.append((f"    {child['name']}", child["amount"]))
+        return flat
+
+    left = flatten(report.get("liabilities", []))
+    right = flatten(report.get("assets", []))
+
+    rows = []
+
+    for i in range(max(len(left), len(right))):
+        l_name, l_amount = left[i] if i < len(left) else ("", "")
+        r_name, r_amount = right[i] if i < len(right) else ("", "")
+        rows.append(
+            {
+                "left_name": l_name,
+                "left_amount": l_amount,
+                "right_name": r_name,
+                "right_amount": r_amount,
+            }
+        )
+
+    rows.append(
+        {
+            "left_name": "Total",
+            "left_amount": report.get("total_liabilities", 0),
+            "right_name": "Total",
+            "right_amount": report.get("total_assets", 0),
+        }
+    )
+
+    return rows
+
+
 @router.get("/balance-sheet")
 async def get_balance_sheet_report(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
     to_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
-        report = await fetch_balance_sheet(
+        report = await fetch_balance_sheet_report(
             company_name=company_name,
+            from_date=from_date,
             to_date=to_date,
         )
 
         return {
             "success": True,
             "source": "tally",
-            "report": _as_rows(report),
+            "company_name": company_name,
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
+            "report": {
+                "liabilities": report["liabilities"],
+                "assets": report["assets"],
+                "total_liabilities": report["total_liabilities"],
+                "total_assets": report["total_assets"],
+                "difference": report["difference"],
+            },
         }
 
     except Exception as e:
@@ -687,12 +753,20 @@ async def get_balance_sheet_report(
 @router.get("/balance-sheet/export/{file_format}")
 async def export_balance_sheet_report(
     file_format: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
     to_date: date | None = None,
 ):
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
     try:
-        report = await fetch_balance_sheet(
+        report = await fetch_balance_sheet_report(
             company_name=company_name,
+            from_date=from_date,
             to_date=to_date,
         )
 
@@ -708,10 +782,10 @@ async def export_balance_sheet_report(
         file_format=file_format,
         title="Balance Sheet",
         columns=BALANCE_SHEET_COLUMNS,
-        rows=_as_rows(report),
+        rows=_bs_rows_to_two_columns(report),
         company_name=company_name,
         filename_base="balance_sheet",
-        period=_period_label(to_date=to_date),
+        period=_period_label(from_date=from_date, to_date=to_date),
     )
 
 

@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 
 from app.tally.client import TallyClient
@@ -54,6 +55,10 @@ from app.tally.parsers import (
 
 from app.tally.parsers.inventory import (
     filter_stock_movement_by_godown,
+)
+
+from app.tally.parsers.financial import (
+    parse_balance_sheet_report,
 )
 
 from app.tally.parsers.ledger import (
@@ -174,6 +179,154 @@ async def fetch_balance_sheet(
     )
 
     return parse_balance_sheet(response)
+
+
+async def fetch_balance_sheet_report(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    company_name: str | None = None,
+):
+    """
+    Balance Sheet page / export: both From Date and To Date are sent to
+    Tally as SVFROMDATE / SVTODATE, and the response is parsed into the
+    two-sided (Liabilities | Assets) structure Tally displays.
+
+    fetch_balance_sheet() above is left untouched for the chatbot tool.
+    """
+    request_xml = build_balance_sheet_request(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    print("\n========== BALANCE SHEET REQUEST ==========")
+    print(request_xml)
+    print("========== END BALANCE SHEET REQUEST ==========\n")
+
+    response = await client.send_xml(request_xml)
+
+    report = parse_balance_sheet_report(response)
+
+    # Tally's screen prints "Opening Balance" / "Current Period" under
+    # Profit & Loss A/c, but its XML export does not always carry those
+    # two sub-lines. When they are missing, rebuild them from Tally's own
+    # Profit & Loss for the same period (see below).
+    await _add_profit_loss_sublines(
+        report,
+        from_date=from_date,
+        to_date=to_date,
+        company_name=company_name,
+    )
+
+    return report
+
+
+_PROFIT_LOSS_LINE = re.compile(
+    r"^profit\s*(&|and)\s*loss(\s*(a/c|account))?$",
+    re.IGNORECASE,
+)
+
+
+def _apply_profit_loss_sublines(report: dict, net_result: float) -> bool:
+    """
+    Give the Profit & Loss A/c line of a parsed Balance Sheet its two
+    sub-lines, exactly as Tally shows them:
+
+        Profit & Loss A/c        <closing balance of the P&L account>
+          Opening Balance        <closing balance - current period>
+          Current Period         <net profit / loss of the period>
+
+    net_result is the period's result from Tally's Profit & Loss report
+    (positive = profit = credit, negative = loss = debit). The line's own
+    amount is already Tally's figure from the Balance Sheet, so Opening
+    Balance is simply what is left of it once the current period is taken
+    out. Sub-line amounts are signed relative to the parent (negative =
+    opposite direction, printed by Tally as "(-)"), and a zero sub-line
+    is left blank, the same as in Tally. Lines that already carry
+    sub-lines from Tally's own XML are never touched.
+
+    Returns True when a line was filled in.
+    """
+    changed = False
+
+    for side in ("liabilities", "assets"):
+        for line in report.get(side, []):
+            if not _PROFIT_LOSS_LINE.match((line.get("name") or "").strip()):
+                continue
+
+            if line.get("children"):
+                continue
+
+            amount = line.get("amount") or 0.0
+
+            # Credit balance -> Liabilities side (positive);
+            # debit balance  -> Assets side (negative).
+            direction = 1 if side == "liabilities" else -1
+            closing = amount * direction
+
+            def _relative(value):
+                value = round(value * direction, 2)
+                return value if abs(value) >= 0.005 else None
+
+            line["children"] = [
+                {
+                    "name": "Opening Balance",
+                    "amount": _relative(closing - net_result),
+                    "is_group": False,
+                    "derived": True,
+                },
+                {
+                    "name": "Current Period",
+                    "amount": _relative(net_result),
+                    "is_group": False,
+                    "derived": True,
+                },
+            ]
+
+            changed = True
+
+    return changed
+
+
+async def _add_profit_loss_sublines(
+    report: dict,
+    from_date: date | None,
+    to_date: date | None,
+    company_name: str | None,
+) -> None:
+    """
+    Fetch Tally's Profit & Loss for the Balance Sheet's period and use its
+    net result for the Profit & Loss A/c sub-lines. Only does anything when
+    the Balance Sheet has a Profit & Loss A/c line without sub-lines. It
+    can never break the Balance Sheet: if the P&L cannot be fetched the
+    Balance Sheet is returned as it was.
+    """
+    needs_sublines = any(
+        _PROFIT_LOSS_LINE.match((line.get("name") or "").strip())
+        and not line.get("children")
+        for side in ("liabilities", "assets")
+        for line in report.get(side, [])
+    )
+
+    if not needs_sublines:
+        return
+
+    try:
+        profit_loss = await fetch_profit_loss(
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+        )
+
+        net_result = (profit_loss.get("summary") or {}).get("net_result")
+
+        if net_result is None:
+            return
+
+        _apply_profit_loss_sublines(report, float(net_result))
+
+    except Exception as e:
+        print("Balance Sheet: could not add Profit & Loss sub-lines:", repr(e))
 
 
 # ============================================================

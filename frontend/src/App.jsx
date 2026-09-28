@@ -16,6 +16,8 @@ import TrialBalanceGroup from './pages/trialBalance/TrialBalanceGroup'
 import TrialBalanceOpeningStock from './pages/trialBalance/TrialBalanceOpeningStock'
 import TrialBalancePurchaseBillsPending from './pages/trialBalance/TrialBalancePurchaseBillsPending'
 import BalanceSheet from './pages/BalanceSheet'
+import BalanceSheetGroup from './pages/balanceSheet/BalanceSheetGroup'
+import ClosingStockSummary from './pages/ClosingStockSummary'
 import Inventory from './pages/Inventory'
 import StockItemMonthlySummary from './pages/StockItemMonthlySummary'
 import StockItemVouchers from './pages/StockItemVouchers'
@@ -119,6 +121,8 @@ function App() {
         <Route path="/reports/profit-loss" element={<ProfitLoss />} />
         <Route path="/reports/group-summary" element={<GroupSummary />} />
         <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
+        <Route path="/reports/balance-sheet/group" element={<BalanceSheetGroup />} />
+        <Route path="/reports/closing-stock" element={<ClosingStockSummary />} />
         <Route path="/reports/trial-balance" element={<TrialBalance />} />
         <Route path="/reports/trial-balance/group" element={<TrialBalanceGroup />} />
         <Route path="/reports/trial-balance/opening-stock" element={<TrialBalanceOpeningStock />} />
