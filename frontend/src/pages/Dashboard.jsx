@@ -556,7 +556,7 @@ function Dashboard() {
         </div>
 
         {/* Card 9: TDS Payable */}
-        <div className="unified-kpi-card">
+        <div className="unified-kpi-card" title={tdsPayable === 0 ? 'No TDS liabilities recorded in Tally' : undefined}>
           <div className="unified-kpi-header">
             <div className="unified-kpi-icon red-icon">
               <Receipt size={18} />
@@ -565,12 +565,12 @@ function Dashboard() {
           </div>
           <div className="unified-kpi-value">{formatCurrency(tdsPayable, isOffline, loading)}</div>
           <div className="unified-kpi-subtext">
-            <span>Statutory Liability</span>
+            <span>{tdsPayable === 0 ? 'No Dues Recorded' : 'Statutory Liability'}</span>
           </div>
         </div>
 
         {/* Card 10: GST Payable */}
-        <div className="unified-kpi-card">
+        <div className="unified-kpi-card" title="Net GST Payable (Output Tax minus Input Tax Credit)">
           <div className="unified-kpi-header">
             <div className="unified-kpi-icon teal-icon">
               <Percent size={18} />
@@ -579,7 +579,7 @@ function Dashboard() {
           </div>
           <div className="unified-kpi-value">{formatCurrency(gstPayable, isOffline, loading)}</div>
           <div className="unified-kpi-subtext">
-            <span>Tax Provision</span>
+            <span>{gstPayable !== null ? 'Net Payable (Output - ITC)' : 'Tax Provision'}</span>
           </div>
         </div>
       </div>

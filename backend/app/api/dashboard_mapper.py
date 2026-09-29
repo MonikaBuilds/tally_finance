@@ -82,9 +82,103 @@ def map_dashboard_summary(reports, start, end, company):
     for key, name in [('cash_in_hand', 'Cash-in-Hand'), ('bank_balance', 'Bank Accounts')]:
         data[key] = metric(key, exact_row(groups, name), 'Group closing balances', period=False)
 
-    # Duties & Taxes is not a verified GST/TDS statutory payable.
-    for key in ('tds_payable', 'gst_payable'):
-        data[key] = metric(key, None, 'Statutory payable report not verified', period=False)
+    # Duties & Taxes / Statutory liabilities: GST and TDS Payable
+    ledgers = reports.get('ledgers')
+    tax_ledgers = [
+        l for l in (ledgers or [])
+        if l.get('name') and (
+            (l.get('parent') or '').strip().casefold() in ('duties & taxes', 'current liabilities')
+            or any(k in l['name'].casefold() for k in ('gst', 'cgst', 'sgst', 'igst', 'utgst', 'tds'))
+        )
+    ]
+
+    if tax_ledgers:
+        gst_ledgers = []
+        tds_ledgers = []
+        for l in tax_ledgers:
+            name_lower = l['name'].casefold()
+            parent = (l.get('parent') or '').strip().casefold()
+
+            # TDS Ledgers (e.g. TDS Payable, TDS on Contractor, TDS 194C, etc.)
+            if (
+                name_lower.startswith('tds')
+                or 'tds payable' in name_lower
+                or 'tax deducted at source' in name_lower
+                or ('tds' in name_lower and parent in ('duties & taxes', 'current liabilities', 'provisions'))
+            ):
+                tds_ledgers.append(l)
+
+            # GST Ledgers (e.g. Input CGST, Output CGST, Input SGST, Output SGST, Input IGST, Output IGST, GST Payable)
+            elif any(k in name_lower for k in ('cgst', 'sgst', 'igst', 'utgst', 'gst')):
+                gst_ledgers.append(l)
+
+        # 1. GST Payable Calculation
+        if gst_ledgers:
+            output_tax = sum(
+                l['amount'] for l in gst_ledgers
+                if l.get('amount') is not None and l['amount'] > 0
+            )
+            input_credit = sum(
+                abs(l['amount']) for l in gst_ledgers
+                if l.get('amount') is not None and l['amount'] < 0
+            )
+            net_gst = max(0.0, output_tax - input_credit)
+            data['gst_payable'] = net_gst
+            sources['gst_payable'] = {
+                'report': 'Duties & Taxes Ledgers',
+                'label': 'Net GST Payable',
+                'field': f'Output GST (Rs. {output_tax:,.2f}) minus ITC (Rs. {input_credit:,.2f})',
+                'raw': f'{net_gst:.2f}',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+        else:
+            data['gst_payable'] = 0.0
+            sources['gst_payable'] = {
+                'report': 'Duties & Taxes Ledgers',
+                'label': 'GST Payable',
+                'field': 'No GST liability recorded in Tally',
+                'raw': '0.00',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+
+        # 2. TDS Payable Calculation
+        if tds_ledgers:
+            tds_total = sum(
+                l['amount'] for l in tds_ledgers
+                if l.get('amount') is not None and l['amount'] > 0
+            )
+            data['tds_payable'] = max(0.0, tds_total)
+            sources['tds_payable'] = {
+                'report': 'Duties & Taxes Ledgers',
+                'label': 'TDS Payable',
+                'field': 'TDS ledger credit balances',
+                'raw': f'{data["tds_payable"]:.2f}',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+        else:
+            data['tds_payable'] = 0.0
+            sources['tds_payable'] = {
+                'report': 'Duties & Taxes Ledgers',
+                'label': 'TDS Payable',
+                'field': 'No TDS liabilities recorded in Tally',
+                'raw': '0.00',
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'status': 'available',
+                'message': None,
+            }
+    else:
+        for key in ('tds_payable', 'gst_payable'):
+            data[key] = metric(key, None, 'Statutory payable report not verified', period=False)
 
     contexts = {}
     for key in ('receivables', 'payables'):

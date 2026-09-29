@@ -78,6 +78,30 @@ def test_tax_totals_are_not_inferred_from_duties_balances():
     assert result['tds_payable'] is None
 
 
+def test_gst_payable_computed_from_cgst_sgst_ledgers():
+    source = reports()
+    source['ledgers'].extend([
+        {'name': 'Input CGST', 'parent': 'Duties & Taxes', 'amount': -567450.0, 'raw': '-567450.00'},
+        {'name': 'Input SGST', 'parent': 'Duties & Taxes', 'amount': -567450.0, 'raw': '-567450.00'},
+        {'name': 'Output CGST', 'parent': 'Duties & Taxes', 'amount': 666900.0, 'raw': '666900.00'},
+        {'name': 'Output SGST', 'parent': 'Duties & Taxes', 'amount': 666900.0, 'raw': '666900.00'},
+    ])
+    result = map_dashboard_summary(source, START, END, 'Example company')
+    assert result['gst_payable'] == 198900.0
+    assert result['tds_payable'] == 0.0
+
+
+def test_tds_payable_computed_from_tds_ledgers():
+    source = reports()
+    source['ledgers'].extend([
+        {'name': 'TDS Payable', 'parent': 'Duties & Taxes', 'amount': 25000.0, 'raw': '25000.00'},
+        {'name': 'Output CGST', 'parent': 'Duties & Taxes', 'amount': 50000.0, 'raw': '50000.00'},
+    ])
+    result = map_dashboard_summary(source, START, END, 'Example company')
+    assert result['tds_payable'] == 25000.0
+    assert result['gst_payable'] == 50000.0
+
+
 def test_cash_preserves_tally_sign_and_nested_groups():
     source = reports()
     source['groups'].append({'name': 'Petty cash group', 'parent': 'Cash-in-Hand'})
