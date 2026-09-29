@@ -1,112 +1,167 @@
 /**
  * Dynamic Dashboard Date Filter Utility
- * Zero hardcoded dates or years. All ranges derived at runtime.
+ * Zero hardcoded dates or years. All ranges are derived at runtime.
  */
 
 const STORAGE_KEY = 'tfi.dashboard.date_filter'
 
 /**
- * Format a Date object to local YYYY-MM-DD string without UTC timezone offset shifts.
+ * Format a Date object to local YYYY-MM-DD without UTC timezone shifts.
  */
 export function formatLocalISO(dateObj) {
   const d = dateObj instanceof Date ? dateObj : new Date(dateObj)
+
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
+
   return `${year}-${month}-${day}`
 }
 
 /**
- * Get runtime today's date formatted as YYYY-MM-DD.
+ * Get today's runtime date as YYYY-MM-DD.
  */
 export function getRuntimeTodayISO() {
   return formatLocalISO(new Date())
 }
 
 /**
- * Dynamically determine the start of the Indian Financial Year (April 1st).
- * If current month is April through December (month index 3-11): April 1 of current year.
- * If current month is January through March (month index 0-2): April 1 of previous year.
+ * Dynamically determine the start of the Indian Financial Year.
+ *
+ * April–December:
+ *   FY starts April 1 of the current year.
+ *
+ * January–March:
+ *   FY starts April 1 of the previous year.
  */
 export function getDynamicFinancialYearStart(refDate = new Date()) {
   const d = refDate instanceof Date ? refDate : new Date(refDate)
+
   const currentMonth = d.getMonth()
   const currentYear = d.getFullYear()
-  const fyStartYear = currentMonth >= 3 ? currentYear : currentYear - 1
+
+  const fyStartYear =
+    currentMonth >= 3
+      ? currentYear
+      : currentYear - 1
+
   return `${fyStartYear}-04-01`
 }
 
 /**
- * Load initial Dashboard filter state:
- * Restores previously selected dates from sessionStorage if present.
- * Otherwise defaults to: FROM = Dynamic FY Start, TO = Runtime Today.
+ * Dynamically determine the end of the Indian Financial Year.
+ *
+ * Example:
+ * FY start: 2026-04-01
+ * FY end:   2027-03-31
+ */
+export function getDynamicFinancialYearEnd(refDate = new Date()) {
+  const d = refDate instanceof Date ? refDate : new Date(refDate)
+
+  const currentMonth = d.getMonth()
+  const currentYear = d.getFullYear()
+
+  const fyEndYear =
+    currentMonth >= 3
+      ? currentYear + 1
+      : currentYear
+
+  return `${fyEndYear}-03-31`
+}
+
+/**
+ * Load initial Dashboard filter state.
+ *
+ * If a valid filter exists in sessionStorage, restore it.
+ *
+ * Otherwise default to the current Indian Financial Year:
+ * FROM = Dynamic FY Start
+ * TO   = Dynamic FY End
  */
 export function getInitialDashboardFilter() {
   try {
     const saved = sessionStorage.getItem(STORAGE_KEY)
+
     if (saved) {
       const parsed = JSON.parse(saved)
+
       if (parsed?.fromDate && parsed?.toDate) {
-        // Clear stale 2026-04-01 range which has no transactions in company Tally instance
-        if (parsed.fromDate === '2026-04-01' && parsed.toDate === '2026-09-28') {
-          sessionStorage.removeItem(STORAGE_KEY)
-        } else {
-          return {
-            fromDate: parsed.fromDate,
-            toDate: parsed.toDate,
-            selectedPreset: parsed.selectedPreset || null,
-          }
+        return {
+          fromDate: parsed.fromDate,
+          toDate: parsed.toDate,
+          selectedPreset: parsed.selectedPreset || null,
         }
       }
     }
   } catch {
-    // sessionStorage unavailable or private browsing quota
+    // sessionStorage unavailable or invalid stored value.
   }
 
-  // Company active FY in Tally is 2025-2026
+  const now = new Date()
+
   return {
-    fromDate: '2025-04-01',
-    toDate: '2026-03-31',
+    fromDate: getDynamicFinancialYearStart(now),
+    toDate: getDynamicFinancialYearEnd(now),
     selectedPreset: '1y',
   }
 }
 
 /**
- * Persist safe filter state (dates and active preset only, NO financial data).
+ * Persist dashboard filter state.
+ *
+ * Only date/filter information is stored.
+ * No financial data is stored here.
  */
 export function saveDashboardFilter(filter) {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(filter))
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(filter)
+    )
   } catch {
-    // sessionStorage quota or unavailable
+    // sessionStorage quota exceeded or unavailable.
   }
 }
 
 /**
- * Clear stored dashboard filter (e.g. on logout).
+ * Clear stored dashboard filter.
+ *
+ * Used during logout.
  */
 export function clearDashboardFilter() {
   try {
     sessionStorage.removeItem(STORAGE_KEY)
   } catch {
-    // ignore
+    // Ignore storage errors.
   }
 }
 
 /**
- * Compute dynamic date range for presets (7d, 1m, 3m, 1y) relative to runtime baseDate.
+ * Compute date ranges for Dashboard presets.
+ *
+ * 7d  = previous 7 days
+ * 1m  = previous 1 month
+ * 3m  = previous 3 months
+ * 1y  = current Indian Financial Year
  */
-export function getPresetDateRange(presetKey, baseDate = new Date()) {
+export function getPresetDateRange(
+  presetKey,
+  baseDate = new Date()
+) {
+  const to = new Date(baseDate)
+
+  /**
+   * 1 Year represents the current Indian Financial Year.
+   */
   if (presetKey === '1y') {
     return {
-      fromDate: '2025-04-01',
-      toDate: '2026-03-31',
+      fromDate: getDynamicFinancialYearStart(to),
+      toDate: getDynamicFinancialYearEnd(to),
       selectedPreset: '1y',
     }
   }
 
-  const to = new Date(baseDate)
-  const from = new Date(baseDate)
+  const from = new Date(to)
 
   if (presetKey === '7d') {
     from.setDate(to.getDate() - 7)
@@ -124,14 +179,25 @@ export function getPresetDateRange(presetKey, baseDate = new Date()) {
 }
 
 /**
- * Validate that both dates are specified and fromDate <= toDate.
+ * Validate Dashboard custom date range.
  */
 export function validateDateRange(fromStr, toStr) {
   if (!fromStr || !toStr) {
-    return { valid: false, error: 'Both From Date and To Date are required.' }
+    return {
+      valid: false,
+      error: 'Both From Date and To Date are required.',
+    }
   }
+
   if (fromStr > toStr) {
-    return { valid: false, error: 'From Date cannot be after To Date.' }
+    return {
+      valid: false,
+      error: 'From Date cannot be after To Date.',
+    }
   }
-  return { valid: true, error: null }
+
+  return {
+    valid: true,
+    error: null,
+  }
 }

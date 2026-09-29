@@ -33,8 +33,12 @@ function formatCurrency(val, isOffline = false, isLoading = false) {
   if (isLoading && (val === null || val === undefined)) return '—'
   if (isOffline && (val === null || val === undefined)) return '—'
   if (val === null || val === undefined) return 'Unavailable'
-  const num = Math.abs(Math.round(Number(val)))
-  return '₹ ' + num.toLocaleString('en-IN')
+
+  const num = Math.round(Number(val))
+
+  return num < 0
+    ? `-₹ ${Math.abs(num).toLocaleString('en-IN')}`
+    : `₹ ${num.toLocaleString('en-IN')}`
 }
 
 // Color palettes for refined segmented donut charts
@@ -50,9 +54,18 @@ function RefinedDonutChart({ items, centerTotal, centerLabel, palette = EXPENSE_
     )
   }
 
-  const validItems = items.filter(it => it && it.value !== undefined && it.value !== null)
-  const total = validItems.reduce((acc, curr) => acc + Math.abs(Number(curr.value) || 0), 0)
+  const validItems = items.filter((item) => {
+    if (!item || item.value === null || item.value === undefined) {
+      return false
+    }
 
+    return Number.isFinite(Number(item.value))
+  })
+
+  const total = validItems.reduce(
+    (sum, item) => sum + Math.abs(Number(item.value)),
+    0
+  )
   if (total === 0) {
     return (
       <div className="refined-donut-wrapper">
@@ -91,7 +104,9 @@ function RefinedDonutChart({ items, centerTotal, centerLabel, palette = EXPENSE_
   let cumulative = 0
 
   const segments = validItems.map((item, idx) => {
-    const val = Math.abs(Number(item.value) || 0)
+    // Magnitude is used only to draw the donut segment.
+    // The authoritative Tally value itself is not modified.
+    const val = Math.abs(Number(item.value))
     const pct = (val / total) * 100
     const arcLen = (pct / 100) * circumference
     const strokeDash = Math.max(arcLen - 1.5, 0.5)
@@ -176,12 +191,15 @@ function Dashboard() {
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const selectedCompany = sessionStorage.getItem('selected_company') || 'Tally'
   const username = currentUser?.username || 'User'
-  const userRole = Array.isArray(currentUser?.roles) && currentUser.roles.length > 0
-    ? currentUser.roles[0]
-    : 'User'
+
+  const userRole =
+    Array.isArray(currentUser?.roles) && currentUser.roles.length > 0
+      ? currentUser.roles[0]
+      : 'User'
+
   const userInitial = username.charAt(0).toUpperCase()
 
-  // Dynamic filter state initialized from sessionStorage or FY 2025-2026 default
+  // Dynamic filter state
   const [filterState, setFilterState] = useState(getInitialDashboardFilter)
   const [draftFromDate, setDraftFromDate] = useState(filterState.fromDate)
   const [draftToDate, setDraftToDate] = useState(filterState.toDate)
@@ -193,6 +211,7 @@ function Dashboard() {
 
   const handleLogout = () => {
     clearDashboardFilter()
+
     if (outletCtx?.onLogout) {
       outletCtx.onLogout()
     } else {
@@ -203,63 +222,110 @@ function Dashboard() {
     }
   }
 
-  const queryUrl = `/dashboard/summary?from_date=${fromDate}&to_date=${toDate}&period=${selectedPreset || 'custom'}&t=${refreshKey}`
-  const { data: response, loading, error, refetch } = useFetch(queryUrl)
+  // Dashboard financial-data request
+  const queryUrl =
+    `/dashboard/summary?from_date=${fromDate}` +
+    `&to_date=${toDate}` +
+    `&period=${selectedPreset || 'custom'}` +
+    `&t=${refreshKey}`
 
+  const {
+    data: response,
+    loading,
+    error,
+  } = useFetch(queryUrl, {
+    timeoutMs: 45000,
+  })
+
+  // Tally connection-status request
+  // This is independent from dashboard financial-data loading.
+  const {
+    data: tallyStatus,
+    loading: tallyStatusLoading,
+    error: tallyStatusError,
+  } = useFetch('/tally/status', {
+    timeoutMs: 10000,
+  })
+
+  const isTallyConnected = tallyStatus?.connected === true
+
+  const isTallyDisconnected =
+    tallyStatus?.connected === false || Boolean(tallyStatusError)
+
+  // Preset period change.
+  // Changing the dates already changes queryUrl, so refreshKey
+  // does NOT need to be incremented here.
   const handlePeriodChange = (periodKey) => {
     setValidationError(null)
+
     const newRange = getPresetDateRange(periodKey)
+
     setDraftFromDate(newRange.fromDate)
     setDraftToDate(newRange.toDate)
     setFilterState(newRange)
     saveDashboardFilter(newRange)
-    setRefreshKey((prev) => prev + 1)
   }
 
   const handleCustomDateChange = (field, val) => {
     setValidationError(null)
+
     if (field === 'from') {
       setDraftFromDate(val)
     } else {
       setDraftToDate(val)
     }
-    // Custom date selection immediately clears preset visual highlight
-    setFilterState((prev) => ({ ...prev, selectedPreset: null }))
+
+    // Custom date selection clears preset visual highlight
+    setFilterState((prev) => ({
+      ...prev,
+      selectedPreset: null,
+    }))
   }
 
   const handleApplyCustomDates = () => {
     const check = validateDateRange(draftFromDate, draftToDate)
+
     if (!check.valid) {
       setValidationError(check.error)
       return
     }
+
     setValidationError(null)
+
     const nextFilter = {
       fromDate: draftFromDate,
       toDate: draftToDate,
       selectedPreset: null,
     }
+
     setFilterState(nextFilter)
     saveDashboardFilter(nextFilter)
     setRefreshKey((prev) => prev + 1)
   }
 
+  // Explicit Refresh button.
+  // refreshKey is intentionally changed here because the user
+  // specifically requested fresh data for the same date range.
   const handleRefresh = () => {
     const check = validateDateRange(draftFromDate, draftToDate)
+
     if (!check.valid) {
       setValidationError(check.error)
       return
     }
+
     setValidationError(null)
+
     const nextFilter = {
       fromDate: draftFromDate,
       toDate: draftToDate,
       selectedPreset: filterState.selectedPreset,
     }
+
     setFilterState(nextFilter)
     saveDashboardFilter(nextFilter)
+
     setRefreshKey((prev) => prev + 1)
-    if (refetch) refetch()
   }
 
   const [cachedData, setCachedData] = useState(null)
@@ -297,6 +363,13 @@ function Dashboard() {
   const salesBreakdown = isOffline ? null : (data.sales_breakdown || null)
   const incomeVsExpense = isOffline ? null : (data.income_vs_expense || null)
 
+  const availableIncomeVsExpense = Array.isArray(incomeVsExpense)
+    ? incomeVsExpense.filter(
+        (item) =>
+          item?.status === 'available' &&
+          (item.income !== null || item.expense !== null)
+      )
+    : []
   return (
     <div className="dashboard-container">
       {/* Non-blocking top progress bar during background refetches */}
@@ -307,20 +380,32 @@ function Dashboard() {
         <div className="dashboard-header-brand">
           <div className="dashboard-title-row">
             <h1>Executive Financial Dashboard</h1>
-            {loading && !response?.data ? (
+            {tallyStatusLoading && !tallyStatus ? (
               <span className="live-status-pill loading">
                 <span className="pulse-dot loading" />
-                Connecting...
+                Checking Tally...
               </span>
-            ) : isOffline ? (
-              <span className="live-status-pill offline" title={error || response?.error || 'Tally server offline'}>
+            ) : isTallyDisconnected ? (
+              <span
+                className="live-status-pill offline"
+                title={
+                  tallyStatusError ||
+                  tallyStatus?.message ||
+                  'Tally server unavailable'
+                }
+              >
                 <span className="pulse-dot offline" />
-                Tally Offline
+                Tally Disconnected
               </span>
-            ) : (
+            ) : isTallyConnected ? (
               <span className="live-status-pill">
                 <span className="pulse-dot" />
-                Tally Live
+                Tally Connected
+              </span>
+            ) : (
+              <span className="live-status-pill loading">
+                <span className="pulse-dot loading" />
+                Checking Tally...
               </span>
             )}
           </div>
@@ -723,7 +808,7 @@ function Dashboard() {
         <div className="chart-card flex-2">
           <div className="chart-card-header">
             <h3>Income vs Expense</h3>
-            {incomeVsExpense && incomeVsExpense.length > 0 && (
+            {availableIncomeVsExpense.length > 0 && (
               <div className="chart-legend">
                 <div className="legend-item">
                   <span className="legend-dot sales-dot" />
@@ -736,12 +821,17 @@ function Dashboard() {
               </div>
             )}
           </div>
-          {incomeVsExpense && incomeVsExpense.length > 0 ? (
+          {availableIncomeVsExpense.length > 0 ? (
             <div className="bar-chart-container">
               <div className="bars-wrapper">
                 {(() => {
-                  const maxVal = Math.max(...incomeVsExpense.map(d => Math.max(d.income, d.expense)), 1)
-                  return incomeVsExpense.map((item, idx) => {
+                  const maxVal = Math.max(
+                    ...availableIncomeVsExpense.map((d) =>
+                      Math.max(d.income ?? 0, d.expense ?? 0)
+                    ),
+                    1
+                  )
+                  return availableIncomeVsExpense.map((item, idx) => {
                     const incomeHeight = Math.max(Math.round((item.income / maxVal) * 160), item.income > 0 ? 6 : 0)
                     const expenseHeight = Math.max(Math.round((item.expense / maxVal) * 160), item.expense > 0 ? 6 : 0)
                     return (

@@ -62,12 +62,15 @@ async function handleResponse(response) {
 }
 
 
-export async function apiGet(path) {
+export async function apiGet(path, options = {}) {
+  const { signal } = options;
+
   const response = await fetch(
     `${API_BASE_URL}${path}`,
     {
       method: "GET",
       headers: buildHeaders(),
+      signal,
     }
   );
 
