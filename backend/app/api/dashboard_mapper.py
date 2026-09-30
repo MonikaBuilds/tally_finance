@@ -191,9 +191,25 @@ def map_dashboard_summary(reports, start, end, company):
             )
         return metric(key, row, "Profit and Loss", reason=pl_reason)
 
+    sales_value = pl_line(
+        "total_sales",
+        exact_row(pl, "Sales Accounts"),
+        "sales",
+    )
+
+    purchase_value = pl_line(
+        "total_purchases",
+        purchase_row(pl),
+        "purchase",
+    )
+
     data = {
-        "total_sales": pl_line("total_sales", exact_row(pl, "Sales Accounts"), "sales"),
-        "total_purchases": pl_line("total_purchases", purchase_row(pl), "purchase"),
+        "total_sales": sales_value,
+        "total_purchases": (
+            abs(purchase_value)
+            if purchase_value is not None
+            else None
+        ),
     }
 
     for key, names in [
