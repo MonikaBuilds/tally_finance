@@ -42,19 +42,20 @@ function Sidebar({
   onNavigate,
   onCloseMobile,
   onLogout,
+  companies = [],
+  selectedCompany,
+  onCompanyChange,
 }) {
   const user = getCurrentUser()
 
-  const companies = Array.isArray(user?.companies)
-    ? user.companies
-    : []
+  const hasWildcard =
+    Array.isArray(user?.companies) && user.companies.includes('*')
 
   const companyLabel =
-    companies.length === 1
-      ? companies[0]
-      : companies.length > 1
-        ? `${companies.length} companies`
-        : 'No company'
+    selectedCompany ||
+    (hasWildcard ? 'All companies' : 'No company')
+
+  const canSwitchCompany = companies.length > 1 && !collapsed
 
   const roles = Array.isArray(user?.roles)
     ? user.roles
@@ -109,7 +110,23 @@ function Sidebar({
 
         <div className="sidebar-company-copy">
           <span>Company</span>
-          <strong title={companyLabel}>{companyLabel}</strong>
+          {canSwitchCompany ? (
+            <select
+              className="sidebar-company-select"
+              value={selectedCompany || ''}
+              onChange={(event) => onCompanyChange?.(event.target.value)}
+              aria-label="Select company"
+              title={companyLabel}
+            >
+              {companies.map((company) => (
+                <option key={company} value={company}>
+                  {company}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <strong title={companyLabel}>{companyLabel}</strong>
+          )}
         </div>
       </div>
 

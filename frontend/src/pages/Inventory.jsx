@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { AlertCircle, PackageSearch } from 'lucide-react'
 
@@ -32,32 +32,16 @@ function toQuery(params) {
 function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase, footer, onRowClick }) {
   const { data: response, loading, error } = useFetch(path)
 
-  // TEMP DEBUG - shows the exact request + raw response, so this can be
-  // read straight off the page (no DevTools needed). Remove once the
-  // "no records" issue is confirmed fixed.
-  const debugLine = (
-    <p style={{ fontSize: 12, color: '#888' }}>
-      Debug: GET {path || '(no path - missing required params)'}
-      {' | '}
-      {loading
-        ? 'loading…'
-        : error
-        ? `fetch error: ${error}`
-        : `response: ${JSON.stringify(response)?.slice(0, 500)}`}
-    </p>
-  )
-
-  if (loading) return (<>{debugLine}<Loader /></>)
-  if (error) return (<>{debugLine}<ErrorMessage message={error} /></>)
+  if (loading) return <Loader />
+  if (error) return <ErrorMessage message={error} />
   if (!response?.success) {
-    return (<>{debugLine}<ErrorMessage message={response?.error || response?.message} /></>)
+    return <ErrorMessage message={response?.error || response?.message} />
   }
 
   const report = response.report || []
 
   return (
     <>
-      {debugLine}
       <div className="card-toolbar">
         <ExportButtons
           basePath={exportBasePath}
@@ -184,7 +168,7 @@ function StockSummaryTab() {
   const navigate = useNavigate()
   const [toDate, setToDate] = useState('')
   const [touched, setTouched] = useState(false)
-  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+  const { date: defaultAsOnDate } = useDefaultAsOnDate()
 
   // Prefill with the end of the company's current financial year (once
   // we know it) so the report isn't silently run "as on" today's date,
@@ -207,8 +191,6 @@ function StockSummaryTab() {
           setToDate(value)
         }}
       />
-      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
-      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
       <p className="table-hint">Click a stock item to view its Stock Monthly Summary.</p>
       <ReportBody
         path={`/reports/stock-summary${toQuery(params)}`}
@@ -453,7 +435,7 @@ const STOCK_VALUATION_COLUMNS = [
 function StockValuationTab() {
   const [toDate, setToDate] = useState('')
   const [touched, setTouched] = useState(false)
-  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+  const { date: defaultAsOnDate } = useDefaultAsOnDate()
 
   useEffect(() => {
     if (!touched && defaultAsOnDate && !toDate) {
@@ -473,8 +455,6 @@ function StockValuationTab() {
           setToDate(value)
         }}
       />
-      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
-      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
       <ReportBody
         path={`/reports/stock-valuation${toQuery(params)}`}
         columns={STOCK_VALUATION_COLUMNS}
@@ -510,7 +490,7 @@ const NEGATIVE_STOCK_COLUMNS = [
 function NegativeStockTab() {
   const [toDate, setToDate] = useState('')
   const [touched, setTouched] = useState(false)
-  const { date: defaultAsOnDate, debug } = useDefaultAsOnDate()
+  const { date: defaultAsOnDate } = useDefaultAsOnDate()
 
   useEffect(() => {
     if (!touched && defaultAsOnDate && !toDate) {
@@ -530,8 +510,6 @@ function NegativeStockTab() {
           setToDate(value)
         }}
       />
-      {/* TEMP DEBUG - remove once auto-fill is confirmed working */}
-      <p style={{ fontSize: 12, color: '#888' }}>Debug: {debug}</p>
       <ReportBody
         path={`/reports/negative-stock${toQuery(params)}`}
         columns={NEGATIVE_STOCK_COLUMNS}
@@ -585,6 +563,11 @@ const TABS = [
 
 ]
 
+const TAB_GROUPS = [
+  { label: 'Summary', tabs: TABS.filter((tab) => !REGISTERS.some((r) => r.key === tab.key)) },
+  { label: 'Registers', tabs: TABS.filter((tab) => REGISTERS.some((r) => r.key === tab.key)) },
+]
+
 function Inventory() {
   const [activeTab, setActiveTab] = useState(TABS[0].key)
 
@@ -600,30 +583,37 @@ function Inventory() {
         subtitle="Summary and Registers, straight from Tally's Inventory Books menu"
       />
 
+      {/* One row per group with its label; tabs wrap instead of
+          scrolling so every register stays visible. */}
       <div className="inventory-tabs" role="tablist" aria-label="Inventory reports">
-        <span className="tab-group-label">Summary</span>
-        {TABS.map((tab) => (
-          <Fragment key={tab.key}>
-            {tab.key === REGISTERS[0].key && (
-              <>
-                <span className="tab-divider" aria-hidden="true" />
-                <span className="tab-group-label">Registers</span>
-              </>
-            )}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab.key === activeTab}
-              className={
-                tab.key === activeTab
-                  ? 'inventory-tab inventory-tab--active'
-                  : 'inventory-tab'
-              }
-              onClick={() => setActiveTab(tab.key)}
+        {TAB_GROUPS.map((group) => (
+          <div key={group.label} className="inventory-tab-group" role="presentation">
+            <span className="tab-group-label" id={`tab-group-${group.label}`}>
+              {group.label}
+            </span>
+            <div
+              className="inventory-tab-list"
+              role="group"
+              aria-labelledby={`tab-group-${group.label}`}
             >
-              {tab.label}
-            </button>
-          </Fragment>
+              {group.tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab.key === activeTab}
+                  className={
+                    tab.key === activeTab
+                      ? 'inventory-tab inventory-tab--active'
+                      : 'inventory-tab'
+                  }
+                  onClick={() => setActiveTab(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
 

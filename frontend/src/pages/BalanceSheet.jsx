@@ -11,7 +11,7 @@ import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
 import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
 import { buildQuery } from './trialBalance/tbRouting'
-import { balanceSheetLinePath, balanceSheetChildPath } from './balanceSheet/bsRouting'
+import { balanceSheetLinePath, balanceSheetChildPath } from './Balancesheet/bsRouting'
 
 // Tally prints Balance Sheet amounts to the paisa (47,21,200.00), so the
 // two-decimal form is used here rather than the whole-rupee formatter.
