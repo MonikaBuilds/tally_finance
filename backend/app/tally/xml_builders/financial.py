@@ -154,9 +154,14 @@ def build_trial_balance_request(
 def build_balance_sheet_request(
     company_name: str | None = None,
     to_date: date | None = None,
+    from_date: date | None = None,
 ) -> str:
 
     company_xml = build_company_variable(company_name)
+    # SVFROMDATE is only emitted when a From Date is supplied, so every
+    # caller that does not pass one (e.g. the chatbot tool) sends exactly
+    # the same request as before.
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
     to_date_xml = _date_variable("SVTODATE", to_date)
 
     return f"""
@@ -174,6 +179,7 @@ def build_balance_sheet_request(
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 
                 {company_xml}
+                {from_date_xml}
                 {to_date_xml}
 
             </STATICVARIABLES>

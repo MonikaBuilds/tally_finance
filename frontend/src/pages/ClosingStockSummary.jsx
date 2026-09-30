@@ -1,3 +1,5 @@
+import { useLocation, useNavigate } from 'react-router'
+import { ArrowLeft } from 'lucide-react'
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
@@ -10,12 +12,37 @@ import {
   formatQuantity,
 } from '../utils/format'
 
+function toQuery(params) {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(
+      ([, value]) => value !== undefined && value !== null && value !== ''
+    )
+  ).toString()
+
+  return query ? `?${query}` : ''
+}
+
+/*
+ * Stock Group Summary (closing stock). Reached from the Balance Sheet:
+ * Current Assets -> Closing Stock. The Balance Sheet's From/To dates
+ * arrive in the URL (?from_date=...&to_date=...); the closing stock is
+ * fetched as at the To Date. Clicking an item opens its Stock Item
+ * Monthly Summary for the same period. With no dates in the URL it
+ * behaves as it did before.
+ */
 function ClosingStockSummary() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const urlParams = new URLSearchParams(location.search)
+
+  const fromDate = urlParams.get('from_date') || ''
+  const toDate = urlParams.get('to_date') || ''
+
   const {
     data: response,
     loading,
     error,
-  } = useFetch('/reports/stock-summary')
+  } = useFetch(`/reports/stock-summary${toQuery({ to_date: toDate })}`)
 
   if (loading) return <Loader />
 
@@ -84,19 +111,44 @@ function ClosingStockSummary() {
     <>
       <PageHeader
         title="Stock Group Summary"
-        subtitle="Closing stock details fetched from Tally"
+        subtitle={
+          fromDate && toDate
+            ? `Closing stock details fetched from Tally - ${fromDate} to ${toDate}`
+            : 'Closing stock details fetched from Tally'
+        }
         actions={
-          <ExportButtons
-            basePath="/reports/stock-summary/export"
-            filenameBase="closing_stock_summary"
-          />
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigate(-1)}
+            >
+              <ArrowLeft size={16} /> Back
+            </button>
+            <ExportButtons
+              basePath="/reports/stock-summary/export"
+              params={{ to_date: toDate }}
+              filenameBase="closing_stock_summary"
+            />
+          </>
         }
       />
 
       <Card title="Stock Group Summary">
+        <p className="table-hint">Click a stock item to view its Stock Monthly Summary.</p>
+
         <DataTable
           columns={columns}
           rows={rows}
+          onRowClick={(row) =>
+            navigate(
+              `/reports/stock-item-monthly${toQuery({
+                item: row.stock_item || row.name,
+                from: fromDate,
+                to: toDate,
+              })}`
+            )
+          }
         />
 
         <div className="table-footer">
