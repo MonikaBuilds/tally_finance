@@ -1,0 +1,1158 @@
+/* ==========================================================
+   Dashboard
+   ----------------------------------------------------------
+   Chart series colours are validated for colour-vision
+   deficiency on both surfaces (light #fff, dark #13161c).
+   Everything else uses the design tokens in index.css.
+   ========================================================== */
+
+.db {
+  --series-sales: #2a78d6;
+  --series-purchases: #eb6834;
+  --db-gap: 16px;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .db {
+    --series-sales: #3987e5;
+    --series-purchases: #d95926;
+  }
+}
+
+/* ---------- Progress & loading ---------- */
+
+.db-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  transition: opacity 0.2s var(--ease);
+}
+
+.db-progress.is-active {
+  opacity: 1;
+  animation: db-progress 1.2s linear infinite;
+}
+
+@keyframes db-progress {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+
+.db-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  transition: opacity 0.2s var(--ease);
+}
+
+.db-content.is-stale {
+  opacity: 0.55;
+}
+
+.db-skeleton {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-hover), var(--surface-2));
+  background-size: 200% 100%;
+  animation: db-shimmer 1.4s ease-in-out infinite;
+}
+
+.db-skeleton--value {
+  width: 60%;
+  height: 26px;
+  margin: 2px 0;
+}
+
+@keyframes db-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.db-spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-progress.is-active,
+  .db-skeleton,
+  .db-spin {
+    animation: none;
+  }
+}
+
+/* ---------- Toolbar ---------- */
+
+.db-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.db-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.db-title-row h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-h);
+  letter-spacing: -0.01em;
+}
+
+.db-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.db-subtitle strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.db-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.db-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+}
+
+.db-status--connected {
+  background: var(--positive-soft);
+  color: var(--positive);
+  border-color: transparent;
+}
+
+.db-status--connected .db-status-dot {
+  background: var(--positive);
+}
+
+.db-status--offline {
+  background: var(--negative-soft);
+  color: var(--negative);
+  border-color: transparent;
+}
+
+.db-status--offline .db-status-dot {
+  background: var(--negative);
+}
+
+.db-toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-presets {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.db-preset {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.db-preset:hover {
+  color: var(--text-h);
+  background: var(--surface-hover);
+}
+
+.db-preset[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.db-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.db-range input {
+  border: 0;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.db-range input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+
+.db-range-apply,
+.db-refresh,
+.db-alert button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.db-refresh {
+  height: 34px;
+  border-color: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-h);
+}
+
+.db-refresh:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.db-refresh:disabled,
+.db-alert button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.db-range-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--negative);
+  font-size: 13px;
+  text-align: right;
+}
+
+/* ---------- Alerts ---------- */
+
+.db-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.db-alert > svg {
+  flex-shrink: 0;
+  color: var(--warning);
+}
+
+.db-alert span {
+  flex: 1;
+}
+
+.db-alert--error {
+  background: var(--negative-soft);
+}
+
+.db-alert--error > svg {
+  color: var(--negative);
+}
+
+.db-alert button {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-h);
+}
+
+/* Informational (not a failure): about the selected period. */
+.db-alert--info {
+  background: var(--info-soft);
+}
+
+.db-alert--info > svg {
+  color: var(--info);
+}
+
+/* ---------- KPI cards ---------- */
+
+.db-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.db-section-title span {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.db-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.db-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: inherit;
+  text-decoration: none;
+}
+
+.db-kpi--link {
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.db-kpi--link:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.db-kpi--link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.db-kpi-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-kpi-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.db-kpi-label {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.db-kpi-chevron {
+  color: var(--text-subtle);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+
+.db-kpi--link:hover .db-kpi-chevron,
+.db-kpi--link:focus-visible .db-kpi-chevron {
+  opacity: 1;
+}
+
+.db-kpi-value {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.db-kpi-value--missing {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-subtle);
+}
+
+.db-kpi-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Change against the previous period. Colour marks good/bad only
+   where it is unambiguous; the arrow and words carry the direction. */
+.db-delta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-delta--up {
+  color: var(--positive);
+}
+
+.db-delta--down {
+  color: var(--negative);
+}
+
+/* Icon tints: series hues for the two charted measures, semantic
+   tokens for profit and loss, neutral for balances. */
+.db-tone--sales {
+  background: color-mix(in srgb, var(--series-sales) 14%, transparent);
+  color: var(--series-sales);
+}
+
+.db-tone--purchases {
+  background: color-mix(in srgb, var(--series-purchases) 14%, transparent);
+  color: var(--series-purchases);
+}
+
+.db-tone--positive {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.db-tone--negative {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.db-tone--neutral {
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+/* ---------- Panels ---------- */
+
+.db-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--db-gap);
+}
+
+.db-grid--wide {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.db-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.db-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-panel-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.db-panel-head p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.db-panel-link {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.db-panel-link:hover {
+  text-decoration: underline;
+}
+
+.db-panel-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.db-panel-skeleton .db-skeleton:nth-child(2) { width: 85%; }
+.db-panel-skeleton .db-skeleton:nth-child(3) { width: 65%; }
+
+.db-empty {
+  margin: 0;
+  padding: 24px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- Tables ---------- */
+
+.db-table-scroll {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0 -4px;
+}
+
+.db-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.db-table th {
+  position: sticky;
+  top: 0;
+  padding: 6px 4px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.db-table td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.db-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.db-table .db-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-h);
+  font-weight: 500;
+}
+
+.db-table th.db-num {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.db-nowrap {
+  white-space: nowrap;
+}
+
+.db-party {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-h);
+}
+
+.db-ref {
+  display: block;
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.db-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.db-chip--overdue {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.db-chip--due {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+/* ---------- Sales vs purchases chart ---------- */
+
+.db-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.db-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.db-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.db-chart-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* The axis and plot share the same height; the x-axis labels sit in a
+   band below the plot so they are never clipped. */
+.db-chart-axis {
+  position: relative;
+  height: 220px;
+  min-width: 52px;
+  font-size: 11px;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-chart-axis span {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  white-space: nowrap;
+}
+
+.db-chart-plot {
+  position: relative;
+  height: 220px;
+  margin-bottom: 30px;
+}
+
+.db-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+
+.db-gridline--zero {
+  background: var(--border-strong);
+}
+
+.db-chart-columns {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.db-chart-group {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: default;
+}
+
+.db-chart-group.is-active {
+  background: color-mix(in srgb, var(--text-subtle) 10%, transparent);
+}
+
+.db-chart-group:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.db-chart-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+
+.db-chart-bars .db-bar {
+  position: absolute;
+  width: min(24px, 36%);
+  border-radius: 4px 4px 0 0;
+}
+
+.db-chart-bars .db-bar:first-child {
+  right: calc(50% + 1px);
+}
+
+.db-chart-bars .db-bar:last-child {
+  left: calc(50% + 1px);
+}
+
+.db-chart-bars .db-bar--negative {
+  border-radius: 0 0 4px 4px;
+}
+
+.db-chart-bars .db-bar--empty {
+  display: none;
+}
+
+.db-bar--sales {
+  background: var(--series-sales);
+}
+
+.db-bar--purchases {
+  background: var(--series-purchases);
+}
+
+.db-chart-x {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.db-chart-x small {
+  font-size: 10px;
+  color: var(--text-subtle);
+}
+
+.db-tooltip {
+  position: absolute;
+  bottom: calc(100% - 8px);
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.db-tooltip--start {
+  transform: none;
+}
+
+.db-tooltip--end {
+  transform: translateX(-100%);
+}
+
+.db-tooltip-title {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.db-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.db-tooltip-row strong {
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.db-tooltip-key {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* Months Tally answered with other dates: a short baseline mark so
+   the gap reads as "missing", not as zero. */
+.db-chart-gap {
+  position: absolute;
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  margin-left: -7px;
+  border-radius: 1px;
+  background: var(--text-subtle);
+}
+
+.db-tooltip-note {
+  color: var(--text);
+  white-space: normal;
+  max-width: 200px;
+}
+
+/* ---------- Ageing ---------- */
+
+/* Ordinal ramp (one hue, deepening with age); validated for both
+   surfaces. Dark mode runs the other way so older debt stays the most
+   prominent against the dark surface. */
+.db {
+  --age-1: #86b6ef;
+  --age-2: #5598e7;
+  --age-3: #2a78d6;
+  --age-4: #1c5cab;
+  --age-5: #104281;
+}
+
+@media (prefers-color-scheme: dark) {
+  .db {
+    --age-1: #184f95;
+    --age-2: #256abf;
+    --age-3: #3987e5;
+    --age-4: #6da7ec;
+    --age-5: #9ec5f4;
+  }
+}
+
+.db-age--not_due { background: var(--age-1); }
+.db-age--1_30 { background: var(--age-2); }
+.db-age--31_60 { background: var(--age-3); }
+.db-age--61_90 { background: var(--age-4); }
+.db-age--over_90 { background: var(--age-5); }
+
+.db-ageing {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-ageing-bar {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+}
+
+.db-ageing-segment {
+  flex-basis: 0;
+  min-width: 4px;
+  border-radius: 2px;
+  transition: opacity 0.15s var(--ease);
+}
+
+.db-ageing-bar:hover .db-ageing-segment:not(.is-active) {
+  opacity: 0.45;
+}
+
+.db-ageing-legend {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+/* Each bucket is a small column: key + label, amount, share. */
+.db-ageing-legend li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 1px;
+  min-width: 0;
+}
+
+.db-ageing-legend li .db-ageing-amount {
+  grid-column: 1 / -1;
+}
+
+.db-ageing-legend li.is-empty {
+  color: var(--text-subtle);
+}
+
+.db-ageing-legend li.is-active .db-ageing-label {
+  color: var(--text-h);
+}
+
+.db-ageing-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  align-self: center;
+}
+
+.db-ageing-legend li.is-empty .db-ageing-key {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.db-ageing-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-ageing-amount {
+  color: var(--text-h);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.db-ageing-legend li.is-empty .db-ageing-amount {
+  color: var(--text-subtle);
+  font-weight: 400;
+}
+
+.db-ageing-share {
+  grid-column: 1 / -1;
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+/* ---------- Breakdown ---------- */
+
+.db-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.db-breakdown-total {
+  display: flex;
+  flex-direction: column;
+}
+
+.db-breakdown-total strong {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-breakdown-total span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.db-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.db-breakdown-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.db-breakdown-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.db-breakdown-value {
+  color: var(--text-h);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.db-breakdown-share {
+  min-width: 44px;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-meter {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.db-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.db-meter-fill--sales {
+  background: var(--series-sales);
+}
+
+.db-meter-fill--purchases {
+  background: var(--series-purchases);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+  .db-grid--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .db-toolbar {
+    align-items: stretch;
+  }
+
+  .db-toolbar-controls {
+    width: 100%;
+  }
+
+  .db-presets {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .db-preset {
+    flex: 1;
+  }
+
+  .db-range-error {
+    text-align: left;
+  }
+}
+
+@media (max-width: 760px) {
+  .db-kpi-grid,
+  .db-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .db-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .db-kpi-value {
+    font-size: 20px;
+  }
+
+  .db-range {
+    flex: 1;
+  }
+
+  .db-range input {
+    min-width: 0;
+    flex: 1;
+  }
+}
+
+@media (max-width: 600px) {
+  .db-hide-sm {
+    display: none;
+  }
+
+  .db-party {
+    max-width: 120px;
+  }
+
+  .db-ageing-legend {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .db-table .db-chip {
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .db-table .db-chip svg {
+    display: none;
+  }
+}
+
+@media (max-width: 440px) {
+  .db-kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

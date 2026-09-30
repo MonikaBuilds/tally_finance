@@ -1,6 +1,8 @@
 """Map Tally report data into the dashboard response."""
 
-from app.tally.parsers.common import to_optional_float
+from datetime import date
+
+from app.tally.dashboard import html_amount, previous_period
 
 
 UNAVAILABLE = (
@@ -34,11 +36,127 @@ def purchase_row(rows):
     )
 
 
+def _day(iso):
+    """2025-04-01 -> 1-Apr-2025, for messages."""
+    try:
+        return date.fromisoformat(iso).strftime("%-d-%b-%Y")
+    except (TypeError, ValueError):
+        return iso
+
+
+def verified_period(native_pl, start, end, company):
+    """
+    Whether Tally's native P&L states the requested company and period.
+
+    Tally silently substitutes a different period when it cannot use
+    the requested dates (TallyPrime Educational mode, for example, only
+    accepts the 1st, 2nd and 31st), and its XML export does not say so.
+    Only the HTML report names the period, so every P&L figure is
+    checked against it.
+    """
+    return (
+        native_pl.get("from_date") == start.isoformat()
+        and native_pl.get("to_date") == end.isoformat()
+        and any(company in row for row in native_pl.get("rows", []))
+    )
+
+
+def period_mismatch_reason(native_pl):
+    if native_pl.get("from_date") and native_pl.get("to_date"):
+        return (
+            f"Tally reported {_day(native_pl['from_date'])} to "
+            f"{_day(native_pl['to_date'])} instead of the selected period, "
+            "so its figures are not shown for these dates."
+        )
+    return (
+        "Tally did not confirm the period of its Profit & Loss, "
+        "so its figures are not shown for these dates."
+    )
+
+
+AGEING_BUCKETS = (
+    ("not_due", "Not yet due"),
+    ("1_30", "1–30 days"),
+    ("31_60", "31–60 days"),
+    ("61_90", "61–90 days"),
+    ("over_90", "Over 90 days"),
+)
+
+
+def ageing(bills):
+    """
+    Pending bills grouped by how many days overdue Tally reports them.
+
+    Tally leaves Overdue blank until a bill is past due, so a blank
+    counts as not yet due. The bucket amounts are sums of Tally's own
+    per-bill pending amounts; the report total stays Tally's footer.
+    """
+    buckets = [
+        {"key": key, "label": label, "amount": 0.0, "count": 0}
+        for key, label in AGEING_BUCKETS
+    ]
+
+    for bill in bills:
+        if bill.get("amount") is None:
+            continue
+
+        days = bill.get("days_overdue") or 0
+        index = (
+            0 if days <= 0
+            else 1 if days <= 30
+            else 2 if days <= 60
+            else 3 if days <= 90
+            else 4
+        )
+
+        buckets[index]["amount"] += bill["amount"]
+        buckets[index]["count"] += 1
+
+    for bucket in buckets:
+        bucket["amount"] = round(bucket["amount"], 2)
+
+    return buckets
+
+
+def _comparison(reports, start, end, company):
+    """P&L headline figures for the period just before the selected one."""
+    if "previous_profit_loss_totals" not in reports:
+        return None
+
+    previous_start, previous_end = previous_period(start, end)
+
+    previous = map_dashboard_summary(
+        {
+            "profit_loss": reports.get("previous_profit_loss", []),
+            "profit_loss_totals": reports["previous_profit_loss_totals"],
+        },
+        previous_start,
+        previous_end,
+        company,
+    )
+
+    return {
+        "from_date": previous_start.isoformat(),
+        "to_date": previous_end.isoformat(),
+        "period_verified": previous["period_verified"],
+        **{
+            key: previous[key]
+            for key in ("total_sales", "total_purchases", "net_profit", "net_loss")
+        },
+    }
+
+
 def map_dashboard_summary(reports, start, end, company):
     sources = {}
 
-    def metric(key, row, report, *, period=True, reason=None):
-        """Store a dashboard value along with its Tally source details."""
+    def metric(key, row, report, *, period=True, reason=None, status=None):
+        """
+        Store a dashboard value along with its Tally source details.
+
+        status "none" marks a line Tally left out of a report whose
+        period it confirmed: Tally omits empty lines, so there were no
+        such entries - which is different from not knowing.
+        """
         value = row.get("amount") if row else None
 
         sources[key] = {
@@ -48,39 +166,35 @@ def map_dashboard_summary(reports, start, end, company):
             "raw": row.get("raw") if row else None,
             "from_date": start.isoformat() if period else None,
             "to_date": end.isoformat(),
-            "status": "available" if value is not None else "unavailable",
+            "status": "available" if value is not None else (status or "unavailable"),
             "message": None if value is not None else (reason or UNAVAILABLE),
         }
 
         return value
 
-    # Main Profit & Loss values
-    pl = reports.get("profit_loss", [])
+    # Tally's native (HTML) P&L names the period it actually used;
+    # every P&L figure below is shown only when that is the selected one.
+    native_pl = reports.get("profit_loss_totals", {})
+    period_matches = verified_period(native_pl, start, end, company)
+    pl_reason = None if period_matches else period_mismatch_reason(native_pl)
+
+    # The XML P&L keeps Tally's signs, so values are read from it.
+    pl = reports.get("profit_loss", []) if period_matches else []
+
+    def pl_line(key, row, noun):
+        # In a confirmed P&L, a line that is absent or has a blank
+        # amount had no entries in the period.
+        if period_matches and pl and (row is None or row.get("amount") is None):
+            return metric(
+                key, row, "Profit and Loss", status="none",
+                reason=f"No {noun} entries in Tally for this period.",
+            )
+        return metric(key, row, "Profit and Loss", reason=pl_reason)
 
     data = {
-        "total_sales": metric(
-            "total_sales",
-            exact_row(pl, "Sales Accounts"),
-            "Profit and Loss",
-        ),
-        "total_purchases": metric(
-            "total_purchases",
-            purchase_row(pl),
-            "Profit and Loss",
-        ),
+        "total_sales": pl_line("total_sales", exact_row(pl, "Sales Accounts"), "sales"),
+        "total_purchases": pl_line("total_purchases", purchase_row(pl), "purchase"),
     }
-
-    # Tally's native P&L is also used for Profit/Loss totals.
-    native_pl = reports.get("profit_loss_totals", {})
-
-    period_matches = (
-        native_pl.get("from_date") == start.isoformat()
-        and native_pl.get("to_date") == end.isoformat()
-        and any(
-            company in row
-            for row in native_pl.get("rows", [])
-        )
-    )
 
     for key, names in [
         ("net_profit", ("Net Profit", "Nett Profit")),
@@ -95,25 +209,16 @@ def map_dashboard_summary(reports, start, end, company):
                 if len(nonempty) == 2 and nonempty[0] in names:
                     matches.append({
                         "name": nonempty[0],
-                        "amount": to_optional_float(nonempty[1]),
+                        "amount": html_amount(nonempty[1]),
                         "raw": nonempty[1],
                         "field": "HTML result row",
                     })
-
-        reason = (
-            None
-            if period_matches
-            else (
-                "Tally returned a different or unverified P&L period; "
-                "its net result is not used for the selected dates."
-            )
-        )
 
         data[key] = metric(
             key,
             matches[0] if len(matches) == 1 else None,
             "Profit and Loss (native HTML)",
-            reason=reason,
+            reason=pl_reason,
         )
 
     # If Tally gives a verified Net Loss, Net Profit is zero.
@@ -343,14 +448,17 @@ def map_dashboard_summary(reports, start, end, company):
             else None
         )
 
-        reason = (
-            None
-            if matches_date
-            else (
-                "Tally returned a different or unverified outstanding "
-                "as-of date; select its returned period to view these balances."
+        if matches_date:
+            reason = None
+        elif key not in reports:
+            reason = "Tally did not return this report. Refresh to try again."
+        elif report.get("to_date"):
+            reason = (
+                f"Tally returned these as on {_day(report['to_date'])}, "
+                "not the selected date."
             )
-        )
+        else:
+            reason = "Tally did not confirm the date of these balances."
 
         report_name = (
             "Bills Receivable (native HTML)"
@@ -367,6 +475,8 @@ def map_dashboard_summary(reports, start, end, company):
         )
 
         bills = report.get("bills") if matches_date else None
+
+        data[f"{key}_ageing"] = None if bills is None else ageing(bills)
 
         data[f"top_{key}"] = (
             None
@@ -454,34 +564,20 @@ def map_dashboard_summary(reports, start, end, company):
             )
         ] or None
 
-    # Keep the sales chart tied to the selected P&L period.
-    # Ledger closing balances are not used as sales revenue here.
-    # Show sales breakdown only when Tally provides
-    # Sales Accounts for the selected period.
-    sales_items = []
-
-    sales_row = exact_row(pl, "Sales Accounts")
-
-    if sales_row is not None and sales_row.get("amount") is not None:
-        sales_items.append({
-            "label": sales_row["name"],
-            "value": sales_row["amount"],
-            "type": "Sales Revenue",
-        })
-
-    data["sales_breakdown"] = sales_items or None
+    # Inflows are the income lines of the selected P&L itself.
+    # Ledger closing balances are not period figures, so they are
+    # never used for this chart.
+    data["sales_breakdown"] = breakdown(
+        ("Sales Accounts", "Direct Incomes", "Indirect Incomes")
+    )
 
     data["expense_breakdown"] = breakdown(
         ("Direct Expenses", "Indirect Expenses")
     )
 
     data.update({
-        "revenue": data["total_sales"],
-        "expenses": data["total_purchases"],
-        "pending_invoices": None,
-        "sales_growth_pct": None,
-        "purchases_growth_pct": None,
-        "profit_growth_pct": None,
+        "period_verified": period_matches,
+        "comparison": _comparison(reports, start, end, company),
         "metric_sources": sources,
         "report_contexts": contexts,
         "tally_report_period": {

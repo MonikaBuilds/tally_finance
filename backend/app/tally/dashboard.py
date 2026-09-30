@@ -1,7 +1,8 @@
 """Read-only dashboard exports. Financial amounts are selected, never totalled here."""
 
 import re
-from datetime import date, datetime
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from xml.etree import ElementTree as ET
 
@@ -147,6 +148,31 @@ def parse_native_table(raw):
     return {'rows': table.rows, 'from_date': period[0], 'to_date': period[1]}
 
 
+def html_amount(text):
+    """Amount cell from a native HTML report; Tally writes negatives as (-)1,000.00."""
+    if text and text.strip().startswith('(-)'):
+        value = to_optional_float(text.strip()[3:])
+        return -value if value is not None else None
+    return to_optional_float(text)
+
+
+def previous_period(start, end):
+    """
+    The period of the same length just before start..end. Whole
+    calendar months shift by months (a financial year compares with the
+    previous financial year); any other range shifts by its day count.
+    """
+    last_day = monthrange(end.year, end.month)[1]
+    if start.day == 1 and end.day == last_day:
+        months = (end.year - start.year) * 12 + end.month - start.month + 1
+        previous_end = start - timedelta(days=1)
+        index = previous_end.year * 12 + previous_end.month - 1 - (months - 1)
+        return date(index // 12, index % 12 + 1, 1), previous_end
+
+    previous_end = start - timedelta(days=1)
+    return previous_end - (end - start), previous_end
+
+
 def parse_outstanding_table(raw):
     report = parse_native_table(raw)
     rows = report['rows']
@@ -184,9 +210,15 @@ def parse_outstanding_table(raw):
 async def fetch_dashboard_reports(company, start, end):
     client = TallyClient()
     pl_request = build_profit_loss_request(company_name=company, from_date=start, to_date=end)
+    previous_start, previous_end = previous_period(start, end)
+    previous_request = build_profit_loss_request(
+        company_name=company, from_date=previous_start, to_date=previous_end,
+    )
     requests = {
         'profit_loss': (pl_request, parse_profit_loss_rows),
         'profit_loss_totals': (report_request(pl_request, html=True), parse_native_table),
+        'previous_profit_loss': (previous_request, parse_profit_loss_rows),
+        'previous_profit_loss_totals': (report_request(previous_request, html=True), parse_native_table),
         'groups': (collection_request(company, end, 'Group'), lambda raw: parse_balances(raw, 'Group')),
         'ledgers': (collection_request(company, end, 'Ledger'), lambda raw: parse_balances(raw, 'Ledger')),
         'receivables': (report_request(build_bills_receivable_request(company), html=True, as_of=end), parse_outstanding_table),

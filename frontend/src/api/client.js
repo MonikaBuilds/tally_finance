@@ -21,6 +21,42 @@ export function clearAccessToken() {
 }
 
 
+const SELECTED_COMPANY_KEY = "selected_company";
+
+
+// "*" is the development wildcard, not a real Tally company name.
+export function getSelectedCompany() {
+  const company = sessionStorage.getItem(SELECTED_COMPANY_KEY);
+
+  return company && company !== "*" ? company : null;
+}
+
+
+export function setSelectedCompany(company) {
+  if (company) {
+    sessionStorage.setItem(SELECTED_COMPANY_KEY, company);
+  } else {
+    sessionStorage.removeItem(SELECTED_COMPANY_KEY);
+  }
+}
+
+
+// Users assigned to several companies must name one on every report
+// request, so the selected company is attached here once instead of
+// in each page.
+function withSelectedCompany(path) {
+  const company = getSelectedCompany();
+
+  if (!company || /[?&]company_name=/.test(path)) {
+    return path;
+  }
+
+  const separator = path.includes("?") ? "&" : "?";
+
+  return `${path}${separator}company_name=${encodeURIComponent(company)}`;
+}
+
+
 function buildHeaders(extraHeaders = {}) {
   const headers = {
     "Content-Type": "application/json",
@@ -66,7 +102,7 @@ export async function apiGet(path, options = {}) {
   const { signal } = options;
 
   const response = await fetch(
-    `${API_BASE_URL}${path}`,
+    `${API_BASE_URL}${withSelectedCompany(path)}`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -118,7 +154,7 @@ export async function apiDelete(path) {
 
 export async function downloadFile(path, filename = "download") {
   const response = await fetch(
-    `${API_BASE_URL}${path}`,
+    `${API_BASE_URL}${withSelectedCompany(path)}`,
     {
       method: "GET",
       headers: buildHeaders(),

@@ -74,9 +74,9 @@ export function getDynamicFinancialYearEnd(refDate = new Date()) {
  *
  * If a valid filter exists in sessionStorage, restore it.
  *
- * Otherwise default to the current Indian Financial Year:
+ * Otherwise default to the current Indian Financial Year to date:
  * FROM = Dynamic FY Start
- * TO   = Dynamic FY End
+ * TO   = Today
  */
 export function getInitialDashboardFilter() {
   try {
@@ -97,13 +97,7 @@ export function getInitialDashboardFilter() {
     // sessionStorage unavailable or invalid stored value.
   }
 
-  const now = new Date()
-
-  return {
-    fromDate: getDynamicFinancialYearStart(now),
-    toDate: getDynamicFinancialYearEnd(now),
-    selectedPreset: '1y',
-  }
+  return getPresetDateRange('fy')
 }
 
 /**
@@ -136,13 +130,24 @@ export function clearDashboardFilter() {
   }
 }
 
+export const DASHBOARD_PRESETS = [
+  { key: '7d', label: '7 days' },
+  { key: '1m', label: '1 month' },
+  { key: '3m', label: '3 months' },
+  { key: 'fy', label: 'This FY' },
+  { key: 'lfy', label: 'Last FY' },
+]
+
 /**
  * Compute date ranges for Dashboard presets.
  *
  * 7d  = previous 7 days
  * 1m  = previous 1 month
  * 3m  = previous 3 months
- * 1y  = current Indian Financial Year
+ * fy  = current Indian Financial Year, up to today
+ * lfy = the whole previous Indian Financial Year
+ *
+ * Ranges stop at today: later dates have no vouchers in Tally yet.
  */
 export function getPresetDateRange(
   presetKey,
@@ -150,14 +155,23 @@ export function getPresetDateRange(
 ) {
   const to = new Date(baseDate)
 
-  /**
-   * 1 Year represents the current Indian Financial Year.
-   */
-  if (presetKey === '1y') {
+  if (presetKey === 'fy') {
     return {
       fromDate: getDynamicFinancialYearStart(to),
-      toDate: getDynamicFinancialYearEnd(to),
-      selectedPreset: '1y',
+      toDate: formatLocalISO(to),
+      selectedPreset: 'fy',
+    }
+  }
+
+  if (presetKey === 'lfy') {
+    const fyStart = new Date(`${getDynamicFinancialYearStart(to)}T00:00:00`)
+    const lastYearDay = new Date(fyStart)
+    lastYearDay.setDate(fyStart.getDate() - 1)
+
+    return {
+      fromDate: getDynamicFinancialYearStart(lastYearDay),
+      toDate: formatLocalISO(lastYearDay),
+      selectedPreset: 'lfy',
     }
   }
 

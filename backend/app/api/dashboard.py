@@ -1,16 +1,29 @@
+import logging
 from calendar import monthrange
 from datetime import date, datetime, timezone
 from time import perf_counter
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.dashboard_mapper import exact_row, map_dashboard_summary, purchase_row
+from app.api.dashboard_mapper import (
+    exact_row,
+    map_dashboard_summary,
+    purchase_row,
+    verified_period,
+)
 from app.security.auth import get_authorized_company
 from app.tally.client import TallyClient
-from app.tally.dashboard import fetch_dashboard_reports, parse_profit_loss_rows
+from app.tally.dashboard import (
+    fetch_dashboard_reports,
+    parse_native_table,
+    parse_profit_loss_rows,
+    report_request,
+)
 from app.tally.service import fetch_companies
 from app.tally.xml_builders.financial import build_profit_loss_request
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -25,80 +38,122 @@ def month_windows(start, end):
         current = date(last.year + (last.month == 12), 1 if last.month == 12 else last.month + 1, 1)
 
 
+def _series_point(start, end, native_pl, rows, company_name):
+    """
+    One chart point for this month window.
+
+    native_pl (the HTML P&L) confirms which period Tally used: Tally
+    sometimes answers with a different one (see verified_period), and
+    such a month is marked unverified and left empty. The amounts come
+    from the XML P&L rows, because the HTML report drops the sign of a
+    line that has moved to the other side (sales returns, for example).
+    """
+    point = {
+        'month': start.strftime('%b %Y'),
+        'from_date': start.isoformat(),
+        'to_date': end.isoformat(),
+        'income': None,
+        'expense': None,
+        'status': 'unavailable',
+    }
+
+    if native_pl is None:
+        return point
+
+    if not verified_period(native_pl, start, end, company_name):
+        point['status'] = 'unverified'
+        point['tally_from_date'] = native_pl.get('from_date')
+        point['tally_to_date'] = native_pl.get('to_date')
+        return point
+
+    if rows is None:
+        return point
+
+    sales = exact_row(rows, 'Sales Accounts')
+    purchases = purchase_row(rows)
+
+    point['income'] = sales['amount'] if sales else None
+    point['expense'] = purchases['amount'] if purchases else None
+
+    # Tally omits lines with nothing in them, so a confirmed month
+    # without Sales or Purchase lines had no such entries.
+    point['status'] = (
+        'available'
+        if point['income'] is not None or point['expense'] is not None
+        else 'no_entries'
+    )
+
+    return point
+
+
 async def _fetch_monthly_income_expense_series(
     company_name,
     from_date,
     to_date,
+    today=None,
+    is_disconnected=None,
 ):
-    series = []
+    """
+    Sales and purchases per calendar month of the selected period.
+
+    Tally handles one request at a time, so each month costs a full
+    P&L round trip. Months after today have no vouchers yet and are
+    skipped. is_disconnected, when given, is checked before each month
+    so a browser that has left the page stops occupying Tally.
+    """
+    last_day = min(to_date, today or date.today())
+
+    if from_date > last_day:
+        return []
+
+    windows = list(month_windows(from_date, last_day))
     client = TallyClient()
+    series = []
+    started = perf_counter()
 
-    series_started = perf_counter()
+    for start, end in windows:
+        if is_disconnected is not None and await is_disconnected():
+            logger.info('Dashboard monthly series abandoned by the client')
+            break
 
-    for start, end in month_windows(from_date, to_date):
-        income = expense = None
-        status = 'available'
-
-        month_started = perf_counter()
+        request_xml = build_profit_loss_request(
+            company_name=company_name,
+            from_date=start,
+            to_date=end,
+        )
+        native_pl = rows = None
 
         try:
-            raw = await client.send_xml(
-                build_profit_loss_request(
-                    company_name=company_name,
-                    from_date=start,
-                    to_date=end,
+            native_pl = parse_native_table(
+                await client.send_xml(report_request(request_xml, html=True))
+            )
+
+            # Values are only worth a second round trip when Tally
+            # confirmed it used this month's dates.
+            if verified_period(native_pl, start, end, company_name):
+                rows = parse_profit_loss_rows(
+                    await client.send_xml(request_xml)
                 )
-            )
-
-            rows = parse_profit_loss_rows(raw)
-            sales, purchases = (
-                exact_row(rows, 'Sales Accounts'),
-                purchase_row(rows),
-            )
-
-            income = sales['amount'] if sales else None
-            expense = purchases['amount'] if purchases else None
-            if income is None and expense is None:
-                status = 'unavailable'
         except Exception:
-            status = 'unavailable'
+            logger.warning(
+                'Dashboard monthly P&L %s -> %s could not be read',
+                start,
+                end,
+                exc_info=True,
+            )
 
-        month_elapsed = perf_counter() - month_started
+        series.append(_series_point(start, end, native_pl, rows, company_name))
 
-        print(
-            f'[DASHBOARD TIMING] Monthly P&L '
-            f'{start.isoformat()} -> {end.isoformat()}: '
-            f'{month_elapsed:.2f}s'
-        )
-
-        series.append(
-            {
-                'month': start.strftime('%b %Y'),
-                'from_date': start.isoformat(),
-                'to_date': end.isoformat(),
-                'income': income,
-                'expense': expense,
-                'status': status,
-            }
-        )
-
-    total_elapsed = perf_counter() - series_started
-
-    print(
-        f'[DASHBOARD TIMING] Monthly series total: '
-        f'{total_elapsed:.2f}s'
+    logger.info(
+        'Dashboard monthly series: %d months in %.2fs',
+        len(windows),
+        perf_counter() - started,
     )
 
     return series
 
 
-@router.get('/summary')
-async def get_dashboard_summary(
-    from_date: date | None = Query(default=None),
-    to_date: date | None = Query(default=None),
-    period: str | None = Query(default=None),
-    company_name: str | None = Depends(get_authorized_company),
-):
+def _resolve_period(from_date, to_date):
     end = to_date or date.today()
     start = from_date or date(
         end.year if end.month >= 4 else end.year - 1,
@@ -112,35 +167,47 @@ async def get_dashboard_summary(
             'From date must not be after To date',
         )
 
+    return start, end
+
+
+async def _resolve_company(company_name):
+    # Wildcard users must not silently read a different loaded company.
+    if company_name:
+        return company_name
+
+    companies = await fetch_companies()
+
+    if len(companies) != 1:
+        raise HTTPException(
+            400,
+            'Please select a company for the dashboard',
+        )
+
+    return companies[0]['name']
+
+
+@router.get('/summary')
+async def get_dashboard_summary(
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+):
+    """
+    Headline figures, tables and breakdowns. The month-by-month series
+    is served separately by /monthly so these appear without waiting
+    for one Tally round trip per month.
+    """
+    start, end = _resolve_period(from_date, to_date)
+
     try:
-        # Wildcard users must not silently read a different loaded company.
-        if not company_name:
-            companies = await fetch_companies()
+        company_name = await _resolve_company(company_name)
 
-            if len(companies) != 1:
-                raise HTTPException(
-                    400,
-                    'Please select a company for the dashboard',
-                )
-
-            company_name = companies[0]['name']
-
-        dashboard_started = perf_counter()
-
-        # Measure base Dashboard reports
-        reports_started = perf_counter()
+        started = perf_counter()
 
         reports, errors = await fetch_dashboard_reports(
             company_name,
             start,
             end,
-        )
-
-        reports_elapsed = perf_counter() - reports_started
-
-        print(
-            f'[DASHBOARD TIMING] Base dashboard reports: '
-            f'{reports_elapsed:.2f}s'
         )
 
         if not reports:
@@ -149,7 +216,6 @@ async def get_dashboard_summary(
                 'Unable to read dashboard reports from Tally',
             )
 
-        # Existing Dashboard mapping
         summary = map_dashboard_summary(
             reports,
             start,
@@ -157,36 +223,17 @@ async def get_dashboard_summary(
             company_name,
         )
 
-        # Measure Income vs Expense monthly series
-        monthly_started = perf_counter()
-
-        summary['income_vs_expense'] = (
-            await _fetch_monthly_income_expense_series(
-                company_name,
-                start,
-                end,
-            )
-        )
-
-        monthly_elapsed = perf_counter() - monthly_started
-
-        print(
-            f'[DASHBOARD TIMING] Income vs expense series: '
-            f'{monthly_elapsed:.2f}s'
-        )
-
-        # Existing metadata
         summary['report_errors'] = errors
         summary['fetched_at'] = datetime.now(
             timezone.utc
         ).isoformat()
 
-        # Total Dashboard request time
-        total_elapsed = perf_counter() - dashboard_started
-
-        print(
-            f'[DASHBOARD TIMING] TOTAL dashboard request: '
-            f'{total_elapsed:.2f}s'
+        logger.info(
+            'Dashboard summary for %s (%s -> %s) in %.2fs',
+            company_name,
+            start,
+            end,
+            perf_counter() - started,
         )
 
         return {
@@ -202,4 +249,45 @@ async def get_dashboard_summary(
         raise HTTPException(
             502,
             'Unable to read dashboard reports from Tally',
+        ) from exc
+
+
+@router.get('/monthly')
+async def get_dashboard_monthly(
+    request: Request,
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+):
+    """Sales and purchases per month of the selected period."""
+    start, end = _resolve_period(from_date, to_date)
+
+    try:
+        company_name = await _resolve_company(company_name)
+
+        series = await _fetch_monthly_income_expense_series(
+            company_name,
+            start,
+            end,
+            is_disconnected=request.is_disconnected,
+        )
+
+        return {
+            'success': True,
+            'source': 'tally',
+            'data': {
+                'company_name': company_name,
+                'from_date': start.isoformat(),
+                'to_date': end.isoformat(),
+                'income_vs_expense': series,
+            },
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            502,
+            'Unable to read monthly figures from Tally',
         ) from exc

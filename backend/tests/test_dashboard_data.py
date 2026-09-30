@@ -1,7 +1,7 @@
 """Dashboard-only contracts using captured report shapes and boundary cases."""
 
 import asyncio
-from datetime import date
+from datetime import date, datetime
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -37,6 +37,14 @@ def table(rows):
     return '<html><table>' + ''.join('<tr>' + ''.join(f'<td>{cell}</td>' for cell in row) + '</tr>' for row in rows) + '</table></html>'
 
 
+def native_pl(start=START, end=END, company='Example company', rows=()):
+    return parse_native_table(table([
+        [company],
+        ['Particulars', f"{start.strftime('%-d-%b-%y')} to {end.strftime('%-d-%b-%y')}"],
+        *rows,
+    ]))
+
+
 def reports():
     return {
         'profit_loss': parse_profit_loss_rows(pl_xml()),
@@ -51,7 +59,7 @@ def reports():
 
 @pytest.mark.parametrize('raw,expected', [('', None), ('0.00', 0.0), ('-1.25', -1.25), ('16800000.00', 16800000.0)])
 def test_purchase_preserves_native_optional_signed_amount(raw, expected):
-    result = map_dashboard_summary({'profit_loss': parse_profit_loss_rows(pl_xml(purchase=raw))}, START, END, 'Example company')
+    result = map_dashboard_summary({'profit_loss': parse_profit_loss_rows(pl_xml(purchase=raw)), 'profit_loss_totals': native_pl()}, START, END, 'Example company')
     assert result['total_purchases'] == expected
     assert result['metric_sources']['total_purchases']['raw'] == raw
 
@@ -182,7 +190,7 @@ def test_api_preserves_purchase_and_validates_dates(monkeypatch):
         assert (start, end) == (START, END)
         return reports(), {}
 
-    async def series(*args):
+    async def series(*args, **kwargs):
         return []
 
     monkeypatch.setattr(dashboard, 'fetch_dashboard_reports', fetch)
@@ -199,3 +207,226 @@ def test_api_remains_authenticated(monkeypatch):
     app = FastAPI()
     app.include_router(dashboard.router)
     assert TestClient(app).get('/summary').status_code in (401, 403)
+
+
+def test_sales_breakdown_includes_income_lines_of_the_same_pl():
+    rows = parse_profit_loss_rows(pl_xml().replace('</ENVELOPE>', '''
+    <DSPACCNAME><DSPDISPNAME>Indirect Incomes</DSPDISPNAME></DSPACCNAME>
+    <PLAMT><BSMAINAMT>12500.00</BSMAINAMT></PLAMT>
+    </ENVELOPE>'''))
+    result = map_dashboard_summary({'profit_loss': rows, 'profit_loss_totals': native_pl()}, START, END, 'Example company')
+    assert result['sales_breakdown'] == [
+        {'label': 'Sales Accounts', 'value': 7410000.0},
+        {'label': 'Indirect Incomes', 'value': 12500.0},
+    ]
+
+
+def test_monthly_series_skips_months_after_today(monkeypatch):
+    requested = []
+
+    async def send(self, xml):
+        root = ET.fromstring(xml)
+        if root.findtext('.//SVEXPORTFORMAT') != '$$SysName:HTML':
+            # Signed values come from the XML export.
+            return pl_xml(sales='-500000.00')
+        requested.append(root.findtext('.//SVFROMDATE'))
+        start = datetime.strptime(root.findtext('.//SVFROMDATE'), '%Y%m%d').date()
+        end = datetime.strptime(root.findtext('.//SVTODATE'), '%Y%m%d').date()
+        # The HTML report confirms the period; its amounts carry no sign.
+        return table([
+            ['Example company'],
+            ['Particulars', f"{start.strftime('%-d-%b-%y')} to {end.strftime('%-d-%b-%y')}"],
+            ['', 'Sales Accounts', '', '5,00,000.00'],
+        ])
+
+    monkeypatch.setattr(dashboard.TallyClient, 'send_xml', send)
+    result = asyncio.run(dashboard._fetch_monthly_income_expense_series(
+        'Example company', START, END, today=date(2025, 6, 15),
+    ))
+    assert requested == ['20250401', '20250501', '20250601']
+    assert [point['month'] for point in result] == ['Apr 2025', 'May 2025', 'Jun 2025']
+    assert result[-1]['to_date'] == '2025-06-15'
+    assert result[0]['income'] == -500000.0
+    assert result[0]['expense'] == 16800000.0
+    assert result[0]['status'] == 'available'
+
+
+def test_monthly_series_is_empty_for_a_future_period(monkeypatch):
+    async def send(self, xml):
+        raise AssertionError('Tally must not be queried for future months')
+
+    monkeypatch.setattr(dashboard.TallyClient, 'send_xml', send)
+    result = asyncio.run(dashboard._fetch_monthly_income_expense_series(
+        'Example company', START, END, today=date(2025, 3, 1),
+    ))
+    assert result == []
+
+
+def test_missing_outstanding_report_is_not_described_as_a_date_mismatch():
+    result = map_dashboard_summary(reports(), START, END, 'Example company')
+    assert result['payables'] is None
+    assert result['top_payables'] is None
+    assert result['metric_sources']['payables']['message'].startswith('Tally did not return')
+
+
+def test_summary_and_monthly_are_separate_endpoints(monkeypatch):
+    app = FastAPI()
+    app.include_router(dashboard.router)
+    app.dependency_overrides[get_authorized_company] = lambda: 'Example company'
+
+    async def fetch(company, start, end):
+        return reports(), {}
+
+    async def series(company, start, end, **kwargs):
+        assert kwargs['is_disconnected'] is not None
+        return [{'month': 'Apr 2025', 'income': 1.0, 'expense': 2.0}]
+
+    monkeypatch.setattr(dashboard, 'fetch_dashboard_reports', fetch)
+    monkeypatch.setattr(dashboard, '_fetch_monthly_income_expense_series', series)
+    client = TestClient(app)
+    params = {'from_date': START.isoformat(), 'to_date': END.isoformat()}
+
+    summary = client.get('/summary', params=params).json()['data']
+    assert 'income_vs_expense' not in summary
+
+    monthly = client.get('/monthly', params=params)
+    assert monthly.status_code == 200
+    assert monthly.json()['data']['income_vs_expense'][0]['income'] == 1.0
+    assert client.get('/monthly', params={'from_date': END.isoformat(), 'to_date': START.isoformat()}).status_code == 422
+
+
+def test_monthly_series_stops_when_the_client_leaves(monkeypatch):
+    requested = []
+
+    async def send(self, xml):
+        requested.append(xml)
+        return pl_xml()
+
+    checks = iter([False, True])
+
+    async def is_disconnected():
+        return next(checks, True)
+
+    monkeypatch.setattr(dashboard.TallyClient, 'send_xml', send)
+    result = asyncio.run(dashboard._fetch_monthly_income_expense_series(
+        'Example company', START, END, today=date(2025, 12, 1),
+        is_disconnected=is_disconnected,
+    ))
+    assert len(requested) == 1
+    assert len(result) == 1
+
+
+def test_pl_figures_hidden_when_tally_uses_a_different_period():
+    source = reports()
+    # Tally substituted the whole year for a one-month request.
+    result = map_dashboard_summary(source, date(2025, 4, 1), date(2025, 4, 30), 'Example company')
+    assert result['period_verified'] is False
+    for key in ('total_sales', 'total_purchases', 'net_profit', 'net_loss'):
+        assert result[key] is None
+        assert '1-Apr-2025 to 31-Mar-2026' in result['metric_sources'][key]['message']
+    assert result['sales_breakdown'] is None
+    assert result['expense_breakdown'] is None
+
+
+def test_monthly_point_with_substituted_period_is_left_empty(monkeypatch):
+    async def send(self, xml):
+        return table([
+            ['Example company'], ['Particulars', '1-Apr-25 to 31-Mar-26'],
+            ['', 'Sales Accounts', '', '74,10,000.00'],
+        ])
+
+    monkeypatch.setattr(dashboard.TallyClient, 'send_xml', send)
+    result = asyncio.run(dashboard._fetch_monthly_income_expense_series(
+        'Example company', date(2025, 4, 1), date(2025, 4, 30), today=date(2025, 6, 1),
+    ))
+    assert result[0]['status'] == 'unverified'
+    assert result[0]['income'] is None
+    assert (result[0]['tally_from_date'], result[0]['tally_to_date']) == ('2025-04-01', '2026-03-31')
+
+
+@pytest.mark.parametrize('start,end,expected', [
+    (date(2025, 4, 1), date(2026, 3, 31), (date(2024, 4, 1), date(2025, 3, 31))),
+    (date(2025, 5, 1), date(2025, 5, 31), (date(2025, 4, 1), date(2025, 4, 30))),
+    (date(2025, 1, 1), date(2025, 3, 31), (date(2024, 10, 1), date(2024, 12, 31))),
+    (date(2025, 6, 10), date(2025, 6, 16), (date(2025, 6, 3), date(2025, 6, 9))),
+])
+def test_previous_period(start, end, expected):
+    from app.tally.dashboard import previous_period
+    assert previous_period(start, end) == expected
+
+
+def test_comparison_uses_the_verified_previous_period():
+    source = reports()
+    prev_start, prev_end = date(2024, 4, 1), date(2025, 3, 31)
+    source['previous_profit_loss'] = parse_profit_loss_rows(pl_xml(sales='5000000.00'))
+    source['previous_profit_loss_totals'] = native_pl(prev_start, prev_end, rows=[['', 'Nett Profit', '', '1,00,000.00']])
+    comparison = map_dashboard_summary(source, START, END, 'Example company')['comparison']
+    assert comparison['period_verified'] is True
+    assert comparison['total_sales'] == 5000000.0
+    assert comparison['net_profit'] == 100000.0
+    assert comparison['net_loss'] == 0.0
+    assert (comparison['from_date'], comparison['to_date']) == ('2024-04-01', '2025-03-31')
+
+    source['previous_profit_loss_totals'] = native_pl(START, END)
+    unverified = map_dashboard_summary(source, START, END, 'Example company')['comparison']
+    assert unverified['period_verified'] is False
+    assert unverified['total_sales'] is None
+
+
+def test_ageing_buckets_follow_days_overdue():
+    from app.api.dashboard_mapper import ageing
+    buckets = ageing([
+        {'amount': 100.0, 'days_overdue': None},
+        {'amount': 50.0, 'days_overdue': 0},
+        {'amount': 10.0, 'days_overdue': 30},
+        {'amount': 20.0, 'days_overdue': 31},
+        {'amount': 30.0, 'days_overdue': 90},
+        {'amount': 40.0, 'days_overdue': 364},
+        {'amount': None, 'days_overdue': 5},
+    ])
+    assert [(b['key'], b['amount'], b['count']) for b in buckets] == [
+        ('not_due', 150.0, 2), ('1_30', 10.0, 1), ('31_60', 20.0, 1),
+        ('61_90', 30.0, 1), ('over_90', 40.0, 1),
+    ]
+
+
+def test_summary_includes_ageing_for_verified_outstanding():
+    result = map_dashboard_summary({'receivables': parse_outstanding_table(outstanding_html())}, START, END, 'Example company')
+    assert result['receivables_ageing'][-1] == {'key': 'over_90', 'label': 'Over 90 days', 'amount': 80000.25, 'count': 1}
+    assert map_dashboard_summary({}, START, END, 'Example company')['receivables_ageing'] is None
+
+
+def test_html_amount_reads_tally_negative_notation():
+    from app.tally.dashboard import html_amount
+    assert html_amount('(-)5,00,000.00') == -500000.0
+    assert html_amount('5,00,000.00') == 500000.0
+    assert html_amount('') is None
+
+
+def test_confirmed_month_without_lines_has_no_entries(monkeypatch):
+    async def send(self, xml):
+        if '$$SysName:HTML' in xml:
+            return table([['Example company'], ['Particulars', '1-May-25 to 31-May-25'], ['', 'Opening Stock', '', '1.00']])
+        return '<ENVELOPE><DSPACCNAME><DSPDISPNAME>Opening Stock</DSPDISPNAME></DSPACCNAME><PLAMT><BSMAINAMT>1.00</BSMAINAMT></PLAMT></ENVELOPE>'
+
+    monkeypatch.setattr(dashboard.TallyClient, 'send_xml', send)
+    result = asyncio.run(dashboard._fetch_monthly_income_expense_series(
+        'Example company', date(2025, 5, 1), date(2025, 5, 31), today=date(2025, 6, 1),
+    ))
+    assert result[0]['status'] == 'no_entries'
+    assert result[0]['income'] is None
+
+
+def test_line_missing_from_a_confirmed_pl_means_no_entries():
+    rows = [row for row in parse_profit_loss_rows(pl_xml()) if 'Purchase' not in row['name']]
+    result = map_dashboard_summary({'profit_loss': rows, 'profit_loss_totals': native_pl()}, START, END, 'Example company')
+    assert result['total_purchases'] is None
+    assert result['metric_sources']['total_purchases']['status'] == 'none'
+    assert result['metric_sources']['total_purchases']['message'] == 'No purchase entries in Tally for this period.'
+
+
+def test_blank_line_in_a_confirmed_pl_means_no_entries():
+    result = map_dashboard_summary({'profit_loss': parse_profit_loss_rows(pl_xml(purchase='')), 'profit_loss_totals': native_pl()}, START, END, 'Example company')
+    assert result['total_purchases'] is None
+    assert result['metric_sources']['total_purchases']['status'] == 'none'
+    assert result['metric_sources']['total_purchases']['raw'] == ''
