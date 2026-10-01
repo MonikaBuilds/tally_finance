@@ -4,7 +4,7 @@ from app.security.auth import (
     UserContext,
     get_current_user,
 )
-from app.security.user_store import _connect
+from app.security.db import get_connection
 
 
 def has_role(
@@ -20,7 +20,7 @@ def has_role(
     if not clean_user_id or not clean_role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -121,7 +121,7 @@ def get_all_permissions() -> list[dict]:
     """
     Return all available permissions from MySQL.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -155,7 +155,7 @@ def get_user_access(user_id: str) -> dict:
             "permissions": [],
         }
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -206,7 +206,7 @@ def get_all_roles() -> list[dict]:
     """
     Return all roles stored in MySQL.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(
         dictionary=True
     )
@@ -235,7 +235,7 @@ def role_exists(role_name: str) -> bool:
     if not role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -268,7 +268,7 @@ def assign_role_to_user(
     if not user_id or not role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -341,7 +341,7 @@ def assign_permission_to_user(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -418,7 +418,7 @@ def remove_permission_from_user(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -464,7 +464,7 @@ def get_required_permission(
     if not tool_name:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -503,7 +503,7 @@ def user_has_permission(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:

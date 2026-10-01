@@ -1,8 +1,7 @@
-﻿import os
-import uuid
+﻿import uuid
 from dataclasses import dataclass
 
-import mysql.connector
+from app.security.db import get_connection
 from dotenv import load_dotenv
 
 from app.security.passwords import hash_password, verify_password
@@ -19,18 +18,8 @@ class StoredUser:
     is_active: bool
 
 
-def _connect():
-    return mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
-    )
-
-
 def initialize_user_store() -> None:
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -114,7 +103,7 @@ def create_user(
 
     password_hash = hash_password(password)
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -183,7 +172,7 @@ def delete_user(
     if not clean_user_id:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -224,7 +213,7 @@ def set_user_active_status(
     if not clean_user_id:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -262,7 +251,7 @@ def get_user_by_username(
     if not clean_username:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -295,6 +284,50 @@ def get_user_by_username(
         is_active=bool(row["is_active"]),
     )
 
+def get_user_by_id(
+    user_id: str,
+) -> StoredUser | None:
+    """
+    Return a user by user ID.
+    """
+
+    clean_user_id = user_id.strip()
+
+    if not clean_user_id:
+        return None
+
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                user_id,
+                username,
+                password_hash,
+                is_active
+            FROM users
+            WHERE user_id = %s
+            """,
+            (clean_user_id,),
+        )
+
+        row = cursor.fetchone()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+    if row is None:
+        return None
+
+    return StoredUser(
+        user_id=row["user_id"],
+        username=row["username"],
+        password_hash=row["password_hash"],
+        is_active=bool(row["is_active"]),
+    )
 
 def get_user_organization_id(
     user_id: str,
@@ -307,7 +340,7 @@ def get_user_organization_id(
     if not clean_user_id:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -344,7 +377,7 @@ def get_all_users(
     if not clean_organization_id:
         return []
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -390,7 +423,7 @@ def user_belongs_to_organization(
     if not clean_user_id or not clean_organization_id:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -417,7 +450,7 @@ def user_belongs_to_organization(
 def get_user_companies(
     user_id: str,
 ) -> tuple[str, ...]:
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -484,7 +517,7 @@ def update_user_password(
 
     password_hash = hash_password(new_password)
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:

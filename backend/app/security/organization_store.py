@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from app.security.user_store import _connect
+from app.security.db import get_connection
 
 
 @dataclass(frozen=True)
@@ -14,7 +14,7 @@ def initialize_organization_store() -> None:
     """
     Create the organizations table if it does not exist.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -52,7 +52,7 @@ def create_organization(
 
     organization_id = str(uuid.uuid4())
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -95,7 +95,7 @@ def get_organization(
     if not clean_id:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(
         dictionary=True
     )
