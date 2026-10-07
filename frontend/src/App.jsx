@@ -31,6 +31,7 @@ import UserManagement from './pages/UserManagement'
 import ReportsIndex from './pages/ReportsIndex'
 
 import { apiGet, apiPost } from './api/client'
+import { clearBrowserCache } from './utils/browserCache'
 
 
 // Old paths that no longer have their own route. The other old
@@ -86,6 +87,7 @@ function App() {
 
         sessionStorage.removeItem('chat_user')
         sessionStorage.removeItem('selected_company')
+        clearBrowserCache()
 
         setCurrentUser(null)
         setIsAuthenticated(false)
@@ -133,6 +135,7 @@ function App() {
       error
     )
   } finally {
+    clearBrowserCache()
     sessionStorage.removeItem('chat_user')
     sessionStorage.removeItem('selected_company')
     sessionStorage.removeItem(

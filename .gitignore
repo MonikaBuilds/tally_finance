@@ -44,3 +44,7 @@ backend/tests/.test_data/
 htmlcov/
 .mypy_ cache/
 .ruff_cache/
+
+# Local service configs
+*.conf
+*.conf.backup

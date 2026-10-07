@@ -27,6 +27,8 @@ if (!CSRF_HEADER_NAME) {
 }
 
 
+import { clearBrowserCache } from "../utils/browserCache";
+
 const SELECTED_COMPANY_KEY = "selected_company";
 
 
@@ -43,6 +45,7 @@ export function getSelectedCompany() {
 
 
 export function setSelectedCompany(company) {
+  clearBrowserCache();
   if (company) {
     sessionStorage.setItem(
       SELECTED_COMPANY_KEY,

@@ -11,7 +11,11 @@ from app.api.dashboard_mapper import (
     purchase_row,
     verified_period,
 )
-from app.security.auth import get_authorized_company
+from app.security.auth import (
+    UserContext,
+    get_authorized_company,
+    get_current_user,
+)
 from app.tally.client import TallyClient
 from app.tally.dashboard import (
     fetch_dashboard_reports,
@@ -21,6 +25,10 @@ from app.tally.dashboard import (
 )
 from app.tally.service import fetch_companies
 from app.tally.xml_builders.financial import build_profit_loss_request
+from app.cache.config import cache_settings, is_force_refresh
+from app.cache.errors import is_tally_connectivity_error
+from app.cache.keys import build_cache_key
+from app.cache.manager import cache_manager
 
 
 logger = logging.getLogger(__name__)
@@ -154,28 +162,46 @@ async def _fetch_monthly_income_expense_series(
 
 
 def _resolve_period(from_date, to_date):
-    end = to_date or date.today()
-    start = from_date or date(
-        end.year if end.month >= 4 else end.year - 1,
-        4,
-        1,
-    )
+    today = date.today()
+    start_year = today.year if today.month >= 4 else today.year - 1
+    default_start = date(start_year, 4, 1)
+    default_end = today
 
-    if start > end:
+    resolved_from = from_date if isinstance(from_date, date) else default_start
+    resolved_to = to_date if isinstance(to_date, date) else default_end
+
+    if resolved_from > resolved_to:
         raise HTTPException(
             422,
             'From date must not be after To date',
         )
 
-    return start, end
+    return resolved_from, resolved_to
 
 
-async def _resolve_company(company_name):
+def _resolve_org_id(current_user: UserContext) -> str:
+    """Resolve organization ID only from the authenticated user."""
+    from app.security.user_store import get_user_organization_id
+
+    organization_id = get_user_organization_id(
+        current_user.user_id
+    )
+
+    if not organization_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to resolve user organization.",
+        )
+
+    return str(organization_id)
+
+
+async def _resolve_company(company_name: str | None, org_id: str | None = None) -> str:
     # Wildcard users must not silently read a different loaded company.
     if company_name:
         return company_name
 
-    companies = await fetch_companies()
+    companies = await fetch_companies(org_id=org_id)
 
     if len(companies) != 1:
         raise HTTPException(
@@ -188,9 +214,13 @@ async def _resolve_company(company_name):
 
 @router.get('/summary')
 async def get_dashboard_summary(
+    request: Request = None,
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = Query(default=False),
+    refresh: str | int | None = Query(default=None),
 ):
     """
     Headline figures, tables and breakdowns. The month-by-month series
@@ -200,46 +230,81 @@ async def get_dashboard_summary(
     start, end = _resolve_period(from_date, to_date)
 
     try:
-        company_name = await _resolve_company(company_name)
+        effective_org_id = _resolve_org_id(current_user)
+        company_name = await _resolve_company(company_name, org_id=effective_org_id)
 
         started = perf_counter()
 
-        reports, errors = await fetch_dashboard_reports(
-            company_name,
-            start,
-            end,
+        # Cache key is organization, company, date-range, and report aware
+        cache_key = build_cache_key(
+            report_name="dashboard_summary",
+            company_name=company_name,
+            org_id=effective_org_id,
+            params={
+                "from_date": start.isoformat(),
+                "to_date": end.isoformat(),
+            },
         )
 
-        if not reports:
-            raise HTTPException(
-                502,
-                'Unable to read dashboard reports from Tally',
+        is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
+
+        async def _fetch_from_tally():
+            reports, errors = await fetch_dashboard_reports(
+                company_name,
+                start,
+                end,
             )
 
-        summary = map_dashboard_summary(
-            reports,
-            start,
-            end,
-            company_name,
+            if not reports:
+                raise HTTPException(
+                    502,
+                    'Unable to read dashboard reports from Tally',
+                )
+
+            summary = map_dashboard_summary(
+                reports,
+                start,
+                end,
+                company_name,
+            )
+
+            summary['report_errors'] = errors
+            summary['fetched_at'] = datetime.now(
+                timezone.utc
+            ).isoformat()
+
+            return summary
+
+        cache_res = await cache_manager.get_or_fetch(
+            cache_key=cache_key,
+            fetcher=_fetch_from_tally,
+            fresh_ttl=cache_settings.TTL_DASHBOARD_SUMMARY,
+            stale_retention_ttl=cache_settings.REDIS_CACHE_STALE_RETENTION_TTL,
+            force_refresh=is_force,
+            metadata={
+                "report": "dashboard_summary",
+                "company": company_name,
+                "org_id": effective_org_id,
+                "from_date": start.isoformat(),
+                "to_date": end.isoformat(),
+            },
         )
 
-        summary['report_errors'] = errors
-        summary['fetched_at'] = datetime.now(
-            timezone.utc
-        ).isoformat()
-
         logger.info(
-            'Dashboard summary for %s (%s -> %s) in %.2fs',
+            'Dashboard summary for %s (%s -> %s) [source=%s] in %.2fs',
             company_name,
             start,
             end,
+            cache_res.source,
             perf_counter() - started,
         )
 
         return {
             'success': True,
-            'source': 'tally',
-            'data': summary,
+            'source': cache_res.source,
+            'data': cache_res.data,
+            'cached_at': cache_res.cached_at,
+            'is_stale': cache_res.is_stale,
         }
 
     except HTTPException:
@@ -254,33 +319,97 @@ async def get_dashboard_summary(
 
 @router.get('/monthly')
 async def get_dashboard_monthly(
-    request: Request,
+    request: Request = None,
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = Query(default=False),
+    refresh: str | int | None = Query(default=None),
 ):
     """Sales and purchases per month of the selected period."""
     start, end = _resolve_period(from_date, to_date)
 
     try:
-        company_name = await _resolve_company(company_name)
+        effective_org_id = _resolve_org_id(current_user)
+        company_name = await _resolve_company(company_name, org_id=effective_org_id)
 
-        series = await _fetch_monthly_income_expense_series(
-            company_name,
-            start,
-            end,
-            is_disconnected=request.is_disconnected,
+        started = perf_counter()
+
+        cache_key = build_cache_key(
+            report_name="dashboard_monthly",
+            company_name=company_name,
+            org_id=effective_org_id,
+            params={
+                "from_date": start.isoformat(),
+                "to_date": end.isoformat(),
+            },
         )
 
-        return {
-            'success': True,
-            'source': 'tally',
-            'data': {
+        is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
+
+        async def _fetch_from_tally():
+            is_disconnected = (
+                getattr(request, "is_disconnected", None)
+                if request is not None
+                else None
+            )
+            series = await _fetch_monthly_income_expense_series(
+                company_name,
+                start,
+                end,
+                is_disconnected=is_disconnected,
+            )
+
+            # If all windows ended up 'unavailable', probe Tally connectivity so outage triggers stale cache fallback
+            if series and all(p.get("status") == "unavailable" for p in series):
+                client = TallyClient()
+                try:
+                    conn_status = await client.check_connection()
+                    if not conn_status.get("connected", False):
+                        import httpx
+                        raise httpx.ConnectError("Tally server is offline or unreachable")
+                except Exception as probe_exc:
+                    if is_tally_connectivity_error(probe_exc):
+                        raise probe_exc
+
+            return {
                 'company_name': company_name,
                 'from_date': start.isoformat(),
                 'to_date': end.isoformat(),
                 'income_vs_expense': series,
+            }
+
+        cache_res = await cache_manager.get_or_fetch(
+            cache_key=cache_key,
+            fetcher=_fetch_from_tally,
+            fresh_ttl=cache_settings.get_fresh_ttl("dashboard_monthly"),
+            stale_retention_ttl=cache_settings.REDIS_CACHE_STALE_RETENTION_TTL,
+            force_refresh=is_force,
+            metadata={
+                "report": "dashboard_monthly",
+                "company": company_name,
+                "org_id": effective_org_id,
+                "from_date": start.isoformat(),
+                "to_date": end.isoformat(),
             },
+        )
+
+        logger.info(
+            'Dashboard monthly for %s (%s -> %s) [source=%s] in %.2fs',
+            company_name,
+            start,
+            end,
+            cache_res.source,
+            perf_counter() - started,
+        )
+
+        return {
+            'success': True,
+            'source': cache_res.source,
+            'data': cache_res.data,
+            'cached_at': cache_res.cached_at,
+            'is_stale': cache_res.is_stale,
         }
 
     except HTTPException:

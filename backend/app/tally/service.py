@@ -1,8 +1,10 @@
 import re
 from datetime import date, datetime
 
+from app.cache.config import cache_settings
+from app.cache.keys import build_cache_key
+from app.cache.manager import cache_manager, CacheResult
 from app.tally.client import TallyClient
-
 from app.tally.xml_builders import (
     build_company_request,
     build_profit_loss_request,
@@ -28,7 +30,6 @@ from app.tally.xml_builders import (
     build_chatbot_ledger_request,
     build_stock_group_items_request,
 )
-
 from app.tally.parsers import (
     parse_companies,
     parse_profit_loss,
@@ -52,19 +53,15 @@ from app.tally.parsers import (
     parse_negative_stock,
     parse_stock_item_list,
 )
-
 from app.tally.parsers.inventory import (
     filter_stock_movement_by_godown,
 )
-
 from app.tally.parsers.financial import (
     parse_balance_sheet_report,
 )
-
 from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
-
 
 
 client = TallyClient()
@@ -74,15 +71,50 @@ client = TallyClient()
 # COMPANIES
 # ============================================================
 
-async def fetch_companies():
-    response = await client.send_xml(
-        build_company_request()
+async def fetch_companies_result(
+    force_refresh: bool = False,
+    org_id: str | None = None,
+) -> CacheResult:
+    if not org_id:
+        raise ValueError("org_id is required for cached company data")
+
+    cache_key = build_cache_key(
+        report_name="companies",
+        company_name=None,
+        org_id=str(org_id),
     )
 
-    # parse_companies() returns {"success", "companies", "count"} -
-    # callers (api/tally.py) expect the plain list of companies.
-    return parse_companies(response)["companies"]
+    async def _fetch():
+        response = await client.send_xml(
+            build_company_request()
+        )
+        return parse_companies(response)["companies"]
 
+    result = await cache_manager.get_or_fetch(
+        cache_key=cache_key,
+        fetcher=_fetch,
+        fresh_ttl=cache_settings.get_fresh_ttl("companies"),
+        stale_retention_ttl=cache_settings.REDIS_CACHE_STALE_RETENTION_TTL,
+        force_refresh=force_refresh,
+        metadata={
+            "report": "companies",
+            "org_id": str(org_id),
+        },
+    )
+
+    return result
+
+
+async def fetch_companies(
+    force_refresh: bool = False,
+    org_id: str | None = None,
+) -> list[dict]:
+    result = await fetch_companies_result(
+        force_refresh=force_refresh,
+        org_id=org_id,
+    )
+
+    return result.data
 
 # ============================================================
 # PROFIT & LOSS
@@ -139,7 +171,10 @@ async def fetch_group_summary(
     print(response)
     print("========== END GROUP SUMMARY RESPONSE ==========\n")
 
-    return parse_group_summary(response, group_name=group_name)
+    return parse_group_summary(
+        response,
+        group_name=group_name,
+    )
 
 
 # ============================================================
@@ -193,6 +228,7 @@ async def fetch_balance_sheet_report(
 
     fetch_balance_sheet() above is left untouched for the chatbot tool.
     """
+
     request_xml = build_balance_sheet_request(
         company_name=company_name,
         from_date=from_date,
@@ -210,7 +246,7 @@ async def fetch_balance_sheet_report(
     # Tally's screen prints "Opening Balance" / "Current Period" under
     # Profit & Loss A/c, but its XML export does not always carry those
     # two sub-lines. When they are missing, rebuild them from Tally's own
-    # Profit & Loss for the same period (see below).
+    # Profit & Loss for the same period.
     await _add_profit_loss_sublines(
         report,
         from_date=from_date,
@@ -222,36 +258,29 @@ async def fetch_balance_sheet_report(
 
 
 _PROFIT_LOSS_LINE = re.compile(
-    r"^profit\s*(&|and)\s*loss(\s*(a/c|account))?$",
+    r"^profit\s+(&|and)\s+loss(\s+(a/c|account))?$",
     re.IGNORECASE,
 )
 
 
-def _apply_profit_loss_sublines(report: dict, net_result: float) -> bool:
+def _apply_profit_loss_sublines(
+    report: dict,
+    net_result: float,
+) -> bool:
     """
     Give the Profit & Loss A/c line of a parsed Balance Sheet its two
-    sub-lines, exactly as Tally shows them:
-
-        Profit & Loss A/c        <closing balance of the P&L account>
-          Opening Balance        <closing balance - current period>
-          Current Period         <net profit / loss of the period>
-
-    net_result is the period's result from Tally's Profit & Loss report
-    (positive = profit = credit, negative = loss = debit). The line's own
-    amount is already Tally's figure from the Balance Sheet, so Opening
-    Balance is simply what is left of it once the current period is taken
-    out. Sub-line amounts are signed relative to the parent (negative =
-    opposite direction, printed by Tally as "(-)"), and a zero sub-line
-    is left blank, the same as in Tally. Lines that already carry
-    sub-lines from Tally's own XML are never touched.
+    sub-lines, exactly as Tally shows them.
 
     Returns True when a line was filled in.
     """
+
     changed = False
 
     for side in ("liabilities", "assets"):
         for line in report.get(side, []):
-            if not _PROFIT_LOSS_LINE.match((line.get("name") or "").strip()):
+            if not _PROFIT_LOSS_LINE.match(
+                (line.get("name") or "").strip()
+            ):
                 continue
 
             if line.get("children"):
@@ -259,9 +288,10 @@ def _apply_profit_loss_sublines(report: dict, net_result: float) -> bool:
 
             amount = line.get("amount") or 0.0
 
-            # Credit balance -> Liabilities side (positive);
-            # debit balance  -> Assets side (negative).
+            # Credit balance -> Liabilities side (positive).
+            # Debit balance -> Assets side (negative).
             direction = 1 if side == "liabilities" else -1
+
             closing = amount * direction
 
             def _relative(value):
@@ -271,7 +301,9 @@ def _apply_profit_loss_sublines(report: dict, net_result: float) -> bool:
             line["children"] = [
                 {
                     "name": "Opening Balance",
-                    "amount": _relative(closing - net_result),
+                    "amount": _relative(
+                        closing - net_result
+                    ),
                     "is_group": False,
                     "derived": True,
                 },
@@ -296,13 +328,16 @@ async def _add_profit_loss_sublines(
 ) -> None:
     """
     Fetch Tally's Profit & Loss for the Balance Sheet's period and use its
-    net result for the Profit & Loss A/c sub-lines. Only does anything when
-    the Balance Sheet has a Profit & Loss A/c line without sub-lines. It
-    can never break the Balance Sheet: if the P&L cannot be fetched the
-    Balance Sheet is returned as it was.
+    net result for the Profit & Loss A/c sub-lines.
+
+    Only does anything when the Balance Sheet has a Profit & Loss A/c
+    line without sub-lines.
     """
+
     needs_sublines = any(
-        _PROFIT_LOSS_LINE.match((line.get("name") or "").strip())
+        _PROFIT_LOSS_LINE.match(
+            (line.get("name") or "").strip()
+        )
         and not line.get("children")
         for side in ("liabilities", "assets")
         for line in report.get(side, [])
@@ -318,15 +353,24 @@ async def _add_profit_loss_sublines(
             company_name=company_name,
         )
 
-        net_result = (profit_loss.get("summary") or {}).get("net_result")
+        net_result = (
+            (profit_loss.get("summary") or {})
+            .get("net_result")
+        )
 
         if net_result is None:
             return
 
-        _apply_profit_loss_sublines(report, float(net_result))
+        _apply_profit_loss_sublines(
+            report,
+            float(net_result),
+        )
 
     except Exception as e:
-        print("Balance Sheet: could not add Profit & Loss sub-lines:", repr(e))
+        print(
+            "Balance Sheet: could not add Profit & Loss sub-lines:",
+            repr(e),
+        )
 
 
 # ============================================================
@@ -346,37 +390,120 @@ async def fetch_bill_allocations(
         )
     )
 
-    # parse_bill_allocations() returns {"success": ..., "rows": [...],
-    # "count": ...} - same wrapper shape as parse_ledger_list(). Every
-    # caller (build_outstanding_summary, dashboard summary) expects a
-    # plain list of bill dicts, so unwrap it here once - matching the
-    # fetch_ledger_list() fix above. Returning the wrapper dict as-is
-    # made callers iterate over its keys ("success", "rows", "count")
-    # as if they were bill dicts, causing
-    # AttributeError("'str' object has no attribute 'get'").
-    return parse_bill_allocations(response).get("rows", [])
+    # parse_bill_allocations() returns:
+    # {"success": ..., "rows": [...], "count": ...}
+    return parse_bill_allocations(response).get(
+        "rows",
+        [],
+    )
 
 
 # ============================================================
 # RECEIVABLES
 # ============================================================
 
-async def fetch_bills_receivable(
+async def fetch_bills_receivable_result(
     company_name: str | None = None,
-):
-    response = await client.send_xml(
-        build_bills_receivable_request(
-            company_name=company_name,
+    org_id: str | None = None,
+    force_refresh: bool = False,
+) -> CacheResult:
+    """
+    Fetch Bills Receivable from Tally with Redis caching.
+
+    Redis stores the exact Tally XML response.
+    Parsing happens only after the cached/Tally response is retrieved.
+    """
+
+    if not org_id:
+        raise ValueError(
+            "org_id is required for cached receivables data"
         )
+
+    effective_org_id = str(org_id)
+
+    cache_key = build_cache_key(
+        report_name="receivables",
+        company_name=company_name,
+        org_id=effective_org_id,
     )
 
-    # Same wrapper-dict unwrap as fetch_bill_allocations() above -
-    # callers expect a plain list of bill dicts, not the
-    # {"success", "rows", "count"} wrapper.
-    return parse_outstanding_report(
-        response,
+    async def _fetch():
+        return await client.send_xml(
+            build_bills_receivable_request(
+                company_name=company_name,
+            )
+        )
+
+    cache_result = await cache_manager.get_or_fetch(
+        cache_key=cache_key,
+        fetcher=_fetch,
+        fresh_ttl=cache_settings.get_fresh_ttl(
+            "receivables"
+        ),
+        stale_retention_ttl=(
+            cache_settings.REDIS_CACHE_STALE_RETENTION_TTL
+        ),
+        force_refresh=force_refresh,
+        metadata={
+            "report": "receivables",
+            "company": company_name,
+            "org_id": effective_org_id,
+        },
+    )
+
+    # Parse only after retrieving the exact XML
+    # from Tally or Redis.
+    parsed = parse_outstanding_report(
+        cache_result.data,
         report_type="receivable",
-    ).get("rows", [])
+    )
+
+    return CacheResult(
+        data=parsed.get("rows", []),
+        source=cache_result.source,
+        cached_at=cache_result.cached_at,
+        is_stale=cache_result.is_stale,
+    )
+
+
+async def fetch_bills_receivable(
+    company_name: str | None = None,
+    org_id: str | None = None,
+    force_refresh: bool = False,
+):
+    """
+    Fetch Bills Receivable.
+
+    Existing callers continue receiving a plain list of
+    bill dictionaries.
+
+    Cache metadata remains available through
+    fetch_bills_receivable_result().
+    """
+
+    # Do not silently create a shared/default cache namespace.
+    # If organization context is unavailable, preserve the
+    # existing direct-Tally behavior instead of risking
+    # cross-tenant cache leakage.
+    if not org_id:
+        response = await client.send_xml(
+            build_bills_receivable_request(
+                company_name=company_name,
+            )
+        )
+
+        return parse_outstanding_report(
+            response,
+            report_type="receivable",
+        ).get("rows", [])
+
+    result = await fetch_bills_receivable_result(
+        company_name=company_name,
+        org_id=org_id,
+        force_refresh=force_refresh,
+    )
+
+    return result.data
 
 
 # ============================================================
@@ -394,7 +521,6 @@ async def fetch_bills_payable(
         timeout=timeout,
     )
 
-    # Same wrapper-dict unwrap as fetch_bill_allocations() above.
     return parse_outstanding_report(
         response,
         report_type="payable",
@@ -414,14 +540,12 @@ async def fetch_ledger_list(
         )
     )
 
-    # parse_ledger_list() returns {"success": ..., "ledgers": [...],
-    # "count": ...} - every caller (the /ledgers endpoint, the Group
-    # Summary ledger/group check, the chatbot tool) expects a plain
-    # list of ledger dicts, so unwrap it here once instead of
-    # returning the whole wrapper (which was silently making the
-    # ledger dropdown empty and the Group Summary ledger check
-    # throw/fall back to "treat everything as a group").
-    return parse_ledger_list(response).get("ledgers", [])
+    # parse_ledger_list() returns:
+    # {"success": ..., "ledgers": [...], "count": ...}
+    return parse_ledger_list(response).get(
+        "ledgers",
+        [],
+    )
 
 
 # ============================================================
@@ -454,11 +578,7 @@ async def fetch_ledger_report(
     Fetch a ledger report from Tally.
 
     Flow:
-
-    1. Fetch this one ledger's master info (opening/closing
-       balance) via a targeted, filtered collection - NOT the
-       full company Ledger List, which is a much heavier query
-       and was causing repeated ReadTimeouts.
+    1. Fetch this one ledger's master info.
     2. Try Tally's native Ledger Vouchers report.
     3. If native report gives no usable rows, fetch actual vouchers.
     4. Parse only vouchers belonging to the requested ledger.
@@ -476,9 +596,7 @@ async def fetch_ledger_report(
     print("==============================================\n")
 
     # --------------------------------------------------------
-    # 1. Get THIS ledger's master information (opening/closing
-    #    balance) - a lightweight, filtered request instead of
-    #    pulling every ledger in the company.
+    # 1. Get THIS ledger's master information
     # --------------------------------------------------------
 
     opening_balance = 0.0
@@ -497,7 +615,11 @@ async def fetch_ledger_report(
 
         if matched_ledgers:
             opening_balance = float(
-                matched_ledgers[0].get("opening_balance", 0) or 0
+                matched_ledgers[0].get(
+                    "opening_balance",
+                    0,
+                )
+                or 0
             )
 
             closing_balance = matched_ledgers[0].get(
@@ -542,17 +664,25 @@ async def fetch_ledger_report(
             company_name=company_name,
         )
 
-        print("\n========== LEDGER NATIVE REQUEST ==========")
+        print(
+            "\n========== LEDGER NATIVE REQUEST =========="
+        )
         print(request_xml)
-        print("========== END LEDGER NATIVE REQUEST ==========\n")
+        print(
+            "========== END LEDGER NATIVE REQUEST ==========\n"
+        )
 
         response = await client.send_xml(
             request_xml
         )
 
-        print("\n========== LEDGER NATIVE RESPONSE ==========")
+        print(
+            "\n========== LEDGER NATIVE RESPONSE =========="
+        )
         print(response)
-        print("========== END LEDGER NATIVE RESPONSE ==========\n")
+        print(
+            "========== END LEDGER NATIVE RESPONSE ==========\n"
+        )
 
         report = parse_ledger_report(
             response,
@@ -573,7 +703,7 @@ async def fetch_ledger_report(
 
         native_entries = report.get(
             "entries",
-            []
+            [],
         )
 
         print(
@@ -586,7 +716,6 @@ async def fetch_ledger_report(
                 "Native Tally ledger report returned "
                 "usable entries."
             )
-
             return report
 
         print(
@@ -640,9 +769,6 @@ async def fetch_ledger_report(
             "========== END LEDGER FALLBACK RESPONSE ==========\n"
         )
 
-        # IMPORTANT:
-        # Pass the actual XML response to the parser.
-        # Never pass None here.
         voucher_rows = (
             _parse_custom_voucher_ledger_rows(
                 voucher_response,
@@ -704,7 +830,6 @@ async def fetch_ledger_report(
             ):
                 continue
 
-            # Keep date consistently formatted.
             row["date"] = current_date.isoformat()
 
             filtered_rows.append(row)
@@ -724,13 +849,9 @@ async def fetch_ledger_report(
 
         # ----------------------------------------------------
         # 7. Calculate running balance
-        #
-        # Only actual Tally debit/credit rows are used.
-        # No transactions are fabricated.
         # ----------------------------------------------------
 
         running_balance = opening_balance
-
         total_debit = 0.0
         total_credit = 0.0
 
@@ -783,10 +904,6 @@ async def fetch_ledger_report(
 
         # ----------------------------------------------------
         # 9. Monthly summary
-        #
-        # Continuous month-by-month buckets (carrying the closing
-        # balance forward through months with zero transactions),
-        # matching Tally's own "Ledger Monthly Summary" screen.
         # ----------------------------------------------------
 
         monthly_summary = build_continuous_monthly_summary(
@@ -809,13 +926,27 @@ async def fetch_ledger_report(
             "entries": filtered_rows,
             "monthly_summary": monthly_summary,
             "entry_count": len(filtered_rows),
-            "from_date": from_date.isoformat() if from_date else None,
-            "to_date": to_date.isoformat() if to_date else None,
+            "from_date": (
+                from_date.isoformat()
+                if from_date
+                else None
+            ),
+            "to_date": (
+                to_date.isoformat()
+                if to_date
+                else None
+            ),
         }
 
-        print("\n==============================================")
-        print("       LEDGER FALLBACK SUCCESS")
-        print("==============================================")
+        print(
+            "\n=============================================="
+        )
+        print(
+            "       LEDGER FALLBACK SUCCESS"
+        )
+        print(
+            "=============================================="
+        )
         print(
             f"Ledger       : {ledger_name}"
         )
@@ -834,7 +965,9 @@ async def fetch_ledger_report(
         print(
             f"Closing      : {calculated_closing_balance}"
         )
-        print("==============================================\n")
+        print(
+            "==============================================\n"
+        )
 
         return report
 
@@ -850,7 +983,7 @@ async def fetch_ledger_report(
 
 
 # ============================================================
-# VOUCHER DETAIL - single accounting voucher, all ledger lines
+# VOUCHER DETAIL
 # ============================================================
 
 async def fetch_voucher_detail(
@@ -860,10 +993,7 @@ async def fetch_voucher_detail(
     company_name: str | None = None,
 ):
     """
-    Fetch one accounting voucher with every ledger line inside it -
-    the same data Tally's "Accounting Voucher Alteration" screen
-    shows when you drill into a single transaction from a ledger
-    report row.
+    Fetch one accounting voucher with every ledger line inside it.
     """
 
     request_xml = build_voucher_detail_request(
@@ -873,22 +1003,32 @@ async def fetch_voucher_detail(
         company_name=company_name,
     )
 
-    print("\n========== VOUCHER DETAIL REQUEST ==========")
+    print(
+        "\n========== VOUCHER DETAIL REQUEST =========="
+    )
     print(request_xml)
-    print("========== END VOUCHER DETAIL REQUEST ==========\n")
+    print(
+        "========== END VOUCHER DETAIL REQUEST ==========\n"
+    )
 
     response = await client.send_xml(request_xml)
 
-    print("\n========== VOUCHER DETAIL RESPONSE ==========")
+    print(
+        "\n========== VOUCHER DETAIL RESPONSE =========="
+    )
     print(response)
-    print("========== END VOUCHER DETAIL RESPONSE ==========\n")
+    print(
+        "========== END VOUCHER DETAIL RESPONSE ==========\n"
+    )
 
     vouchers = parse_voucher_detail(
         response,
         voucher_type=voucher_type,
         voucher_number=voucher_number,
         voucher_date=(
-            voucher_date.isoformat() if voucher_date else None
+            voucher_date.isoformat()
+            if voucher_date
+            else None
         ),
     )
 
@@ -896,11 +1036,7 @@ async def fetch_voucher_detail(
         return vouchers
 
     # ----------------------------------------------------------
-    # Fallback: some Tally versions won't restrict a Collection by
-    # SVFROMDATE/SVTODATE the same way a native report does, or the
-    # requested date didn't line up exactly (e.g. post-dated /
-    # optional vouchers). Retry once without the date restriction so
-    # the type + number formula filter alone finds it.
+    # Fallback: retry without date restriction.
     # ----------------------------------------------------------
 
     if voucher_date is not None:
@@ -911,7 +1047,9 @@ async def fetch_voucher_detail(
             company_name=company_name,
         )
 
-        response = await client.send_xml(request_xml)
+        response = await client.send_xml(
+            request_xml
+        )
 
         vouchers = parse_voucher_detail(
             response,
@@ -940,6 +1078,7 @@ async def fetch_stock_summary(
 
     return parse_stock_summary(response)
 
+
 async def fetch_chatbot_ledger_raw(
     ledger_name: str,
     company_name: str | None = None,
@@ -963,6 +1102,7 @@ async def fetch_chatbot_ledger_raw(
     )
 
     return response
+
 
 # ============================================================
 # STOCK ITEM
@@ -1064,10 +1204,9 @@ async def fetch_stock_movement(
 
     result = parse_stock_movement(response)
 
-    # Tally's TDL formulas cannot easily filter vouchers by the
-    # godown of a nested inventory entry, so a location (godown)
-    # is applied here in Python, against the already-parsed rows,
-    # for the Location Summary / Location Monthly Summary screens.
+    # Tally's TDL formulas cannot easily filter vouchers by
+    # godown of a nested inventory entry, so apply the location
+    # filter in Python after parsing.
     if godown_name:
         rows = filter_stock_movement_by_godown(
             result.get("rows", []),
@@ -1084,7 +1223,7 @@ async def fetch_stock_movement(
 
 
 # ============================================================
-# STOCK GROUP ITEMS (Stock Group Summary -> items in that group)
+# STOCK GROUP ITEMS
 # ============================================================
 
 async def fetch_stock_group_items(
@@ -1163,6 +1302,10 @@ async def fetch_negative_stock(
     return parse_negative_stock(response)
 
 
+# ============================================================
+# STOCK ITEM LIST
+# ============================================================
+
 async def fetch_stock_item_list(
     company_name: str | None = None,
 ) -> list[dict]:
@@ -1181,6 +1324,5 @@ async def fetch_stock_item_list(
         xml_request
     )
 
-    # Convert the XML response into Python dictionaries
-    # so other parts of the application can use the stock data easily.
+    # Convert the XML response into Python dictionaries.
     return parse_stock_item_list(response)

@@ -13,6 +13,7 @@ import {
     apiGet,
     apiPost,
 } from '../api/client'
+import { clearBrowserCache } from '../utils/browserCache'
 import './Login.css'
 
 function Login({ onLogin }) {
@@ -42,6 +43,8 @@ function Login({ onLogin }) {
             })
 
             const currentUser = await apiGet('/auth/me')
+
+            clearBrowserCache()
 
             sessionStorage.setItem(
                 'chat_user',

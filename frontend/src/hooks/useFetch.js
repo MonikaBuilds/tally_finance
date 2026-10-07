@@ -1,32 +1,61 @@
 import { useEffect, useState } from 'react'
 import { apiGet } from '../api/client'
+import {
+  isCacheablePath,
+  buildBrowserCacheKey,
+  getBrowserCache,
+  setBrowserCache,
+} from '../utils/browserCache'
 
 export function useFetch(path, options = {}) {
-  const { timeoutMs } = options
+  const {
+    timeoutMs,
+    cache = true,
+    forceRefresh = false,
+    ttlMs,
+  } = options
 
-  const [state, setState] = useState({
-    data: null,
-    loading: Boolean(path),
-    error: null,
+  const isCacheEnabled = Boolean(cache !== false && isCacheablePath(path))
+  const isForceRefresh = Boolean(
+    forceRefresh ||
+    (path && /[?&](refresh|force_refresh)=/i.test(path))
+  )
+
+  const cacheKey = isCacheEnabled ? buildBrowserCacheKey(path) : null
+  const cached = (!isForceRefresh && cacheKey) ? getBrowserCache(cacheKey) : null
+
+  const [state, setState] = useState(() => {
+    if (!path) {
+      return { data: null, loading: false, error: null }
+    }
+    if (cached && !cached.isStale) {
+      // 0ms instant warm fresh hit!
+      return { data: cached.data, loading: false, error: null }
+    }
+    if (cached && cached.data !== undefined) {
+      // SWR: serve stale data immediately while fetching fresh in background
+      return { data: cached.data, loading: true, error: null }
+    }
+    return { data: null, loading: true, error: null }
   })
 
   useEffect(() => {
-    // A falsy path means "nothing to fetch yet" (e.g. the Ledger page
-    // waiting on the user to pick a ledger before it has a query to run).
-    // We don't touch state here - the neutral value is returned directly
-    // below, without going through an extra render.
     if (!path) return
+
+    // If we already have fresh cached data, skip redundant network fetch
+    if (!isForceRefresh && cached && !cached.isStale) {
+      setState({ data: cached.data, loading: false, error: null })
+      return
+    }
 
     let ignore = false
     const controller = new AbortController()
-
     let timeoutId = null
 
-    setState({
-      data: null,
-      loading: true,
-      error: null,
-    })
+    // If cold miss (no cached data), ensure loading is true and data is null
+    if (!cached || cached.data === undefined) {
+      setState({ data: null, loading: true, error: null })
+    }
 
     if (timeoutMs) {
       timeoutId = window.setTimeout(() => {
@@ -39,6 +68,9 @@ export function useFetch(path, options = {}) {
     })
       .then((result) => {
         if (!ignore) {
+          if (isCacheEnabled && cacheKey && result !== undefined) {
+            setBrowserCache(cacheKey, result, ttlMs)
+          }
           setState({
             data: result,
             loading: false,
@@ -50,19 +82,19 @@ export function useFetch(path, options = {}) {
         if (ignore) return
 
         if (err.name === 'AbortError') {
-          setState({
-            data: null,
+          setState((prev) => ({
+            data: prev.data,
             loading: false,
             error: 'Request timed out. Tally is currently unavailable.',
-          })
+          }))
           return
         }
 
-        setState({
-          data: null,
+        setState((prev) => ({
+          data: prev.data,
           loading: false,
           error: err.message,
-        })
+        }))
       })
       .finally(() => {
         if (timeoutId) {
@@ -72,14 +104,12 @@ export function useFetch(path, options = {}) {
 
     return () => {
       ignore = true
-
       if (timeoutId) {
         window.clearTimeout(timeoutId)
       }
-
       controller.abort()
     }
-  }, [path, timeoutMs])
+  }, [path, timeoutMs, forceRefresh])
 
   if (!path) {
     return {

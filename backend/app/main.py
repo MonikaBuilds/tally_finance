@@ -21,6 +21,12 @@ from app.tally.client import TallyClient
 from app.security.csrf import (
     csrf_protection_middleware,
 )
+from app.cache import (
+    init_redis_client,
+    close_redis_client,
+    start_background_refresher,
+    stop_background_refresher,
+)
 
 
 configure_logging()
@@ -36,9 +42,15 @@ async def lifespan(app: FastAPI):
     # Start shared HTTP client for Tally connections.
     await TallyClient.start_shared_client()
 
+    # Initialize Redis client pool and start background cache refresher (fail-open)
+    await init_redis_client()
+    start_background_refresher()
+
     try:
         yield
     finally:
+        await stop_background_refresher()
+        await close_redis_client()
         await TallyClient.close_shared_client()
 
 

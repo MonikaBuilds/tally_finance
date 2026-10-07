@@ -52,7 +52,7 @@ def format_tool_response(
             "Unable to retrieve the requested data from Tally."
         )
 
-    if tool_result.get("source") != "tally":
+    if tool_result.get("source") not in {"tally", "cache", "stale_cache"}:
         return (
             "I could not verify this financial information "
             "from Tally."

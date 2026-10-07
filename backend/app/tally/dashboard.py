@@ -14,6 +14,7 @@ from app.tally.xml_builders.financial import (
     build_bills_payable_request,
 )
 from app.tally.xml_builders.ledger import build_ledger_list_request
+from app.cache.errors import is_tally_connectivity_error
 
 
 def report_request(xml, *, html=False, as_of=None):
@@ -225,9 +226,16 @@ async def fetch_dashboard_reports(company, start, end):
         'payables': (report_request(build_bills_payable_request(company), html=True, as_of=end), parse_outstanding_table),
     }
     reports, errors = {}, {}
+    last_connectivity_exc = None
     for name, (request, parser) in requests.items():
         try:
             reports[name] = parser(await client.send_xml(request))
-        except Exception:
+        except Exception as exc:
+            if is_tally_connectivity_error(exc):
+                last_connectivity_exc = exc
             errors[name] = 'Tally report could not be read. Refresh or check the Tally connection.'
+
+    if last_connectivity_exc is not None:
+        raise last_connectivity_exc
+
     return reports, errors

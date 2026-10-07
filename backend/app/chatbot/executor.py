@@ -6,6 +6,9 @@ from typing import Any
 
 from app.chatbot.tool_registry import TOOL_FUNCTIONS
 from app.security.permissions import can_execute_tool
+from app.cache.config import cache_settings
+from app.cache.keys import build_cache_key
+from app.cache.manager import cache_manager
 
 
 CHATBOT_TOOL_TIMEOUT = 20.0
@@ -163,10 +166,17 @@ def _prepare_arguments(
     return prepared
 
 
+class _NonCacheableToolResult(Exception):
+    def __init__(self, result: dict):
+        self.result = result
+
+
 async def execute_tool(
     tool_name: str,
     arguments: dict[str, Any] | None = None,
     user_id: str | None = None,
+    org_id: str = "default",
+    force_refresh: bool = False,
 ) -> dict:
     # -------------------------------------------------
     # 1. READ-ONLY / REGISTERED TOOL CHECK
@@ -190,7 +200,7 @@ async def execute_tool(
     # 2. RBAC PERMISSION CHECK
     # -------------------------------------------------
     # Authorization happens before argument processing,
-    # semaphore acquisition, or any Tally tool execution.
+    # cache lookup, semaphore acquisition, or any Tally tool execution.
     #
     # Admin:
     #   Can access all mapped tools.
@@ -231,15 +241,95 @@ async def execute_tool(
         )
 
         # ---------------------------------------------
-        # 4. CONCURRENCY PROTECTION
+        # 4. PREPARE CACHE KEY
+        # ---------------------------------------------
+        company_name = prepared_arguments.get("company_name")
+        cache_params = {
+            k: v for k, v in prepared_arguments.items()
+            if k != "company_name"
+        }
+        cache_key = build_cache_key(
+            report_name=f"chat:{tool_name}",
+            company_name=company_name,
+            org_id=org_id,
+            params=cache_params,
+        )
+
+        # ---------------------------------------------
+        # 5. DEFINE FETCHER WITH CONCURRENCY PROTECTION
+        # ---------------------------------------------
+        async def _fetch_from_tally():
+            try:
+                await asyncio.wait_for(
+                    _tool_semaphore.acquire(),
+                    timeout=CHATBOT_QUEUE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError("QUEUE_TIMEOUT")
+
+            try:
+                raw_result = await asyncio.wait_for(
+                    tool_function(
+                        **prepared_arguments
+                    ),
+                    timeout=CHATBOT_TOOL_TIMEOUT,
+                )
+            finally:
+                _tool_semaphore.release()
+
+            if not isinstance(
+                raw_result,
+                dict,
+            ):
+                raise ValueError(
+                    "The financial tool returned "
+                    "an invalid response."
+                )
+
+            # Never cache unsuccessful results in Redis
+            if not raw_result.get("success", False):
+                raise _NonCacheableToolResult(raw_result)
+
+            return raw_result
+
+        # ---------------------------------------------
+        # 6. FETCH WITH CACHING & STALE OUTAGE FALLBACK
         # ---------------------------------------------
         try:
-            await asyncio.wait_for(
-                _tool_semaphore.acquire(),
-                timeout=CHATBOT_QUEUE_TIMEOUT,
+            cache_res = await cache_manager.get_or_fetch(
+                cache_key=cache_key,
+                fetcher=_fetch_from_tally,
+                fresh_ttl=cache_settings.get_fresh_ttl(tool_name),
+                stale_retention_ttl=cache_settings.REDIS_CACHE_STALE_RETENTION_TTL,
+                force_refresh=force_refresh,
+                metadata={
+                    "tool": tool_name,
+                    "company": company_name,
+                    "org_id": org_id,
+                },
             )
 
-        except asyncio.TimeoutError:
+            res_data = cache_res.data
+            if isinstance(res_data, dict):
+                output = dict(res_data)
+                output["source"] = cache_res.source
+                output["is_stale"] = cache_res.is_stale
+                output["cached_at"] = cache_res.cached_at
+                return output
+
+            return {
+                "success": True,
+                "source": cache_res.source,
+                "data": res_data,
+                "cached_at": cache_res.cached_at,
+                "is_stale": cache_res.is_stale,
+            }
+
+        except _NonCacheableToolResult as exc:
+            return exc.result
+
+    except TimeoutError as exc:
+        if str(exc) == "QUEUE_TIMEOUT":
             return {
                 "success": False,
                 "source": None,
@@ -250,39 +340,15 @@ async def execute_tool(
                 ),
                 "data": None,
             }
-
-        # ---------------------------------------------
-        # 5. EXECUTE AUTHORIZED TALLY TOOL
-        # ---------------------------------------------
-        try:
-            result = await asyncio.wait_for(
-                tool_function(
-                    **prepared_arguments
-                ),
-                timeout=CHATBOT_TOOL_TIMEOUT,
-            )
-
-        finally:
-            _tool_semaphore.release()
-
-        # ---------------------------------------------
-        # 6. VALIDATE TOOL RESPONSE
-        # ---------------------------------------------
-        if not isinstance(
-            result,
-            dict,
-        ):
-            return {
-                "success": False,
-                "source": None,
-                "message": (
-                    "The financial tool returned "
-                    "an invalid response."
-                ),
-                "data": None,
-            }
-
-        return result
+        return {
+            "success": False,
+            "source": "tally",
+            "message": (
+                "Tally is taking too long to "
+                "respond. Please try again shortly."
+            ),
+            "data": None,
+        }
 
     except asyncio.TimeoutError:
         return {
