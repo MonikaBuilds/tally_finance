@@ -1,4 +1,4 @@
-git push origin feature/redis-cacheimport { useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useFetch } from '../../hooks/useFetch'
 import PageHeader from '../../components/layout/PageHeader'
 import Loader from '../../components/common/Loader'
