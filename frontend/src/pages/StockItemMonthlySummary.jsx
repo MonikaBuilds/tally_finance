@@ -1,5 +1,4 @@
-import { useMemo } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
@@ -8,143 +7,70 @@ import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
-import { formatCurrency, formatQuantity, formatMonthKey, financialYearRange, monthKeyToRange } from '../utils/format'
+import { formatMonthKey } from '../utils/format'
+import { formatAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 /*
- * Stock -> Stock Summary -> (click item) -> Stock Item Monthly Summary.
+ * Stock Item Monthly Summary - every month of the period, like Tally.
  *
- * Matches Tally's own "Stock Item Monthly Summary" screen: an Opening
- * Balance row, followed by one row per month showing Inward / Outward
- * quantity+value and a running Closing balance.
+ * Inwards / Outwards come from the item's vouchers; the Closing Balance
+ * of each month is Tally's own figure for that month end (its value
+ * follows Tally's valuation method). All of it is built by the backend
+ * endpoint /reports/stock-item-monthly; nothing is calculated here.
  *
- * Both the opening balance and the monthly movement are fetched live
- * from Tally (via the existing /stock-item and /stock-movement
- * endpoints) - the monthly buckets are built here, the same way
- * LedgerMonthlySummary already builds month buckets from raw entries.
+ * Period: ?from / ?to when given (drill-downs always pass them).
+ * Otherwise the backend picks the latest financial year that has stock
+ * activity in Tally and returns it as from / to.
  */
-
-function monthKeyForDate(dateStr) {
-  if (!dateStr) return null
-  const value = String(dateStr).trim()
-  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (iso) return `${iso[1]}-${iso[2]}`
-  return null
-}
-
-// One day before `dateStr` (YYYY-MM-DD), for fetching the item's
-// closing balance just before the period starts (= opening balance).
-function dayBefore(dateStr) {
-  const d = new Date(`${dateStr}T00:00:00`)
-  d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
-}
-
-function toQuery(params) {
-  const query = new URLSearchParams(
-    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
-  ).toString()
-  return query ? `?${query}` : ''
-}
-
 function StockItemMonthlySummary() {
-  const location = useLocation()
   const navigate = useNavigate()
-  const params = new URLSearchParams(location.search)
+  const [searchParams] = useSearchParams()
+  const itemName = searchParams.get('item') || ''
 
-  const itemName = params.get('item') || ''
-  const fy = financialYearRange(0)
-  const fromDate = params.get('from') || fy.from
-  const toDate = params.get('to') || fy.to
+  // ?location=<godown> turns this into Tally's Godown Monthly Summary
+  // (same screen, scoped to one godown).
+  const godown = searchParams.get('location') || ''
 
-  const openingPath = itemName
-    ? `/reports/stock-item${toQuery({ stock_item_name: itemName, to_date: dayBefore(fromDate) })}`
-    : null
-
-  const movementPath = itemName
-    ? `/reports/stock-movement${toQuery({
+  const path = itemName
+    ? `/reports/stock-item-monthly${toQuery({
         stock_item_name: itemName,
-        from_date: fromDate,
-        to_date: toDate,
+        godown_name: godown,
+        from_date: searchParams.get('from'),
+        to_date: searchParams.get('to'),
       })}`
     : null
 
-  const { data: openingResponse, loading: openingLoading, error: openingError } = useFetch(openingPath)
-  const { data: movementResponse, loading: movementLoading, error: movementError } = useFetch(movementPath)
+  const { data: response, loading, error } = useFetch(path)
 
-  const opening = openingResponse?.item || null
+  const from = response?.from || searchParams.get('from')
+  const to = response?.to || searchParams.get('to')
 
-  const monthlyRows = useMemo(() => {
-    const rows = Array.isArray(movementResponse?.report) ? movementResponse.report : []
-
-    const buckets = new Map()
-
-    for (const row of rows) {
-      const key = monthKeyForDate(row.date)
-      if (!key) continue
-
-      if (!buckets.has(key)) {
-        buckets.set(key, {
-          key,
-          month: formatMonthKey(key),
-          inward_qty: 0,
-          inward_value: 0,
-          outward_qty: 0,
-          outward_value: 0,
-        })
-      }
-
-      const bucket = buckets.get(key)
-      const qty = Number(row.quantity) || 0
-      const value = Number(row.value) || 0
-
-      if (qty >= 0) {
-        bucket.inward_qty += qty
-        bucket.inward_value += Math.abs(value)
-      } else {
-        bucket.outward_qty += Math.abs(qty)
-        bucket.outward_value += Math.abs(value)
-      }
-    }
-
-    const sorted = Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key))
-
-    let runningQty = Number(opening?.closing_quantity) || 0
-    let runningValue = Number(opening?.closing_value) || 0
-
-    return sorted.map((bucket) => {
-      runningQty += bucket.inward_qty - bucket.outward_qty
-      runningValue += bucket.inward_value - bucket.outward_value
-
-      const range = monthKeyToRange(bucket.key)
-
-      return {
-        ...bucket,
-        closing_qty: runningQty,
-        closing_value: runningValue,
-        from: range?.from,
-        to: range?.to,
-      }
-    })
-  }, [movementResponse, opening])
+  const unit = response?.unit
+  const rows = Array.isArray(response?.report) ? response.report : []
+  const qty = (value) => formatQuantityWithUnit(value, unit)
 
   const columns = [
-    { key: 'month', label: 'Particulars' },
-    { key: 'inward_qty', label: 'Inward Qty', align: 'right', render: (r) => formatQuantity(r.inward_qty) },
-    { key: 'inward_value', label: 'Inward Value', align: 'right', render: (r) => formatCurrency(r.inward_value) },
-    { key: 'outward_qty', label: 'Outward Qty', align: 'right', render: (r) => formatQuantity(r.outward_qty) },
-    { key: 'outward_value', label: 'Outward Value', align: 'right', render: (r) => formatCurrency(r.outward_value) },
-    { key: 'closing_qty', label: 'Closing Qty', align: 'right', render: (r) => formatQuantity(r.closing_qty) },
-    { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => formatCurrency(r.closing_value) },
+    { key: 'month', label: 'Particulars', render: (r) => formatMonthKey(r.month) },
+    { key: 'inward_quantity', label: 'Inwards Qty', align: 'right', render: (r) => (r.inward_quantity ? qty(r.inward_quantity) : '') },
+    { key: 'inward_value', label: 'Inwards Value', align: 'right', render: (r) => (r.inward_value ? formatAmount(r.inward_value) : '') },
+    { key: 'outward_quantity', label: 'Outwards Qty', align: 'right', render: (r) => (r.outward_quantity ? qty(r.outward_quantity) : '') },
+    { key: 'outward_value', label: 'Outwards Value', align: 'right', render: (r) => (r.outward_value ? formatAmount(r.outward_value) : '') },
+    { key: 'closing_quantity', label: 'Closing Qty', align: 'right', render: (r) => qty(r.closing_quantity) },
+    { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => formatAmount(r.closing_value) },
   ]
 
-  const loading = openingLoading || movementLoading
-  const error = openingError || movementError
+  const total = (key) => rows.reduce((sum, r) => sum + (r[key] || 0), 0)
+  const last = rows[rows.length - 1]
 
   return (
     <>
       <PageHeader
-        title={`Stock Item Monthly Summary${itemName ? `: ${itemName}` : ''}`}
-        subtitle={`${fromDate} to ${toDate}`}
+        title={
+          godown
+            ? `Godown Monthly Summary: ${godown}${itemName ? ` — ${itemName}` : ''}`
+            : `Stock Item Monthly Summary${itemName ? `: ${itemName}` : ''}`
+        }
+        subtitle={from && to ? `${from} to ${to}` : undefined}
         actions={
           <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} /> Back
@@ -154,34 +80,58 @@ function StockItemMonthlySummary() {
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}
-
         {itemName && loading && <Loader />}
         {itemName && error && <ErrorMessage message={error} />}
+        {itemName && !loading && !error && response && !response.success && (
+          <ErrorMessage message={response.error || response.message || 'Unable to load the monthly summary.'} />
+        )}
 
-        {itemName && !loading && !error && (
+        {itemName && !loading && !error && response?.success && (
           <>
             <div className="table-footer">
               <span>
-                Opening Balance: {formatQuantity(opening?.closing_quantity ?? 0)}{' '}
-                ({formatCurrency(opening?.closing_value ?? 0)})
+                Opening Balance: {qty(response.opening?.quantity)} · {formatAmount(response.opening?.value)}
               </span>
             </div>
 
-            <p className="table-hint">Click a month to view that month's stock item vouchers.</p>
+            <p className="table-hint">
+              Click a month to view that month's {godown ? 'godown' : 'stock item'} vouchers.
+            </p>
+            {response.approximate && (
+              <p className="table-hint">
+                This item is held in more than one godown, so this godown's closing figures are worked
+                out from its opening allocation and vouchers at Tally's closing rate.
+              </p>
+            )}
 
             <DataTable
               columns={columns}
-              rows={monthlyRows}
+              rows={rows}
               onRowClick={(row) =>
                 navigate(
-                  `/reports/stock-item-vouchers${toQuery({
-                    item: itemName,
-                    from: row.from,
-                    to: row.to,
-                  })}`
+                  godown
+                    ? `/reports/location-vouchers${toQuery({ location: godown, item: itemName, from: row.from, to: row.to })}`
+                    : `/reports/stock-item-vouchers${toQuery({ item: itemName, from: row.from, to: row.to })}`
                 )
               }
             />
+
+            {rows.some((r) => r.pending_bills_quantity) && (
+              <p className="table-hint">
+                Outwards quantity includes Tally's Sale / Purchase Bills Pending adjustment
+                (delivered but not yet billed); Tally does not itemise its value.
+              </p>
+            )}
+
+            {last && (
+              <div className="table-footer">
+                <span>
+                  Grand Total — Inwards {qty(total('inward_quantity'))} · {formatAmount(total('inward_value'))} ·
+                  Outwards {qty(total('outward_quantity'))} · {formatAmount(total('outward_value'))} ·
+                  Closing {qty(last.closing_quantity)} · {formatAmount(last.closing_value)}
+                </span>
+              </div>
+            )}
           </>
         )}
       </Card>

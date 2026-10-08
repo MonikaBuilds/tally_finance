@@ -21,9 +21,13 @@ import ClosingStockSummary from './pages/ClosingStockSummary'
 import Inventory from './pages/Inventory'
 import StockItemMonthlySummary from './pages/StockItemMonthlySummary'
 import StockItemVouchers from './pages/StockItemVouchers'
+import InventoryVoucherDetail from './pages/InventoryVoucherDetail'
 import StockGroupItems from './pages/StockGroupItems'
+import StockSummaryDrill from './pages/StockSummaryDrill'
+import RegisterVouchers from './pages/RegisterVouchers'
 import LocationSummary from './pages/LocationSummary'
 import LocationMonthlySummary from './pages/LocationMonthlySummary'
+import LocationVouchers from './pages/LocationVouchers'
 import TallyStatus from './pages/TallyStatus'
 import Chatbot from './pages/Chatbot'
 import Login from './pages/Login'
@@ -317,36 +321,19 @@ function App() {
         />
 
         {/* Stock Reports */}
-
-        <Route
-          path="/reports/inventory"
-          element={<Inventory />}
-        />
-
-        <Route
-          path="/reports/stock-item-monthly"
-          element={<StockItemMonthlySummary />}
-        />
-
-        <Route
-          path="/reports/stock-item-vouchers"
-          element={<StockItemVouchers />}
-        />
-
-        <Route
-          path="/reports/stock-group-items"
-          element={<StockGroupItems />}
-        />
-
-        <Route
-          path="/reports/location-summary"
-          element={<LocationSummary />}
-        />
-
-        <Route
-          path="/reports/location-monthly"
-          element={<LocationMonthlySummary />}
-        />
+        <Route path="/reports/inventory" element={<Inventory />} />
+        <Route path="/reports/stock-item-monthly" element={<StockItemMonthlySummary />} />
+        <Route path="/reports/stock-item-vouchers" element={<StockItemVouchers />} />
+        <Route path="/reports/inventory-voucher" element={<InventoryVoucherDetail />} />
+        <Route path="/reports/registers/:key/vouchers" element={<RegisterVouchers />} />
+        <Route path="/reports/stock-groups/:name" element={<StockSummaryDrill kind="group" />} />
+        <Route path="/reports/stock-categories/:name" element={<StockSummaryDrill kind="category" />} />
+        <Route path="/reports/godowns/:name" element={<StockSummaryDrill kind="godown" />} />
+        {/* Old query-string links; both redirect to the dynamic routes above. */}
+        <Route path="/reports/stock-group-items" element={<StockGroupItems />} />
+        <Route path="/reports/location-summary" element={<LocationSummary />} />
+        <Route path="/reports/location-monthly" element={<LocationMonthlySummary />} />
+        <Route path="/reports/location-vouchers" element={<LocationVouchers />} />
 
         {LEGACY_REPORT_REDIRECTS.map(([from, to]) => (
           <Route
