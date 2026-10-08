@@ -19,6 +19,7 @@ class CacheSettings(BaseSettings):
     REDIS_CACHE_REFRESH_INTERVAL_SECONDS: int = 600  # 10 minutes background refresh
     REDIS_CONNECT_TIMEOUT: float = 2.0
     REDIS_PROTOCOL: int = 2  # RESP2 for maximum compatibility across Redis versions
+    TALLY_UNAVAILABLE_COOLDOWN_SECONDS: int = 30
 
     # Specific report freshness TTLs (in seconds)
     TTL_COMPANIES: int = 600

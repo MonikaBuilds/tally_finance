@@ -6,10 +6,13 @@ import time
 import httpx
 
 from app.core.config import settings
+from app.cache.config import cache_settings
+from app.cache.errors import is_tally_connectivity_error
 
 
 class TallyClient:
     _shared_client: httpx.AsyncClient | None = None
+    _unavailable_until = 0.0
 
     # TallyPrime's built-in HTTP-XML server processes one request at a
     # time. Firing several report calls close together (e.g. the
@@ -19,6 +22,25 @@ class TallyClient:
     # up and working. This lock serializes our own outgoing requests
     # so they queue politely on our side instead.
     _lock = asyncio.Lock()
+
+    @classmethod
+    def _mark_unavailable(cls) -> None:
+        cooldown = max(0, cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS)
+        cls._unavailable_until = max(
+            cls._unavailable_until,
+            time.monotonic() + cooldown,
+        )
+
+    @classmethod
+    def _mark_available(cls) -> None:
+        cls._unavailable_until = 0.0
+
+    @classmethod
+    def _circuit_is_open(cls) -> bool:
+        if cls._unavailable_until <= time.monotonic():
+            cls._unavailable_until = 0.0
+            return False
+        return True
 
     def __init__(self):
         self.base_url = settings.tally_url
@@ -105,6 +127,8 @@ class TallyClient:
                         self.base_url
                     )
 
+            self._mark_available()
+
             return {
                 "connected": True,
                 "status_code": response.status_code,
@@ -112,6 +136,7 @@ class TallyClient:
             }
 
         except Exception as exc:
+            self._mark_unavailable()
             return {
                 "connected": False,
                 "url": self.base_url,
@@ -125,7 +150,7 @@ class TallyClient:
     ) -> str:
         # Try to identify the report name from the XML for easier debugging.
         report_match = re.search(
-            r"<REPORTNAME>(.*?)</REPORTNAME>",
+            r"<(?:REPORTNAME|ID)>\s*(.*?)\s*</(?:REPORTNAME|ID)>",
             xml_payload,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -139,6 +164,14 @@ class TallyClient:
         # Serialize requests so Tally only ever handles one at a time
         # (see the comment on _lock above).
         async with self._lock:
+            # Once any request or health check has confirmed an outage,
+            # fail queued reports quickly so their cache layer can serve
+            # retained data instead of waiting through another read timeout.
+            if self._circuit_is_open():
+                raise httpx.ConnectError(
+                    "Tally is temporarily marked unavailable"
+                )
+
             # Measure the actual time Tally takes to process this XML request.
             # This starts after the lock is acquired, so queue wait is excluded.
             start_time = time.perf_counter()
@@ -180,6 +213,8 @@ class TallyClient:
                     xml_response
                 )
 
+                self._mark_available()
+
                 duration = time.perf_counter() - start_time
 
                 print(
@@ -200,6 +235,9 @@ class TallyClient:
                 raise
 
             except Exception as exc:
+                if is_tally_connectivity_error(exc):
+                    self._mark_unavailable()
+
                 duration = time.perf_counter() - start_time
 
                 print(

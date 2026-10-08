@@ -378,10 +378,6 @@ def list_users(
     "/users",
     status_code=201,
 )
-@router.post(
-    "/users",
-    status_code=201,
-)
 def create_admin_user(
     request: CreateUserRequest,
     current_user: UserContext = Depends(require_admin),

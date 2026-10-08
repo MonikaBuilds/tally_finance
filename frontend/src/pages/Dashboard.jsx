@@ -113,8 +113,8 @@ function outstandingEmpty(data, key, { loading, offline, noun }) {
   const bills = data[`top_${key}`]
 
   if (loading && bills === undefined) return 'loading'
-  if (offline) return 'Tally could not be reached.'
   if (Array.isArray(bills)) return bills.length ? null : `No pending ${noun} in Tally.`
+  if (offline) return 'Tally could not be reached.'
 
   const context = data.report_contexts?.[key]
   if (context?.to_date && !context.matches_selected_as_of) {
@@ -160,8 +160,16 @@ function Dashboard() {
   }
 
   const offline = Boolean(error)
-  const data = offline ? {} : (response?.data || lastData || {})
-  const stale = loading && Boolean(lastData)
+  const data = response?.data || lastData || {}
+  const hasDashboardData = Boolean(response?.data || lastData)
+  const usingBackendStaleCache = Boolean(
+    response?.is_stale || response?.source === 'stale_cache'
+  )
+  const stale = Boolean(
+    usingBackendStaleCache ||
+    (offline && hasDashboardData) ||
+    (loading && lastData)
+  )
   const sources = data.metric_sources || {}
 
   // The last known connection state shows at once on return visits,
@@ -249,11 +257,21 @@ function Dashboard() {
         fetchedAt={data.fetched_at}
       />
 
+      {usingBackendStaleCache && !offline && (
+        <div className="db-alert" role="status">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>Tally is unavailable. Showing saved dashboard figures.</span>
+          <button type="button" onClick={refresh}>
+            <RefreshCw size={14} aria-hidden="true" /> Try again
+          </button>
+        </div>
+      )}
+
       {offline && (
         <div className="db-alert db-alert--error" role="alert">
           <AlertCircle size={16} aria-hidden="true" />
           <span>
-            <strong>Dashboard could not load.</strong> {error}
+            <strong>{hasDashboardData ? 'Showing saved figures.' : 'Dashboard could not load.'}</strong> {error}
           </span>
           <button type="button" onClick={refresh}>
             <RefreshCw size={14} aria-hidden="true" /> Try again

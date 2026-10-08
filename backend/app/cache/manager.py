@@ -59,6 +59,8 @@ class TallyCacheManager:
         # Per-key in-flight locks to prevent cache stampedes
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_mutex = asyncio.Lock()
+        # Avoid repeating a known-failing Tally request for a stale key.
+        self._connectivity_failures: dict[str, float] = {}
 
     async def _get_lock(self, key: str) -> asyncio.Lock:
         """Get or create an asyncio.Lock for a specific cache key."""
@@ -202,6 +204,25 @@ class TallyCacheManager:
                         cached_data = retained_data
                         cached_at = retained_at
 
+                now_monotonic = time.monotonic()
+                failure_until = self._connectivity_failures.get(cache_key, 0)
+                if force_refresh:
+                    self._connectivity_failures.pop(cache_key, None)
+                elif failure_until > now_monotonic:
+                    if cached_data is not None:
+                        logger.debug(
+                            "Serving retained stale data during Tally retry cooldown for key %s",
+                            cache_key,
+                        )
+                        return CacheResult(
+                            data=cached_data,
+                            source="stale_cache",
+                            cached_at=cached_at,
+                            is_stale=True,
+                        )
+                elif failure_until:
+                    self._connectivity_failures.pop(cache_key, None)
+
                 # 3. Fetch from authoritative Tally source
                 try:
                     fresh_data = await fetcher()
@@ -222,6 +243,8 @@ class TallyCacheManager:
                             cached_ts=now_ts,
                         )
 
+                    self._connectivity_failures.pop(cache_key, None)
+
                     return CacheResult(
                         data=fresh_data,
                         source="tally",
@@ -231,6 +254,16 @@ class TallyCacheManager:
 
                 except Exception as fetch_exc:
                     # 4. Check if error is an eligible infrastructure/connectivity failure
+                    if is_tally_connectivity_error(fetch_exc) and cached_data is not None:
+                        cooldown = max(
+                            0,
+                            cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS,
+                        )
+                        if cooldown:
+                            self._connectivity_failures[cache_key] = (
+                                time.monotonic() + cooldown
+                            )
+
                     if is_tally_connectivity_error(fetch_exc) and cached_data is not None:
                         logger.warning(
                             "Tally server connectivity failure (%s: %s). Serving retained stale data for key %s (cached at %s).",
