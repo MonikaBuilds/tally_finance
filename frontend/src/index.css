@@ -1417,6 +1417,16 @@ textarea {
   margin-top: 1px;
 }
 
+.browser-cache-notice {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}
+
 .success-message {
   display: flex;
   align-items: center;

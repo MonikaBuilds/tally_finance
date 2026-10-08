@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router'
 import { Menu, Sparkles } from 'lucide-react'
 
 import Sidebar from './Sidebar'
+import BrowserCacheNotice from '../common/BrowserCacheNotice'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { getSelectedCompany, setSelectedCompany } from '../../api/client'
 
@@ -115,6 +116,7 @@ function Layout({ onLogout }) {
 
         <main className="app-content">
           <div className="content-inner">
+            <BrowserCacheNotice />
             {/* Remount the page on company change so it refetches. */}
             <Outlet key={company || 'default'} context={{ onLogout }} />
           </div>

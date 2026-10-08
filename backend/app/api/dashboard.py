@@ -376,6 +376,9 @@ async def get_dashboard_monthly(
             # If all windows ended up 'unavailable', probe Tally connectivity so outage triggers stale cache fallback
             if series and all(p.get("status") == "unavailable" for p in series):
                 client = TallyClient()
+                if client._circuit_is_open() or cache_manager.is_tally_known_offline():
+                    import httpx
+                    raise httpx.ConnectError("Tally server is offline or unreachable")
                 try:
                     conn_status = await client.check_connection()
                     if not conn_status.get("connected", False):

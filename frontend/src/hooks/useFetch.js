@@ -5,6 +5,7 @@ import {
   buildBrowserCacheKey,
   getBrowserCache,
   setBrowserCache,
+  updateBrowserCacheStatus,
 } from '../utils/browserCache'
 
 export function useFetch(path, options = {}) {
@@ -22,29 +23,53 @@ export function useFetch(path, options = {}) {
   )
 
   const cacheKey = isCacheEnabled ? buildBrowserCacheKey(path) : null
-  const cached = (!isForceRefresh && cacheKey) ? getBrowserCache(cacheKey) : null
+  const reportStatusKey = path?.toLowerCase().startsWith('/reports/')
+    ? cacheKey
+    : null
+  const cached = cacheKey ? getBrowserCache(cacheKey) : null
 
   const [state, setState] = useState(() => {
     if (!path) {
-      return { data: null, loading: false, error: null }
-    }
-    if (cached && !cached.isStale) {
-      // 0ms instant warm fresh hit!
-      return { data: cached.data, loading: false, error: null }
+      return {
+        path,
+        data: null,
+        loading: false,
+        error: null,
+        refreshError: null,
+        isStale: false,
+        cachedAt: null,
+      }
     }
     if (cached && cached.data !== undefined) {
-      // SWR: serve stale data immediately while fetching fresh in background
-      return { data: cached.data, loading: true, error: null }
+      return {
+        path,
+        data: cached.data,
+        loading: false,
+        error: null,
+        refreshError: null,
+        isStale: cached.isStale || isForceRefresh,
+        cachedAt: cached.timestamp,
+      }
     }
-    return { data: null, loading: true, error: null }
+    return {
+      path,
+      data: null,
+      loading: true,
+      error: null,
+      refreshError: null,
+      isStale: false,
+      cachedAt: null,
+    }
   })
 
   useEffect(() => {
     if (!path) return
 
+    const currentCached = cacheKey ? getBrowserCache(cacheKey) : null
+
     // If we already have fresh cached data, skip redundant network fetch
-    if (!isForceRefresh && cached && !cached.isStale) {
-      setState({ data: cached.data, loading: false, error: null })
+    if (!isForceRefresh && currentCached && !currentCached.isStale) {
+      updateBrowserCacheStatus(reportStatusKey, null)
       return
     }
 
@@ -52,9 +77,14 @@ export function useFetch(path, options = {}) {
     const controller = new AbortController()
     let timeoutId = null
 
-    // If cold miss (no cached data), ensure loading is true and data is null
-    if (!cached || cached.data === undefined) {
-      setState({ data: null, loading: true, error: null })
+    if (currentCached && currentCached.data !== undefined) {
+      // The current cache entry is used as the visible state while revalidating.
+      updateBrowserCacheStatus(reportStatusKey, {
+        cachedAt: currentCached.timestamp,
+        refreshing: true,
+      })
+    } else {
+      updateBrowserCacheStatus(reportStatusKey, null)
     }
 
     if (timeoutMs) {
@@ -68,33 +98,80 @@ export function useFetch(path, options = {}) {
     })
       .then((result) => {
         if (!ignore) {
-          if (isCacheEnabled && cacheKey && result !== undefined) {
+          const serverStale = Boolean(
+            result?.is_stale || result?.source === 'stale_cache'
+          )
+          const responseTimestamp = serverStale && result?.cached_at
+            ? Date.parse(result.cached_at)
+            : Date.now()
+
+          if (
+            isCacheEnabled &&
+            cacheKey &&
+            result !== undefined &&
+            result?.success !== false &&
+            !serverStale
+          ) {
             setBrowserCache(cacheKey, result, ttlMs)
           }
           setState({
+            path,
             data: result,
             loading: false,
             error: null,
+            refreshError: serverStale ? 'The server returned retained cached data.' : null,
+            isStale: serverStale,
+            cachedAt: Number.isFinite(responseTimestamp)
+              ? responseTimestamp
+              : Date.now(),
           })
+          updateBrowserCacheStatus(
+            reportStatusKey,
+            serverStale
+              ? {
+                  cachedAt: Number.isFinite(responseTimestamp)
+                    ? responseTimestamp
+                    : Date.now(),
+                  refreshing: false,
+                }
+              : null
+          )
         }
       })
       .catch((err) => {
         if (ignore) return
 
-        if (err.name === 'AbortError') {
-          setState((prev) => ({
-            data: prev.data,
+        const message = err.name === 'AbortError'
+          ? 'Request timed out. Tally is currently unavailable.'
+          : err.message
+
+        if (currentCached && currentCached.data !== undefined) {
+          updateBrowserCacheStatus(reportStatusKey, {
+            cachedAt: currentCached.timestamp,
+            refreshing: false,
+          })
+          setState({
+            path,
+            data: currentCached.data,
             loading: false,
-            error: 'Request timed out. Tally is currently unavailable.',
-          }))
+            error: null,
+            refreshError: message,
+            isStale: true,
+            cachedAt: currentCached.timestamp,
+          })
           return
         }
 
-        setState((prev) => ({
-          data: prev.data,
+        updateBrowserCacheStatus(reportStatusKey, null)
+        setState({
+          path,
+          data: null,
           loading: false,
-          error: err.message,
-        }))
+          error: message,
+          refreshError: null,
+          isStale: false,
+          cachedAt: null,
+        })
       })
       .finally(() => {
         if (timeoutId) {
@@ -108,14 +185,39 @@ export function useFetch(path, options = {}) {
         window.clearTimeout(timeoutId)
       }
       controller.abort()
+      updateBrowserCacheStatus(reportStatusKey, null)
     }
-  }, [path, timeoutMs, forceRefresh])
+  }, [path, timeoutMs, forceRefresh, isForceRefresh, cacheKey, reportStatusKey, ttlMs, isCacheEnabled])
 
   if (!path) {
     return {
       data: null,
       loading: false,
       error: null,
+      refreshError: null,
+      isStale: false,
+      cachedAt: null,
+    }
+  }
+
+  if (state.path !== path) {
+    if (cached && cached.data !== undefined) {
+      return {
+        data: cached.data,
+        loading: false,
+        error: null,
+        refreshError: null,
+        isStale: cached.isStale || isForceRefresh,
+        cachedAt: cached.timestamp,
+      }
+    }
+    return {
+      data: null,
+      loading: true,
+      error: null,
+      refreshError: null,
+      isStale: false,
+      cachedAt: null,
     }
   }
 

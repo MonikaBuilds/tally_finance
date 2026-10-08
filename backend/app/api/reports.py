@@ -1,9 +1,76 @@
+import logging
 from datetime import date
+from typing import Any, Awaitable, Callable, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from app.security.auth import get_authorized_company
+from app.cache.config import cache_settings, is_force_refresh
+from app.cache.errors import is_tally_connectivity_error
+from app.cache.keys import build_cache_key
+from app.cache.manager import cache_manager, CacheResult
+from app.security.auth import (
+    UserContext,
+    get_authorized_company,
+    get_current_user,
+)
+from app.security.config import get_auth_settings
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _resolve_org_id(current_user: UserContext) -> str:
+    """Resolve organization ID only from the authenticated user."""
+    from app.security.user_store import get_user_organization_id
+
+    organization_id = get_user_organization_id(current_user.user_id)
+    if not organization_id:
+        settings = get_auth_settings()
+        if not settings.auth_enabled or current_user.user_id == "development-user":
+            return "default"
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to resolve user organization.",
+        )
+    return str(organization_id)
+
+
+async def _cached_report(
+    report_name: str,
+    company_name: str | None,
+    current_user: UserContext,
+    params: dict[str, Any],
+    fetcher: Callable[[], Awaitable[T]],
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
+    ttl_name: str | None = None,
+) -> CacheResult[T]:
+    effective_org_id = _resolve_org_id(current_user)
+    is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
+    cache_key = build_cache_key(
+        report_name=report_name,
+        company_name=company_name,
+        org_id=effective_org_id,
+        params=params,
+    )
+    fresh_ttl = cache_settings.get_fresh_ttl(ttl_name or report_name)
+    stale_ttl = cache_settings.REDIS_CACHE_STALE_RETENTION_TTL
+
+    return await cache_manager.get_or_fetch(
+        cache_key=cache_key,
+        fetcher=fetcher,
+        fresh_ttl=fresh_ttl,
+        stale_retention_ttl=stale_ttl,
+        force_refresh=is_force,
+        metadata={
+            "report": report_name,
+            "company": company_name,
+            "org_id": effective_org_id,
+            **{k: v for k, v in params.items() if v is not None},
+        },
+    )
 
 from app.tally.service import (
     fetch_profit_loss,
@@ -293,7 +360,10 @@ def _export_response(
 async def get_profit_loss_report(
     from_date: date | None = None,
     to_date: date | None = None,
-    company_name: str | None = Depends(get_authorized_company)
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -301,31 +371,52 @@ async def get_profit_loss_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_profit_loss(
+    async def _fetch():
+        return await fetch_profit_loss(
             from_date=from_date,
             to_date=to_date,
             company_name=company_name,
         )
 
-        return {
-            "success": True,
-            "source": "tally",
-            # Two independent columns - Dr (left) and Cr (right) -
-            # not a flat list, since P&L genuinely has two sides.
-            "report": {
+    try:
+        cache_res = await _cached_report(
+            report_name="profit_loss",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="profit_loss",
+        )
+        report = cache_res.data
+        formatted_report = (
+            {
                 "left": report.get("left", []),
                 "right": report.get("right", []),
                 "total_left": report.get("total_left", 0),
                 "total_right": report.get("total_right", 0),
-            },
+            }
+            if isinstance(report, dict)
+            else report
+        )
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report": formatted_report,
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        print("Profit & Loss error:", repr(e))
+        logger.error("Profit & Loss error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -338,17 +429,32 @@ async def export_profit_loss_report(
     file_format: str,
     from_date: date | None = None,
     to_date: date | None = None,
-    company_name: str | None = Depends(get_authorized_company)
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
-        report = await fetch_profit_loss(
+    async def _fetch():
+        return await fetch_profit_loss(
             from_date=from_date,
             to_date=to_date,
             company_name=company_name,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="profit_loss",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="profit_loss",
+        )
+        report = cache_res.data
+
     except Exception as e:
-        print("Profit & Loss export error:", repr(e))
+        logger.error("Profit & Loss export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -373,9 +479,12 @@ async def export_profit_loss_report(
 @router.get("/group-summary")
 async def get_group_summary_report(
     group: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     """
     The screen Tally shows when you double-click a P&L/Balance Sheet
@@ -388,7 +497,13 @@ async def get_group_summary_report(
     ledger list, since Tally's Group Summary XML doesn't flag it
     directly.
     """
-    try:
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
+    async def _fetch():
         report = await fetch_group_summary(
             group_name=group,
             from_date=from_date,
@@ -416,19 +531,44 @@ async def get_group_summary_report(
             rows.append({**row, "is_ledger": is_ledger, "is_group": not is_ledger})
 
         return {
-            "success": True,
-            "source": "tally",
             "group_name": report.get("group_name", group),
             "report": rows,
             "total_debit": report.get("total_debit", 0),
             "total_credit": report.get("total_credit", 0),
         }
 
+    try:
+        cache_res = await _cached_report(
+            report_name="group_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "group": group,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="group_summary",
+        )
+        data = cache_res.data
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "group_name": data.get("group_name", group),
+            "report": data.get("report", []),
+            "total_debit": data.get("total_debit", 0),
+            "total_credit": data.get("total_credit", 0),
+        }
+
     except HTTPException:
         raise
 
     except Exception as e:
-        print("Group Summary error:", repr(e))
+        logger.error("Group Summary error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -468,6 +608,9 @@ async def get_trial_balance_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
     from_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -475,23 +618,44 @@ async def get_trial_balance_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_trial_balance(
+    async def _fetch():
+        return await fetch_trial_balance(
             **_trial_balance_kwargs(
                 company_name, from_date, to_date
             )
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="trial_balance",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="trial_balance",
+        )
+        report = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "from_date": from_date.isoformat() if from_date else None,
             "to_date": to_date.isoformat() if to_date else None,
             "report": _as_rows(report),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Trial Balance error:", repr(e))
+        logger.error("Trial Balance error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -505,6 +669,7 @@ async def export_trial_balance_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
     from_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -512,15 +677,32 @@ async def export_trial_balance_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_trial_balance(
+    async def _fetch():
+        return await fetch_trial_balance(
             **_trial_balance_kwargs(
                 company_name, from_date, to_date
             )
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="trial_balance",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="trial_balance",
+        )
+        report = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Trial Balance export error:", repr(e))
+        logger.error("Trial Balance export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -574,6 +756,9 @@ async def get_trial_balance_purchase_bills_pending(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -581,7 +766,7 @@ async def get_trial_balance_purchase_bills_pending(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
+    async def _fetch():
         report = await fetch_stock_movement(
             company_name=company_name,
             from_date=from_date,
@@ -650,18 +835,42 @@ async def get_trial_balance_purchase_bills_pending(
         rows.sort(key=lambda r: (r["date"] or "", r["tracking_number"] or ""))
 
         return {
-            "success": True,
-            "source": "tally",
             "report": rows,
             "count": len(rows),
             "total_value": sum(row["value"] or 0 for row in rows),
+        }
+
+    try:
+        cache_res = await _cached_report(
+            report_name="purchase_bills_pending",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="purchase_bills_pending",
+        )
+        data = cache_res.data
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report": data.get("report", []),
+            "count": data.get("count", 0),
+            "total_value": data.get("total_value", 0),
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        print("Trial Balance Purchase Bills Pending error:", repr(e))
+        logger.error("Trial Balance Purchase Bills Pending error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -722,6 +931,9 @@ async def get_balance_sheet_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -729,16 +941,34 @@ async def get_balance_sheet_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_balance_sheet_report(
+    async def _fetch():
+        return await fetch_balance_sheet_report(
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="balance_sheet",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="balance_sheet",
+        )
+        report = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "company_name": company_name,
             "from_date": from_date.isoformat() if from_date else None,
             "to_date": to_date.isoformat() if to_date else None,
@@ -751,8 +981,11 @@ async def get_balance_sheet_report(
             },
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Balance Sheet error:", repr(e))
+        logger.error("Balance Sheet error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -766,6 +999,7 @@ async def export_balance_sheet_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -773,15 +1007,32 @@ async def export_balance_sheet_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_balance_sheet_report(
+    async def _fetch():
+        return await fetch_balance_sheet_report(
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="balance_sheet",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="balance_sheet",
+        )
+        report = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Balance Sheet export error:", repr(e))
+        logger.error("Balance Sheet export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -805,22 +1056,43 @@ async def export_balance_sheet_report(
 
 @router.get("/bill-allocations")
 async def get_bill_allocations(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
-        bills = await fetch_bill_allocations(
+    async def _fetch():
+        return await fetch_bill_allocations(
             company_name=company_name,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="bill_allocations",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="bill_allocations",
+        )
+        bills = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "count": len(bills),
             "bills": bills,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Bill allocations error:", repr(e))
+        logger.error("Bill allocations error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -834,9 +1106,12 @@ async def get_bill_allocations(
 
 @router.get("/receivables")
 async def get_receivables_report(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         tally_bills = await fetch_bills_receivable(
             company_name=company_name,
         )
@@ -849,19 +1124,36 @@ async def get_receivables_report(
             allocations
         )
 
-        data = build_receivables_from_tally_report(
+        return build_receivables_from_tally_report(
             tally_bills,
             outstanding,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="bills_receivable",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="bills_receivable",
+        )
+
         return {
             "success": True,
-            "source": "tally",
-            "data": data,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "data": cache_res.data,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Receivables error:", repr(e))
+        logger.error("Receivables error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -872,9 +1164,10 @@ async def get_receivables_report(
 @router.get("/receivables/export/{file_format}")
 async def export_receivables_report(
     file_format: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         tally_bills = await fetch_bills_receivable(
             company_name=company_name,
         )
@@ -887,13 +1180,27 @@ async def export_receivables_report(
             allocations
         )
 
-        data = build_receivables_from_tally_report(
+        return build_receivables_from_tally_report(
             tally_bills,
             outstanding,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="bills_receivable",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="bills_receivable",
+        )
+        data = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Receivables export error:", repr(e))
+        logger.error("Receivables export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -921,9 +1228,12 @@ async def export_receivables_report(
 
 @router.get("/payables")
 async def get_payables_report(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         tally_bills = await fetch_bills_payable(
             company_name=company_name,
         )
@@ -936,19 +1246,36 @@ async def get_payables_report(
             allocations
         )
 
-        data = build_payables_from_tally_report(
+        return build_payables_from_tally_report(
             tally_bills,
             outstanding,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="bills_payable",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="bills_payable",
+        )
+
         return {
             "success": True,
-            "source": "tally",
-            "data": data,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "data": cache_res.data,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Payables error:", repr(e))
+        logger.error("Payables error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -959,9 +1286,10 @@ async def get_payables_report(
 @router.get("/payables/export/{file_format}")
 async def export_payables_report(
     file_format: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         tally_bills = await fetch_bills_payable(
             company_name=company_name,
         )
@@ -974,13 +1302,27 @@ async def export_payables_report(
             allocations
         )
 
-        data = build_payables_from_tally_report(
+        return build_payables_from_tally_report(
             tally_bills,
             outstanding,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="bills_payable",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="bills_payable",
+        )
+        data = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Payables export error:", repr(e))
+        logger.error("Payables export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1008,22 +1350,43 @@ async def export_payables_report(
 
 @router.get("/ledgers")
 async def get_ledger_list(
-    company_name: str | None = Depends(get_authorized_company)
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
-        ledgers = await fetch_ledger_list(
+    async def _fetch():
+        return await fetch_ledger_list(
             company_name=company_name,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="ledger_list",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="ledger_list",
+        )
+        ledgers = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "count": len(ledgers),
             "ledgers": ledgers,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Ledger list error:", repr(e))
+        logger.error("Ledger list error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1041,6 +1404,9 @@ async def get_ledger_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -1048,52 +1414,43 @@ async def get_ledger_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        print("\n")
-        print("==========================================")
-        print("LEDGER REPORT REQUEST")
-        print("==========================================")
-        print("Ledger    :", ledger_name)
-        print("Company   :", company_name)
-        print("From Date :", from_date)
-        print("To Date   :", to_date)
-        print("==========================================")
-
-        report = await fetch_ledger_report(
+    async def _fetch():
+        return await fetch_ledger_report(
             ledger_name=ledger_name,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
 
-        print("LEDGER REPORT SUCCESS")
-        print("Entries:", len(report.get("entries", [])))
-        print("==========================================")
-        print()
+    try:
+        cache_res = await _cached_report(
+            report_name="ledger_report",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "ledger_name": ledger_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="ledger_report",
+        )
 
         return {
             "success": True,
-            "source": "tally",
-            "report": report,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report": cache_res.data,
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        import traceback
-
-        print("\n")
-        print("========== LEDGER REPORT ERROR ==========")
-        print("Ledger       :", ledger_name)
-        print("Company      :", company_name)
-        print("From Date    :", from_date)
-        print("To Date      :", to_date)
-        print("Error        :", repr(e))
-        print("\nTRACEBACK:")
-        traceback.print_exc()
-        print("========== END LEDGER REPORT ERROR ==========")
-        print()
+        logger.error("Ledger report error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1115,6 +1472,7 @@ async def export_ledger_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -1122,22 +1480,34 @@ async def export_ledger_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
-        report = await fetch_ledger_report(
+    async def _fetch():
+        return await fetch_ledger_report(
             ledger_name=ledger_name,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
 
-    except Exception as e:
-        import traceback
+    try:
+        cache_res = await _cached_report(
+            report_name="ledger_report",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "ledger_name": ledger_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="ledger_report",
+        )
+        report = cache_res.data
 
-        print("\n========== LEDGER EXPORT ERROR ==========")
-        print("Ledger :", ledger_name)
-        print("Error  :", repr(e))
-        traceback.print_exc()
-        print("========== END LEDGER EXPORT ERROR ==========\n")
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("Ledger export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1212,7 +1582,10 @@ async def get_voucher_detail(
     voucher_number: str,
     date: date | None = None,
     ledger_name: str | None = None,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     """
     Full accounting voucher (every ledger allocation, narration,
@@ -1225,18 +1598,7 @@ async def get_voucher_detail(
     the frontend can show it as "Account" the way Tally does, with
     the other ledger line(s) as "Particulars".
     """
-
-    try:
-        print("\n==========================================")
-        print("VOUCHER DETAIL REQUEST")
-        print("==========================================")
-        print("Voucher Type :", voucher_type)
-        print("Voucher No.  :", voucher_number)
-        print("Date         :", date)
-        print("Ledger       :", ledger_name)
-        print("Company      :", company_name)
-        print("==========================================")
-
+    async def _fetch():
         vouchers = await fetch_voucher_detail(
             voucher_type=voucher_type,
             voucher_number=voucher_number,
@@ -1266,28 +1628,38 @@ async def get_voucher_detail(
                     == target
                 )
 
-        print("VOUCHER DETAIL SUCCESS")
-        print("Entries:", len(voucher.get("entries", [])))
-        print("==========================================\n")
+        return voucher
+
+    try:
+        cache_res = await _cached_report(
+            report_name="voucher_detail",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "voucher_type": voucher_type,
+                "voucher_number": voucher_number,
+                "date": date.isoformat() if date else None,
+                "ledger_name": ledger_name,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="voucher_detail",
+        )
 
         return {
             "success": True,
-            "source": "tally",
-            "voucher": voucher,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "voucher": cache_res.data,
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        import traceback
-
-        print("\n========== VOUCHER DETAIL ERROR ==========")
-        print("Voucher Type :", voucher_type)
-        print("Voucher No.  :", voucher_number)
-        print("Error        :", repr(e))
-        traceback.print_exc()
-        print("========== END VOUCHER DETAIL ERROR ==========\n")
+        logger.error("Voucher detail error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1304,9 +1676,12 @@ async def get_voucher_detail(
 
 @router.get("/pending-invoices")
 async def get_pending_invoices_report(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         receivable_bills = await fetch_bills_receivable(
             company_name=company_name,
         )
@@ -1337,19 +1712,36 @@ async def get_pending_invoices_report(
             )
         )
 
-        data = build_pending_invoices_from_reports(
+        return build_pending_invoices_from_reports(
             receivables_data,
             payables_data,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="pending_invoices",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="pending_invoices",
+        )
+
         return {
             "success": True,
-            "source": "tally",
-            "data": data,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "data": cache_res.data,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Pending invoices error:", repr(e))
+        logger.error("Pending invoices error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1360,9 +1752,10 @@ async def get_pending_invoices_report(
 @router.get("/pending-invoices/export/{file_format}")
 async def export_pending_invoices_report(
     file_format: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         receivable_bills = await fetch_bills_receivable(
             company_name=company_name,
         )
@@ -1393,13 +1786,27 @@ async def export_pending_invoices_report(
             )
         )
 
-        data = build_pending_invoices_from_reports(
+        return build_pending_invoices_from_reports(
             receivables_data,
             payables_data,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="pending_invoices",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="pending_invoices",
+        )
+        data = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Pending invoices export error:", repr(e))
+        logger.error("Pending invoices export error: %r", e)
 
         raise HTTPException(
             status_code=502,
@@ -1546,27 +1953,50 @@ async def get_stock_summary_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
     from_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     _check_period(from_date, to_date)
 
-    try:
+    async def _fetch():
         report = await fetch_stock_summary(
             company_name=company_name,
             to_date=to_date,
             from_date=from_date,
         )
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
 
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_summary",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Summary error:", repr(e))
+        logger.error("Stock Summary error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Summary from Tally",
@@ -1578,15 +2008,36 @@ async def export_stock_summary_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    from_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    _check_period(from_date, to_date)
+
+    async def _fetch():
         report = await fetch_stock_summary(
             company_name=company_name,
             to_date=to_date,
+            from_date=from_date,
         )
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="stock_summary",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Summary export error:", repr(e))
+        logger.error("Stock Summary export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Summary from Tally",
@@ -1606,7 +2057,7 @@ async def export_stock_summary_report(
             "key": "closing_value",
             "value": total_value,
         },
-        period=_period_label(to_date=to_date),
+        period=_period_label(from_date=from_date, to_date=to_date),
     )
 
 
@@ -1621,31 +2072,54 @@ async def get_stock_item_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_item(
             company_name=company_name,
             stock_item_name=stock_item_name,
             from_date=from_date,
             to_date=to_date,
         )
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
 
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_item",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "stock_item_name": stock_item_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_item",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "item": rows[0] if rows else None,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Item error:", repr(e))
+        logger.error("Stock Item error: %r", e)
         raise HTTPException(
             status_code=502,
             detail=f"Unable to fetch stock item '{stock_item_name}' from Tally",
         )
-
 
 
 # ------------------------------------------------------------------
@@ -1658,23 +2132,48 @@ async def get_inventory_voucher_detail_report(
     voucher_number: str,
     voucher_date: date | None = None,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
-        report = await fetch_inventory_voucher_detail(
+    async def _fetch():
+        return await fetch_inventory_voucher_detail(
             voucher_type=voucher_type,
             voucher_number=voucher_number,
             voucher_date=voucher_date,
             company_name=company_name,
         )
 
+    try:
+        cache_res = await _cached_report(
+            report_name="inventory_voucher",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "voucher_type": voucher_type,
+                "voucher_number": voucher_number,
+                "voucher_date": voucher_date.isoformat() if voucher_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="inventory_voucher",
+        )
+        report = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
-            "voucher": report.get("voucher"),
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "voucher": report.get("voucher") if isinstance(report, dict) else report,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Inventory Voucher Detail error:", repr(e))
+        logger.error("Inventory Voucher Detail error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Inventory Voucher Alteration from Tally",
@@ -1688,23 +2187,44 @@ async def get_inventory_voucher_detail_report(
 @router.get("/stock-groups")
 async def get_stock_groups_report(
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_groups(company_name=company_name)
-        rows = [
+        return [
             _stock_group_row(r)
             for r in with_root_row(report.get("rows", []), "name")
         ]
 
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_groups",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_groups",
+        )
+        rows = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Groups error:", repr(e))
+        logger.error("Stock Groups error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Group Summary from Tally",
@@ -1715,12 +2235,26 @@ async def get_stock_groups_report(
 async def export_stock_groups_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_groups(company_name=company_name)
-        rows = [_stock_group_row(r) for r in report.get("rows", [])]
+        return [_stock_group_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_groups",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="stock_groups",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Groups export error:", repr(e))
+        logger.error("Stock Groups export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Group Summary from Tally",
@@ -1743,17 +2277,13 @@ async def get_stock_item_monthly_report(
     to_date: date | None = None,
     godown_name: str | None = None,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    """
-    Tally's Stock Item Monthly Summary: all months of the period with
-    Inwards, Outwards and Closing Balance (closing from Tally).
-    Without a period, the latest financial year with stock activity is
-    used (returned as from / to). With `godown_name` this is the
-    Godown Monthly Summary of that item in that godown.
-    """
     _check_period(from_date, to_date)
 
-    try:
+    async def _fetch():
         if godown_name:
             summary = await fetch_godown_item_monthly(
                 godown_name=godown_name,
@@ -1769,32 +2299,57 @@ async def get_stock_item_monthly_report(
                 to_date=to_date,
                 company_name=company_name,
             )
+        return summary
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_item_monthly",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "stock_item_name": stock_item_name,
+                "godown_name": godown_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_item_monthly",
+        )
+        summary = cache_res.data
+
+        if not summary or not summary.get("item_found"):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Stock item '{stock_item_name}' was not found in Tally",
+            )
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "item": stock_item_name,
+            "godown": summary.get("godown"),
+            "approximate": bool(summary.get("approximate")),
+            "from": summary.get("from"),
+            "to": summary.get("to"),
+            "unit": summary.get("unit"),
+            "opening": summary.get("opening"),
+            "report": summary.get("rows", []),
+            "count": len(summary.get("rows", [])),
+        }
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Item Monthly error:", repr(e))
+        logger.error("Stock Item Monthly error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Item Monthly Summary from Tally",
         )
-
-    if not summary["item_found"]:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Stock item '{stock_item_name}' was not found in Tally",
-        )
-
-    return {
-        "success": True,
-        "source": "tally",
-        "item": stock_item_name,
-        "godown": summary.get("godown"),
-        "approximate": bool(summary.get("approximate")),
-        "from": summary["from"],
-        "to": summary["to"],
-        "unit": summary["unit"],
-        "opening": summary["opening"],
-        "report": summary["rows"],
-        "count": len(summary["rows"]),
-    }
 
 
 @router.get("/stock-group-summary")
@@ -1804,30 +2359,53 @@ async def get_stock_group_summary_report(
     from_date: date | None = None,
     to_date: date | None = None,
     include_zero: bool = False,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    """
-    Tally's "Stock Group Summary" for one group (omit `group` for the
-    Primary root): child groups rolled up, then the items sitting
-    directly in the group.
-    """
     _check_period(from_date, to_date)
 
-    try:
-        summary = await fetch_stock_group_summary(
+    async def _fetch():
+        return await fetch_stock_group_summary(
             group_name=group,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
             include_zero=include_zero,
         )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_group_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "group": group,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "include_zero": include_zero,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_group_summary",
+        )
+        summary = cache_res.data
+        resp = _summary_response(summary, "Stock group", group)
+        resp["source"] = cache_res.source
+        resp["is_stale"] = cache_res.is_stale
+        resp["cached_at"] = cache_res.cached_at
+        return resp
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Group Summary error:", repr(e))
+        logger.error("Stock Group Summary error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Group Summary from Tally",
         )
-
-    return _summary_response(summary, "Stock group", group)
 
 
 @router.get("/stock-category-summary")
@@ -1837,29 +2415,53 @@ async def get_stock_category_summary_report(
     from_date: date | None = None,
     to_date: date | None = None,
     include_zero: bool = False,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    """
-    Tally's "Stock Category Summary" for one category (omit `category`
-    for the Primary root). Items with no category show under Primary.
-    """
     _check_period(from_date, to_date)
 
-    try:
-        summary = await fetch_stock_category_summary(
+    async def _fetch():
+        return await fetch_stock_category_summary(
             category_name=category,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
             include_zero=include_zero,
         )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_category_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "category": category,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "include_zero": include_zero,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_category_summary",
+        )
+        summary = cache_res.data
+        resp = _summary_response(summary, "Stock category", category)
+        resp["source"] = cache_res.source
+        resp["is_stale"] = cache_res.is_stale
+        resp["cached_at"] = cache_res.cached_at
+        return resp
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Category Summary error:", repr(e))
+        logger.error("Stock Category Summary error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Category Summary from Tally",
         )
-
-    return _summary_response(summary, "Stock category", category)
 
 
 @router.get("/godown-summary")
@@ -1869,30 +2471,53 @@ async def get_godown_summary_report(
     from_date: date | None = None,
     to_date: date | None = None,
     include_zero: bool = False,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    """
-    Tally's "Godown Summary" for one godown (omit `godown` for the
-    Primary root): child godowns rolled up, then the stock items held
-    directly in the godown with closing quantity, rate and value.
-    """
     _check_period(from_date, to_date)
 
-    try:
-        summary = await fetch_godown_summary(
+    async def _fetch():
+        return await fetch_godown_summary(
             godown_name=godown,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
             include_zero=include_zero,
         )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="godown_summary",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "godown": godown,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "include_zero": include_zero,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="godown_summary",
+        )
+        summary = cache_res.data
+        resp = _summary_response(summary, "Godown", godown)
+        resp["source"] = cache_res.source
+        resp["is_stale"] = cache_res.is_stale
+        resp["cached_at"] = cache_res.cached_at
+        return resp
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Godown Summary error:", repr(e))
+        logger.error("Godown Summary error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Godown Summary from Tally",
         )
-
-    return _summary_response(summary, "Godown", godown)
 
 
 @router.get("/stock-group-items")
@@ -1900,30 +2525,49 @@ async def get_stock_group_items_report(
     group: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    """
-    Stock items that belong to a single Stock Group - what Tally
-    shows when you drill into a group from Stock Group Summary.
-    """
-    try:
+    async def _fetch():
         report = await fetch_stock_group_items(
             group_name=group,
             company_name=company_name,
             to_date=to_date,
         )
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
 
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_group_items",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "group": group,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_group_items",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "group_name": group,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Group Items error:", repr(e))
+        logger.error("Stock Group Items error: %r", e)
         raise HTTPException(
             status_code=502,
             detail=f"Unable to fetch items for stock group '{group}' from Tally",
@@ -1936,16 +2580,33 @@ async def export_stock_group_items_report(
     group: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_group_items(
             group_name=group,
             company_name=company_name,
             to_date=to_date,
         )
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_group_items",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "group": group,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="stock_group_items",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Group Items export error:", repr(e))
+        logger.error("Stock Group Items export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail=f"Unable to fetch items for stock group '{group}' from Tally",
@@ -1969,23 +2630,44 @@ async def export_stock_group_items_report(
 @router.get("/stock-categories")
 async def get_stock_categories_report(
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_categories(company_name=company_name)
-        rows = [
+        return [
             _stock_category_row(r)
             for r in with_root_row(report.get("rows", []), "name")
         ]
 
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_categories",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_categories",
+        )
+        rows = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Categories error:", repr(e))
+        logger.error("Stock Categories error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Category Summary from Tally",
@@ -1996,12 +2678,26 @@ async def get_stock_categories_report(
 async def export_stock_categories_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_categories(company_name=company_name)
-        rows = [_stock_category_row(r) for r in report.get("rows", [])]
+        return [_stock_category_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_categories",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="stock_categories",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Categories export error:", repr(e))
+        logger.error("Stock Categories export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Category Summary from Tally",
@@ -2024,23 +2720,44 @@ async def export_stock_categories_report(
 @router.get("/godowns")
 async def get_godowns_report(
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_godowns(company_name=company_name)
-        rows = [
+        return [
             _godown_row(r)
             for r in with_root_row(report.get("rows", []), "name")
         ]
 
+    try:
+        cache_res = await _cached_report(
+            report_name="godowns",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="godowns",
+        )
+        rows = cache_res.data
+
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Locations error:", repr(e))
+        logger.error("Locations error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Locations from Tally",
@@ -2051,12 +2768,26 @@ async def get_godowns_report(
 async def export_godowns_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_godowns(company_name=company_name)
-        rows = [_godown_row(r) for r in report.get("rows", [])]
+        return [_godown_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="godowns",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=_fetch,
+            ttl_name="godowns",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Locations export error:", repr(e))
+        logger.error("Locations export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Locations from Tally",
@@ -2085,6 +2816,9 @@ async def get_stock_movement_report(
     to_date: date | None = None,
     stock_item_name: str | None = None,
     godown_name: str | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
@@ -2092,7 +2826,7 @@ async def get_stock_movement_report(
             detail="from_date cannot be later than to_date",
         )
 
-    try:
+    async def _fetch():
         report = await fetch_stock_movement(
             company_name=company_name,
             from_date=from_date,
@@ -2100,12 +2834,31 @@ async def get_stock_movement_report(
             stock_item_name=stock_item_name,
             godown_name=godown_name,
         )
+        return [_stock_movement_row(r) for r in report.get("rows", [])]
 
-        rows = [_stock_movement_row(r) for r in report.get("rows", [])]
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_movement",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "stock_item_name": stock_item_name,
+                "godown_name": godown_name,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_movement",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
@@ -2114,7 +2867,7 @@ async def get_stock_movement_report(
         raise
 
     except Exception as e:
-        print("Stock Movement error:", repr(e))
+        logger.error("Stock Movement error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Movement from Tally",
@@ -2129,8 +2882,9 @@ async def export_stock_movement_report(
     to_date: date | None = None,
     stock_item_name: str | None = None,
     godown_name: str | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_movement(
             company_name=company_name,
             from_date=from_date,
@@ -2138,9 +2892,27 @@ async def export_stock_movement_report(
             stock_item_name=stock_item_name,
             godown_name=godown_name,
         )
-        rows = [_stock_movement_row(r) for r in report.get("rows", [])]
+        return [_stock_movement_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_movement",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "stock_item_name": stock_item_name,
+                "godown_name": godown_name,
+            },
+            fetcher=_fetch,
+            ttl_name="stock_movement",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Movement export error:", repr(e))
+        logger.error("Stock Movement export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Movement from Tally",
@@ -2172,23 +2944,44 @@ async def export_stock_movement_report(
 async def get_stock_valuation_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_valuation(
             company_name=company_name,
             to_date=to_date,
         )
-        rows = [_stock_valuation_row(r) for r in report.get("rows", [])]
+        return [_stock_valuation_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_valuation",
+            company_name=company_name,
+            current_user=current_user,
+            params={"to_date": to_date.isoformat() if to_date else None},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_valuation",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Stock Valuation error:", repr(e))
+        logger.error("Stock Valuation error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Valuation from Tally",
@@ -2200,15 +2993,29 @@ async def export_stock_valuation_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_stock_valuation(
             company_name=company_name,
             to_date=to_date,
         )
-        rows = [_stock_valuation_row(r) for r in report.get("rows", [])]
+        return [_stock_valuation_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_valuation",
+            company_name=company_name,
+            current_user=current_user,
+            params={"to_date": to_date.isoformat() if to_date else None},
+            fetcher=_fetch,
+            ttl_name="stock_valuation",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Stock Valuation export error:", repr(e))
+        logger.error("Stock Valuation export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Valuation from Tally",
@@ -2236,23 +3043,44 @@ async def export_stock_valuation_report(
 async def get_negative_stock_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
-    try:
+    async def _fetch():
         report = await fetch_negative_stock(
             company_name=company_name,
             to_date=to_date,
         )
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="negative_stock",
+            company_name=company_name,
+            current_user=current_user,
+            params={"to_date": to_date.isoformat() if to_date else None},
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="negative_stock",
+        )
+        rows = cache_res.data
 
         return {
             "success": True,
-            "source": "tally",
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
             "report": rows,
             "count": len(rows),
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("Negative Stock error:", repr(e))
+        logger.error("Negative Stock error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Negative Stock from Tally",
@@ -2264,15 +3092,29 @@ async def export_negative_stock_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
-    try:
+    async def _fetch():
         report = await fetch_negative_stock(
             company_name=company_name,
             to_date=to_date,
         )
-        rows = [_stock_summary_row(r) for r in report.get("rows", [])]
+        return [_stock_summary_row(r) for r in report.get("rows", [])]
+
+    try:
+        cache_res = await _cached_report(
+            report_name="negative_stock",
+            company_name=company_name,
+            current_user=current_user,
+            params={"to_date": to_date.isoformat() if to_date else None},
+            fetcher=_fetch,
+            ttl_name="negative_stock",
+        )
+        rows = cache_res.data
+    except HTTPException:
+        raise
     except Exception as e:
-        print("Negative Stock export error:", repr(e))
+        logger.error("Negative Stock export error: %r", e)
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Negative Stock from Tally",
@@ -2327,6 +3169,9 @@ async def get_inventory_register(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     """
     Register screen: one row per month of the period with the number
@@ -2337,29 +3182,54 @@ async def get_inventory_register(
     register = _get_register(register_key)
     _check_period(from_date, to_date)
 
-    try:
-        report = await fetch_register_months(
+    async def _fetch():
+        return await fetch_register_months(
             voucher_type=register["voucher_type"],
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
-    except Exception as e:
-        print(f'{register["title"]} error:', repr(e))
-        raise HTTPException(status_code=502, detail=f'Unable to fetch {register["title"]} from Tally')
 
-    return {
-        "success": True,
-        "source": "tally",
-        "report_name": register["title"],
-        "register_key": register_key,
-        "from": report["from"],
-        "to": report["to"],
-        "count": len(report["rows"]),
-        "report": report["rows"],
-        "grand_total": report["grand_total"],
-        "grand_total_cancelled": report["grand_total_cancelled"],
-    }
+    try:
+        cache_res = await _cached_report(
+            report_name=f"inventory_register_{register_key}",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="inventory_register",
+        )
+        report = cache_res.data
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report_name": register["title"],
+            "register_key": register_key,
+            "from": report["from"],
+            "to": report["to"],
+            "count": len(report["rows"]),
+            "report": report["rows"],
+            "grand_total": report["grand_total"],
+            "grand_total_cancelled": report["grand_total_cancelled"],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("%s error: %r", register["title"], e)
+        raise HTTPException(
+            status_code=502,
+            detail=f'Unable to fetch {register["title"]} from Tally',
+        )
 
 
 @router.get("/inventory-register/{register_key}/vouchers")
@@ -2368,6 +3238,9 @@ async def get_inventory_register_vouchers(
     from_date: date,
     to_date: date,
     company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
 ):
     """
     "List of All <X> Vouchers": the vouchers of one register in the
@@ -2377,31 +3250,56 @@ async def get_inventory_register_vouchers(
     register = _get_register(register_key)
     _check_period(from_date, to_date)
 
-    try:
-        result = await fetch_register_voucher_list(
+    async def _fetch():
+        return await fetch_register_voucher_list(
             register_key=register_key,
             voucher_type=register["voucher_type"],
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
-    except Exception as e:
-        print(f'{register["title"]} vouchers error:', repr(e))
-        raise HTTPException(status_code=502, detail=f'Unable to fetch {register["title"]} vouchers from Tally')
 
-    return {
-        "success": True,
-        "source": "tally",
-        "report_name": register["title"],
-        "register_key": register_key,
-        "voucher_type": register["voucher_type"],
-        "kind": result["kind"],
-        "from": from_date.isoformat(),
-        "to": to_date.isoformat(),
-        "count": len(result["rows"]),
-        "report": result["rows"],
-        "totals": result["totals"],
-    }
+    try:
+        cache_res = await _cached_report(
+            report_name=f"inventory_register_vouchers_{register_key}",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat(),
+                "to_date": to_date.isoformat(),
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="inventory_register",
+        )
+        result = cache_res.data
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report_name": register["title"],
+            "register_key": register_key,
+            "voucher_type": register["voucher_type"],
+            "kind": result["kind"],
+            "from": from_date.isoformat(),
+            "to": to_date.isoformat(),
+            "count": len(result["rows"]),
+            "report": result["rows"],
+            "totals": result["totals"],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("%s vouchers error: %r", register["title"], e)
+        raise HTTPException(
+            status_code=502,
+            detail=f'Unable to fetch {register["title"]} vouchers from Tally',
+        )
 
 
 @router.get("/inventory-register/{register_key}/export/{file_format}")
@@ -2411,20 +3309,42 @@ async def export_inventory_register(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
 ):
     register = _get_register(register_key)
     _check_period(from_date, to_date)
 
-    try:
-        result = await fetch_register_months(
+    async def _fetch():
+        return await fetch_register_months(
             voucher_type=register["voucher_type"],
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
+
+    try:
+        cache_res = await _cached_report(
+            report_name=f"inventory_register_{register_key}",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            ttl_name="inventory_register",
+        )
+        result = cache_res.data
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print(f'{register["title"]} export error:', repr(e))
-        raise HTTPException(status_code=502, detail=f'Unable to fetch {register["title"]} from Tally')
+        logger.error("%s export error: %r", register["title"], e)
+        raise HTTPException(
+            status_code=502,
+            detail=f'Unable to fetch {register["title"]} from Tally',
+        )
 
     return _export_response(
         file_format=file_format,

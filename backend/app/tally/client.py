@@ -30,10 +30,20 @@ class TallyClient:
             cls._unavailable_until,
             time.monotonic() + cooldown,
         )
+        try:
+            from app.cache.manager import cache_manager
+            cache_manager.mark_tally_offline(cooldown)
+        except Exception:
+            pass
 
     @classmethod
     def _mark_available(cls) -> None:
         cls._unavailable_until = 0.0
+        try:
+            from app.cache.manager import cache_manager
+            cache_manager.mark_tally_online()
+        except Exception:
+            pass
 
     @classmethod
     def _circuit_is_open(cls) -> bool:
@@ -57,8 +67,15 @@ class TallyClient:
         if cls._shared_client is not None:
             return
 
+        conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
         cls._shared_client = httpx.AsyncClient(
-            timeout=30.0,
+            timeout=httpx.Timeout(
+                timeout=30.0,
+                connect=conn_timeout,
+                read=30.0,
+                write=10.0,
+                pool=5.0,
+            ),
             limits=httpx.Limits(
                 max_connections=20,
                 max_keepalive_connections=10,
@@ -110,10 +127,12 @@ class TallyClient:
 
     async def check_connection(self) -> dict:
         try:
+            conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
+            req_timeout = httpx.Timeout(timeout=3.0, connect=conn_timeout)
             if self._shared_client is not None:
                 response = await self._shared_client.get(
                     self.base_url,
-                    timeout=8.0,
+                    timeout=req_timeout,
                 )
 
             else:
@@ -121,7 +140,7 @@ class TallyClient:
                 # standalone usage working even when the
                 # FastAPI lifespan has not started.
                 async with httpx.AsyncClient(
-                    timeout=8.0
+                    timeout=req_timeout
                 ) as client:
                     response = await client.get(
                         self.base_url
@@ -180,6 +199,9 @@ class TallyClient:
                 f"TALLY DEBUG: starting report={report_name}"
             )
 
+            conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
+            req_timeout = httpx.Timeout(timeout=timeout, connect=conn_timeout, read=timeout)
+
             try:
                 if self._shared_client is not None:
                     response = await self._shared_client.post(
@@ -188,14 +210,14 @@ class TallyClient:
                         headers={
                             "Content-Type": "text/xml",
                         },
-                        timeout=timeout,
+                        timeout=req_timeout,
                     )
 
                 else:
                     # This fallback is mainly used by tests or scripts
                     # where the FastAPI lifespan has not created the shared client.
                     async with httpx.AsyncClient(
-                        timeout=timeout
+                        timeout=req_timeout
                     ) as client:
                         response = await client.post(
                             self.base_url,

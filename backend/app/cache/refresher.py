@@ -10,7 +10,6 @@ from datetime import date
 from typing import Optional
 
 from app.cache.config import cache_settings
-from app.tally.client import TallyClient
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +23,15 @@ class TallyBackgroundRefresher:
 
     def __init__(self, org_id: str = "default"):
         self._running = False
-        self._client = TallyClient()
+        self._tally_client = None
         self._org_id = org_id
+
+    @property
+    def _client(self):
+        if self._tally_client is None:
+            from app.tally.client import TallyClient
+            self._tally_client = TallyClient()
+        return self._tally_client
 
     async def _is_tally_reachable(self) -> bool:
         """Lightweight connectivity check before launching report refreshes."""

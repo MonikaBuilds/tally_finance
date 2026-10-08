@@ -5,6 +5,11 @@ Configuration settings for Redis caching and background refresh.
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+from pathlib import Path
+
+_BACKEND_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
+
+
 class CacheSettings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     REDIS_HOST: str = "127.0.0.1"
@@ -20,6 +25,7 @@ class CacheSettings(BaseSettings):
     REDIS_CONNECT_TIMEOUT: float = 2.0
     REDIS_PROTOCOL: int = 2  # RESP2 for maximum compatibility across Redis versions
     TALLY_UNAVAILABLE_COOLDOWN_SECONDS: int = 30
+    TALLY_CONNECT_TIMEOUT: float = 2.5
 
     # Specific report freshness TTLs (in seconds)
     TTL_COMPANIES: int = 600
@@ -33,7 +39,7 @@ class CacheSettings(BaseSettings):
     TTL_LEDGER_LIST: int = 600
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", str(_BACKEND_ENV)),
         extra="ignore",
     )
 

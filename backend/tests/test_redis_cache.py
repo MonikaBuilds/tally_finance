@@ -44,10 +44,12 @@ TEST_USER_ORGS = {
 @pytest.fixture(autouse=True)
 def mock_user_org_resolution():
     """Mock tenant resolution so synthetic test users resolve securely without touching production database."""
+    TallyCacheManager.mark_tally_online()
     resolver = lambda uid: TEST_USER_ORGS.get(uid, f"org_{uid}")
     with patch("app.security.user_store.get_user_organization_id", side_effect=resolver), \
          patch("app.api.chat.get_user_organization_id", side_effect=resolver):
         yield
+    TallyCacheManager.mark_tally_online()
 
 
 
