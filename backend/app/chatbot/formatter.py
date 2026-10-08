@@ -1951,6 +1951,27 @@ def format_tool_response(
 
 
     if tool_name == "get_stock_summary":
+        valuation_rows = data.get("valuation_rows")
+        if valuation_rows is not None:
+            if not valuation_rows:
+                return "Tally returned no inventory valuation rows."
+            lines = ["Inventory valuation from Tally:"]
+            if data.get("to_date"):
+                lines[0] += f" as of {data['to_date']}"
+            for row in valuation_rows:
+                value = row.get("value")
+                value_text = (
+                    format_indian_currency(value)
+                    if value is not None
+                    else "value not reported"
+                )
+                lines.append(
+                    f"{row.get('name') or 'Item'}: "
+                    f"{row.get('quantity') or 'quantity not reported'} "
+                    f"{row.get('base_units') or ''} | {value_text}"
+                )
+            return "\n".join(lines)
+
         total_items = int(
             data.get("total_items", 0) or 0
         )
@@ -2637,6 +2658,39 @@ def format_tool_response(
         return "\n".join(lines)
     
     if tool_name == "get_stock_movement":
+        rows = data.get("rows")
+        if rows is not None:
+            if not rows:
+                return (
+                    "No stock movement was found "
+                    "for the selected period."
+                )
+
+            lines = ["Stock Movement from Tally:"]
+            for row in rows:
+                direction = row.get("is_deemed_positive")
+                if direction is True:
+                    movement = "Inward"
+                elif direction is False:
+                    movement = "Outward"
+                else:
+                    movement = "Direction not reported"
+
+                details = [
+                    str(row.get("date") or "Date unavailable"),
+                    str(row.get("voucher_type") or "Voucher"),
+                    str(row.get("voucher_number") or ""),
+                    str(row.get("stock_item") or "Item"),
+                    f"{movement}: {row.get('quantity') or 'not reported'}",
+                ]
+                if row.get("amount") is not None:
+                    details.append(
+                        f"Amount: {format_indian_currency(row['amount'])}"
+                    )
+                lines.append(" | ".join(part for part in details if part))
+
+            return "\n".join(lines)
+
         items = data.get(
             "items",
             [],
@@ -2665,7 +2719,7 @@ def format_tool_response(
             )
 
         return "\n".join(lines)
-    
+
     if tool_name == "get_customer_profitability":
         customers = data.get("customers", [])
 
@@ -3146,6 +3200,36 @@ def format_tool_response(
 
         return "\n".join(lines).strip()
     
+    if tool_name == "get_invoice_details" and data.get("invoices") is not None:
+        invoices = data.get("invoices", []) or []
+        if not invoices:
+            return "No invoices matched the requested filters in Tally bill data."
+
+        lines = [f"Invoices matching Tally bill data ({len(invoices)}):"]
+        for invoice in invoices:
+            amount = invoice.get("amount")
+            lines.extend([
+                f"{invoice.get('invoice_number') or 'Reference unavailable'} | "
+                f"{invoice.get('party_name') or 'Party unavailable'} | "
+                f"Date: {invoice.get('invoice_date') or 'not reported'}",
+                f"Tally allocation amount: {format_indian_currency(amount) if amount is not None else 'not reported'} | "
+                f"Voucher: {invoice.get('voucher_type') or 'not reported'} "
+                f"{invoice.get('voucher_number') or ''}".strip(),
+            ])
+        return "\n".join(lines)
+
+    if tool_name == "get_invoice_details":
+        amount = data.get("original_amount")
+        outstanding = data.get("outstanding_amount")
+        return "\n".join([
+            f"Invoice: {data.get('invoice_number') or 'Reference unavailable'}",
+            f"Party: {data.get('party_name') or 'not reported by Tally'}",
+            f"Date: {data.get('invoice_date') or 'not reported by Tally'}",
+            f"Status: {data.get('status') or 'not available'}",
+            f"Original amount: {format_indian_currency(amount) if amount is not None else 'not reported'}",
+            f"Outstanding amount: {format_indian_currency(outstanding) if outstanding is not None else 'not reported'}",
+        ])
+
     if tool_name == "get_invoice_status":
         invoice_reference = data.get(
             "invoice_reference",

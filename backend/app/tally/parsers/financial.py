@@ -1089,55 +1089,45 @@ def parse_bill_allocations(xml_text: str):
 
     rows = []
 
-    for voucher in root.findall(
-        ".//VOUCHER"
-    ):
+    for voucher in root.findall(".//VOUCHER"):
+        voucher_date = format_tally_date(_text(voucher, "DATE"))
+        voucher_type = _text(voucher, "VOUCHERTYPENAME")
+        voucher_number = _text(voucher, "VOUCHERNUMBER")
+        guid = _text(voucher, "GUID")
+        party = _first_text(voucher, "PARTYLEDGERNAME", "PARTYNAME")
+        is_cancelled = _text(voucher, "ISCANCELLED").strip().casefold() == "yes"
+        is_deleted = _text(voucher, "ISDELETED").strip().casefold() == "yes"
 
-        rows.append(
-            {
-                "date": format_tally_date(
-                    _text(
-                        voucher,
-                        "DATE",
-                    )
-                ),
+        ledger_nodes = []
+        seen_ledgers = set()
+        for path in ("./ALLLEDGERENTRIES.LIST", "./LEDGERENTRIES.LIST"):
+            for ledger in voucher.findall(path):
+                if id(ledger) not in seen_ledgers:
+                    seen_ledgers.add(id(ledger))
+                    ledger_nodes.append(ledger)
 
-                "guid": _text(
-                    voucher,
-                    "GUID",
-                ),
+        for ledger in ledger_nodes:
+            ledger_party = _first_text(ledger, "LEDGERNAME", "LEDGER") or party
+            for allocation in ledger.findall(".//BILLALLOCATIONS.LIST"):
+                reference = _first_text(allocation, "NAME", "BILLREF").strip()
+                if not reference:
+                    continue
 
-                "voucher_type": _text(
-                    voucher,
-                    "VOUCHERTYPENAME",
-                ),
-
-                "voucher_number": _text(
-                    voucher,
-                    "VOUCHERNUMBER",
-                ),
-
-                "party_ledger_name": _text(
-                    voucher,
-                    "PARTYLEDGERNAME",
-                ),
-
-                "party_name": _text(
-                    voucher,
-                    "PARTYNAME",
-                ),
-
-                "reference": _text(
-                    voucher,
-                    "REFERENCE",
-                ),
-
-                "narration": _text(
-                    voucher,
-                    "NARRATION",
-                ),
-            }
-        )
+                rows.append({
+                    "party": ledger_party,
+                    "bill_reference": reference,
+                    "bill_date": format_tally_date(
+                        _first_text(allocation, "BILLDATE")
+                    ) or voucher_date,
+                    "voucher_date": voucher_date,
+                    "voucher_type": voucher_type,
+                    "voucher_number": voucher_number,
+                    "bill_type": _first_text(allocation, "BILLTYPE"),
+                    "amount": to_float(_first_text(allocation, "AMOUNT")),
+                    "guid": guid,
+                    "is_cancelled": is_cancelled,
+                    "is_deleted": is_deleted,
+                })
 
     return {
         "success": True,

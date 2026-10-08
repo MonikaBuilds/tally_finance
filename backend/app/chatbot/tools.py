@@ -6,7 +6,11 @@ import re
 import asyncio
 import time
 
-from app.tally.service import fetch_stock_item_list
+from app.tally.service import (
+    fetch_stock_item_list,
+    fetch_stock_movement as fetch_tally_stock_movement,
+    fetch_stock_valuation,
+)
 
 from app.tally.service import (
     fetch_profit_loss,
@@ -2960,158 +2964,23 @@ async def get_stock_movement_tool(
     to_date: date | None = None,
 ) -> dict:
     """
-    Show item-wise stock movement from posted sales
-    and purchase transactions.
-
-    Purchase increases stock.
-    Sales reduce stock.
-    Credit Note normally brings sold stock back.
-    Debit Note normally sends purchased stock back.
+    Return inventory movement rows from Tally's stock-movement report.
     """
-
-    sales_result, purchase_result = await asyncio.gather(
-        get_sales_transactions_tool(
-            company_name=company_name,
-            from_date=from_date,
-            to_date=to_date,
-        ),
-        get_purchase_transactions_tool(
-            company_name=company_name,
-            from_date=from_date,
-            to_date=to_date,
-        ),
+    report = await fetch_tally_stock_movement(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
     )
 
-    movements = {}
-
-    def add_movement(
-        transaction: dict,
-        movement_type: str,
-    ):
-        voucher_type = (
-            transaction.get("voucher_type")
-            or ""
-        ).strip().casefold()
-
-        stock_items = transaction.get(
-            "stock_items",
-            [],
+    rows = report.get("rows", []) if isinstance(report, dict) else []
+    if not rows:
+        return _no_data(
+            "No stock movement was found in Tally for the selected period."
         )
-
-        for stock_item in stock_items:
-
-            item_name = (
-                stock_item.get("stock_item_name")
-                or ""
-            ).strip()
-
-            if not item_name:
-                continue
-
-            quantity_text = (
-                stock_item.get("actual_quantity")
-                or stock_item.get("billed_quantity")
-                or ""
-            )
-
-            quantity = abs(
-                _parse_tally_quantity(
-                    quantity_text
-                )
-            )
-
-            if quantity <= 0:
-                continue
-
-            if item_name not in movements:
-                movements[item_name] = {
-                    "stock_item_name": item_name,
-                    "inward_quantity": 0.0,
-                    "outward_quantity": 0.0,
-                }
-
-            item = movements[item_name]
-
-            if movement_type == "sales":
-
-                if voucher_type in {
-                    "credit note",
-                    "creditnote",
-                }:
-                    # Sales return brings stock back.
-                    item["inward_quantity"] += quantity
-                else:
-                    # Normal sale sends stock out.
-                    item["outward_quantity"] += quantity
-
-            elif movement_type == "purchase":
-
-                if voucher_type in {
-                    "debit note",
-                    "debitnote",
-                }:
-                    # Purchase return sends stock back
-                    # to the supplier.
-                    item["outward_quantity"] += quantity
-                else:
-                    # Normal purchase brings stock in.
-                    item["inward_quantity"] += quantity
-
-    if sales_result.get("success"):
-        for transaction in (
-            sales_result.get("data", {})
-            .get("transactions", [])
-        ):
-            add_movement(
-                transaction,
-                "sales",
-            )
-
-    if purchase_result.get("success"):
-        for transaction in (
-            purchase_result.get("data", {})
-            .get("transactions", [])
-        ):
-            add_movement(
-                transaction,
-                "purchase",
-            )
-
-    items = []
-
-    for item in movements.values():
-
-        inward = item["inward_quantity"]
-        outward = item["outward_quantity"]
-
-        item["inward_quantity"] = round(
-            inward,
-            3,
-        )
-
-        item["outward_quantity"] = round(
-            outward,
-            3,
-        )
-
-        item["net_movement"] = round(
-            inward - outward,
-            3,
-        )
-
-        items.append(item)
-
-    items.sort(
-        key=lambda item: (
-            item["inward_quantity"]
-            + item["outward_quantity"]
-        ),
-        reverse=True,
-    )
 
     return _success({
-        "items": items,
-        "count": len(items),
+        "rows": rows,
+        "count": report.get("count", len(rows)),
         "from_date": (
             from_date.isoformat()
             if from_date
@@ -3467,7 +3336,12 @@ def _get_invoice_payment_status(
 
     return "Unpaid"
 async def get_invoice_details_tool(
-    invoice_number: str,
+    invoice_number: str | None = None,
+    party_name: str | None = None,
+    amount: float | None = None,
+    status: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     company_name: str | None = None,
 ) -> dict:
     """
@@ -3475,8 +3349,13 @@ async def get_invoice_details_tool(
     """
 
     if not invoice_number or not invoice_number.strip():
-        return _no_data(
-            "Please provide an invoice number."
+        return await _search_invoices(
+            party_name=party_name,
+            amount=amount,
+            status=status,
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
         )
 
     # Tally can return the same bill reference in multiple vouchers.
@@ -3616,6 +3495,94 @@ async def get_invoice_status_tool(
     data["status"] = status
 
     return _success(data)
+
+
+async def _search_invoices(
+    invoice_number: str | None = None,
+    party_name: str | None = None,
+    amount: float | None = None,
+    status: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    company_name: str | None = None,
+) -> dict:
+    """Search raw invoice allocation rows returned by Tally."""
+    if not any((invoice_number, party_name, amount is not None, status, from_date, to_date)):
+        return _no_data(
+            "Please provide an invoice number, party, amount, status, or date range."
+        )
+
+    if status:
+        return _no_data(
+            "Tally's current bill-allocation response does not include a paid/unpaid "
+            "status field. I can't determine invoice status from these rows."
+        )
+
+    bill_allocations = await fetch_bill_allocations(
+        company_name=company_name,
+    )
+
+    requested_amount = None
+    if amount is not None:
+        try:
+            requested_amount = float(amount)
+        except (TypeError, ValueError):
+            return _no_data("Invoice amount must be numeric.")
+
+    matches = []
+    for row in bill_allocations:
+        # A New Ref row is the invoice allocation as Tally returned it.
+        # Agst Ref rows are settlements, so they are not invoice records.
+        if str(row.get("bill_type") or "").strip().casefold() != "new ref":
+            continue
+        if row.get("is_cancelled") or row.get("is_deleted"):
+            continue
+
+        reference = str(row.get("bill_reference") or "")
+        party = str(row.get("party") or "")
+        bill_date = row.get("bill_date")
+
+        if invoice_number and invoice_number.casefold() not in reference.casefold():
+            continue
+        if party_name and party_name.casefold() not in party.casefold():
+            continue
+        if from_date and (not bill_date or bill_date < from_date.isoformat()):
+            continue
+        if to_date and (not bill_date or bill_date > to_date.isoformat()):
+            continue
+
+        tally_amount = row.get("amount")
+        if requested_amount is not None and (
+            tally_amount is None
+            or abs(abs(float(tally_amount)) - requested_amount) > 0.01
+        ):
+            continue
+
+        matches.append({
+            "invoice_number": reference,
+            "party_name": party,
+            "invoice_date": bill_date,
+            "voucher_type": row.get("voucher_type"),
+            "voucher_number": row.get("voucher_number"),
+            "amount": tally_amount,
+            "bill_type": row.get("bill_type"),
+            "guid": row.get("guid"),
+        })
+
+    if not matches:
+        return _no_data("No invoices matched the requested filters in Tally bill data.")
+
+    return _success({
+        "invoices": matches,
+        "count": len(matches),
+        "filters": {
+            "invoice_number": invoice_number,
+            "party_name": party_name,
+            "amount": requested_amount,
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
+        },
+    })
 
 async def get_customer_statement_tool(
     party_name: str,
@@ -4149,10 +4116,28 @@ async def get_stock_items_tool(
 
 async def get_stock_summary_tool(
     company_name: str | None = None,
+    valuation_only: bool = False,
+    to_date: date | None = None,
 ) -> dict:
     """
     Return a simple summary of the current stock available in Tally.
     """
+
+    if valuation_only:
+        report = await fetch_stock_valuation(
+            company_name=company_name,
+            to_date=to_date,
+        )
+        rows = report.get("rows", []) if isinstance(report, dict) else []
+        if not rows:
+            return _no_data("Tally returned no inventory valuation rows.")
+        result = _success({
+            "valuation_rows": rows,
+            "count": report.get("count", len(rows)),
+            "to_date": to_date.isoformat() if to_date else None,
+        })
+        result["calculation_method"] = "tally_report_rows"
+        return result
 
     stock_items = await fetch_stock_item_list(
         company_name=company_name
