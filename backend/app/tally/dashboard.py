@@ -1,5 +1,6 @@
 """Read-only dashboard exports. Financial amounts are selected, never totalled here."""
 
+import logging
 import re
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -15,6 +16,8 @@ from app.tally.xml_builders.financial import (
 )
 from app.tally.xml_builders.ledger import build_ledger_list_request
 from app.cache.errors import is_tally_connectivity_error
+
+logger = logging.getLogger(__name__)
 
 
 def report_request(xml, *, html=False, as_of=None):
@@ -226,16 +229,20 @@ async def fetch_dashboard_reports(company, start, end):
         'payables': (report_request(build_bills_payable_request(company), html=True, as_of=end), parse_outstanding_table),
     }
     reports, errors = {}, {}
-    last_connectivity_exc = None
     for name, (request, parser) in requests.items():
         try:
             reports[name] = parser(await client.send_xml(request))
         except Exception as exc:
             if is_tally_connectivity_error(exc):
-                last_connectivity_exc = exc
+                # A connectivity failure applies to the whole report set.
+                # Stop here so the cache layer can serve stale data promptly;
+                # retrying each remaining report only repeats the same timeout.
+                logger.warning(
+                    'Tally connection failed while reading dashboard report %s (%s)',
+                    name,
+                    type(exc).__name__,
+                )
+                raise
             errors[name] = 'Tally report could not be read. Refresh or check the Tally connection.'
-
-    if last_connectivity_exc is not None:
-        raise last_connectivity_exc
 
     return reports, errors

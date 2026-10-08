@@ -142,7 +142,19 @@ async def _fetch_monthly_income_expense_series(
                 rows = parse_profit_loss_rows(
                     await client.send_xml(request_xml)
                 )
-        except Exception:
+        except Exception as exc:
+            if is_tally_connectivity_error(exc):
+                # A disconnected Tally cannot answer later months either.
+                # Propagate immediately so get_or_fetch can return its
+                # retained monthly series instead of spending 30s per month.
+                logger.warning(
+                    'Dashboard monthly P&L %s -> %s failed due to Tally connectivity (%s)',
+                    start,
+                    end,
+                    type(exc).__name__,
+                )
+                raise
+
             logger.warning(
                 'Dashboard monthly P&L %s -> %s could not be read',
                 start,
