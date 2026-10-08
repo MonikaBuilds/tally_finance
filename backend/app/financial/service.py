@@ -13,6 +13,9 @@ def build_outstanding_summary(bill_allocations):
     })
 
     for bill in bill_allocations:
+        if bill.get("is_cancelled") or bill.get("is_deleted"):
+            continue
+
         party = bill.get("party", "").strip()
         reference = bill.get("bill_reference", "").strip()
 

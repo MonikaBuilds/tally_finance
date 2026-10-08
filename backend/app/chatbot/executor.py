@@ -39,6 +39,75 @@ DATE_ARGUMENTS = {
     "first_to_date",
     "second_from_date",
     "second_to_date",
+    "current_from_date",
+    "current_to_date",
+    "previous_from_date",
+    "previous_to_date",
+}
+
+# These tools summarize or combine Tally rows in application code. Keep
+# this explicit so callers and the UI can distinguish those figures from
+# values returned as rows in a Tally report.
+APPLICATION_AGGREGATION_TOOLS = {
+    "get_receivables",
+    "get_payables",
+    "get_aged_receivables",
+    "get_aged_payables",
+    "get_pending_invoices",
+    "get_highest_receivable",
+    "get_highest_payable",
+    "get_overdue_receivables",
+    "get_overdue_payables",
+    "get_revenue",
+    "get_expenses",
+    "get_net_profit",
+    "get_financial_summary",
+    "get_party_outstanding_summary",
+    "get_outstanding_summary",
+    "get_top_receivables",
+    "get_top_payables",
+    "get_cash_balance",
+    "get_bank_balance",
+    "get_bank_transactions",
+    "get_ledger_transactions",
+    "get_customer_statement",
+    "get_supplier_statement",
+    "get_cash_transactions",
+    "get_sales_by_customer",
+    "get_purchases_by_supplier",
+    "get_sales_by_item",
+    "get_purchases_by_item",
+    "get_receipt_transactions",
+    "get_payment_transactions",
+    "get_credit_note_transactions",
+    "get_debit_note_transactions",
+    "get_invoice_details",
+    "get_invoice_status",
+    "get_input_gst",
+    "get_output_gst",
+    "get_gst_summary",
+    "get_stock_summary",
+    "get_top_stock_items",
+    "get_negative_stock_items",
+    "get_tds_summary",
+    "get_tds_transactions",
+    "get_profitability_summary",
+    "get_top_expenses",
+    "get_top_customers",
+    "get_top_suppliers",
+    "get_period_comparison",
+    "get_period_trend",
+    "get_cash_flow_summary",
+    "get_top_selling_items",
+    "get_low_selling_items",
+    "get_customer_profitability",
+    "get_product_profitability",
+    "get_tax_liability",
+    "get_tds_receivable",
+    "get_tds_payable",
+    "get_financial_trends",
+    "get_company_comparison",
+    "get_cost_centre_analysis",
 }
 
 
@@ -58,17 +127,21 @@ def _parse_date(
             "in DD-MM-YYYY format."
         )
 
-    try:
-        return datetime.strptime(
-            value.strip(),
-            "%d-%m-%Y",
-        ).date()
+    normalized = value.strip()
+    for date_format in ("%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(
+                normalized,
+                date_format,
+            ).date()
+        except ValueError:
+            continue
 
-    except ValueError as exc:
+    else:
         raise ValueError(
             f"{argument_name} must be a valid date "
-            "in DD-MM-YYYY format."
-        ) from exc
+            "in DD-MM-YYYY or YYYY-MM-DD format."
+        )
 
 
 def _prepare_arguments(
@@ -130,6 +203,28 @@ def _prepare_arguments(
         raise ValueError(
             "second_from_date cannot be later "
             "than second_to_date."
+        )
+
+    current_from_date = prepared.get("current_from_date")
+    current_to_date = prepared.get("current_to_date")
+    if (
+        current_from_date is not None
+        and current_to_date is not None
+        and current_from_date > current_to_date
+    ):
+        raise ValueError(
+            "current_from_date cannot be later than current_to_date."
+        )
+
+    previous_from_date = prepared.get("previous_from_date")
+    previous_to_date = prepared.get("previous_to_date")
+    if (
+        previous_from_date is not None
+        and previous_to_date is not None
+        and previous_from_date > previous_to_date
+    ):
+        raise ValueError(
+            "previous_from_date cannot be later than previous_to_date."
         )
 
     if (
@@ -292,6 +387,14 @@ async def execute_tool(
             if not raw_result.get("success", False):
                 raise _NonCacheableToolResult(raw_result)
 
+            raw_result.setdefault("data_origin", "tally")
+            raw_result.setdefault(
+                "calculation_method",
+                "application_aggregation"
+                if tool_name in APPLICATION_AGGREGATION_TOOLS
+                else "tally_report_rows",
+            )
+
             return raw_result
 
         # ---------------------------------------------
@@ -317,6 +420,13 @@ async def execute_tool(
                 output["source"] = cache_res.source
                 output["is_stale"] = cache_res.is_stale
                 output["cached_at"] = cache_res.cached_at
+                output.setdefault("data_origin", "tally")
+                output.setdefault(
+                    "calculation_method",
+                    "application_aggregation"
+                    if tool_name in APPLICATION_AGGREGATION_TOOLS
+                    else "tally_report_rows",
+                )
                 return output
 
             return {

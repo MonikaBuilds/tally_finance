@@ -1149,9 +1149,11 @@ TOOL_DEFINITIONS = [
     "type": "function",
     "name": "get_invoice_details",
     "description": (
-        "Get details of a specific invoice from Tally. "
+        "Get details of a specific invoice from Tally, or search bill "
+        "allocation rows by invoice number, party, amount, or date range. "
         "Use when the user asks for invoice amount, party, date, "
-        "due date, outstanding amount, or complete invoice details."
+        "invoice search, or complete details. Payment status is not included "
+        "in the current Tally bill-allocation response."
     ),
     "parameters": {
         "type": "object",
@@ -1163,9 +1165,18 @@ TOOL_DEFINITIONS = [
             "company_name": {
                 "type": "string",
                 "description": "Optional Tally company name."
-            }
+            },
+            "party_name": {"type": "string"},
+            "amount": {"type": "number"},
+            "from_date": {
+                "type": "string",
+                "description": "Optional start date in DD-MM-YYYY or YYYY-MM-DD format.",
+            },
+            "to_date": {
+                "type": "string",
+                "description": "Optional end date in DD-MM-YYYY or YYYY-MM-DD format.",
+            },
         },
-        "required": ["invoice_number"]
     }
 },
 
@@ -1366,7 +1377,7 @@ TOOL_DEFINITIONS = [
             "company_name": {
                 "type": "string",
                 "description": "Optional Tally company name."
-            }
+            },
         }
     }
 },
@@ -1386,7 +1397,15 @@ TOOL_DEFINITIONS = [
             "company_name": {
                 "type": "string",
                 "description": "Optional Tally company name."
-            }
+            },
+            "valuation_only": {
+                "type": "boolean",
+                "description": "Set true to return Tally valuation rows without calculating a summary total."
+            },
+            "to_date": {
+                "type": "string",
+                "description": "Optional as-of date in DD-MM-YYYY or YYYY-MM-DD format."
+            },
         }
     }
 },
@@ -1666,15 +1685,19 @@ TOOL_DEFINITIONS = [
             },
             "current_from_date": {
                 "type": "string",
+                "description": "Optional start date, DD-MM-YYYY or YYYY-MM-DD.",
             },
             "current_to_date": {
                 "type": "string",
+                "description": "Optional end date, DD-MM-YYYY or YYYY-MM-DD.",
             },
             "previous_from_date": {
                 "type": "string",
+                "description": "Optional start date, DD-MM-YYYY or YYYY-MM-DD.",
             },
             "previous_to_date": {
                 "type": "string",
+                "description": "Optional end date, DD-MM-YYYY or YYYY-MM-DD.",
             },
         },
     },
@@ -2020,3 +2043,109 @@ TOOL_DEFINITIONS = [
 },
 
 ]
+
+
+def _period_company_properties(extra_properties=None):
+    properties = {
+        "from_date": {
+            "type": "string",
+            "description": "Optional start date in DD-MM-YYYY or YYYY-MM-DD format.",
+        },
+        "to_date": {
+            "type": "string",
+            "description": "Optional end date in DD-MM-YYYY or YYYY-MM-DD format.",
+        },
+        "company_name": {
+            "type": "string",
+            "description": "Optional Tally company name.",
+        },
+    }
+    properties.update(extra_properties or {})
+    return properties
+
+
+# These read-only implementations were already registered and routed
+# locally. Declaring them here also lets Gemini select them when users
+# phrase supported queries differently.
+TOOL_DEFINITIONS.extend([
+    {
+        "type": "function",
+        "name": "get_overdue_invoices",
+        "description": "List overdue invoices based on outstanding bill data from Tally.",
+        "parameters": {
+            "type": "object",
+            "properties": {"company_name": {"type": "string"}},
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_ledger_balance",
+        "description": "Get the current opening and closing balance reported for a named Tally ledger.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ledger_name": {"type": "string"},
+                "company_name": {"type": "string"},
+            },
+            "required": ["ledger_name"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_ledger_transactions",
+        "description": "Get the Tally ledger report entries for a named ledger and optional period.",
+        "parameters": {
+            "type": "object",
+            "properties": _period_company_properties({"ledger_name": {"type": "string"}}),
+            "required": ["ledger_name"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_sales_by_customer",
+        "description": "Group Tally sales transaction data by customer for an optional period. Returned summaries are application aggregated.",
+        "parameters": {"type": "object", "properties": _period_company_properties()},
+    },
+    {
+        "type": "function",
+        "name": "get_purchases_by_supplier",
+        "description": "Group Tally purchase transaction data by supplier for an optional period. Returned summaries are application aggregated.",
+        "parameters": {"type": "object", "properties": _period_company_properties()},
+    },
+    {
+        "type": "function",
+        "name": "get_sales_by_item",
+        "description": "Group Tally sales transaction data by stock item for an optional period. Returned summaries are application aggregated.",
+        "parameters": {"type": "object", "properties": _period_company_properties()},
+    },
+    {
+        "type": "function",
+        "name": "get_purchases_by_item",
+        "description": "Group Tally purchase transaction data by stock item for an optional period. Returned summaries are application aggregated.",
+        "parameters": {"type": "object", "properties": _period_company_properties()},
+    },
+    {
+        "type": "function",
+        "name": "get_top_selling_items",
+        "description": "Rank items using application aggregation of Tally sales transaction data.",
+        "parameters": {
+            "type": "object",
+            "properties": _period_company_properties({"limit": {"type": "integer"}}),
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_low_selling_items",
+        "description": "Rank lower selling items using application aggregation of Tally sales transaction data.",
+        "parameters": {
+            "type": "object",
+            "properties": _period_company_properties({"limit": {"type": "integer"}}),
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_stock_movement",
+        "description": "Return the stock movement voucher rows from Tally for an optional period.",
+        "parameters": {"type": "object", "properties": _period_company_properties()},
+    },
+])

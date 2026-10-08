@@ -32,6 +32,7 @@ DATE_AWARE_TOOLS = {
     "get_net_profit",
     "get_profit_loss",
     "get_financial_summary",
+    "get_invoice_details",
 
     "get_cash_transactions",
     "get_sales_transactions",
@@ -60,6 +61,8 @@ DATE_AWARE_TOOLS = {
     
     "get_sales_by_customer",
     "get_purchases_by_supplier",
+    "get_sales_by_item",
+    "get_purchases_by_item",
     
     "get_top_selling_items",
     "get_low_selling_items",
@@ -404,6 +407,36 @@ async def process_chat_message(
                 )
             )
 
+    # Gemini may select the period-trend tool directly. Keep its
+    # current/previous argument names aligned with the comparison
+    # resolver used by the local intent path.
+    if tool_name == "get_period_trend":
+        comparison = resolve_comparison_ranges(
+            cleaned_message
+        )
+
+        if comparison:
+            arguments["current_from_date"] = (
+                comparison.first_period.from_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+            arguments["current_to_date"] = (
+                comparison.first_period.to_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+            arguments["previous_from_date"] = (
+                comparison.second_period.from_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+            arguments["previous_to_date"] = (
+                comparison.second_period.to_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+
     # Normal tools use one selected company.
     # Company comparison handles multiple companies separately.
     # For company comparison, verify that every requested
@@ -513,6 +546,15 @@ async def process_chat_message(
         tool_result=tool_result,
     )
 
+    calculation_method = tool_result.get("calculation_method")
+    if calculation_method == "application_aggregation":
+        answer = (
+            "These figures are aggregated by the application from "
+            "Tally report data. They are not totals returned as-is by "
+            "a native Tally report.\n\n"
+            + answer
+        )
+
     log_chat_event(
         request_id=request_id,
         event="request_completed",
@@ -528,6 +570,8 @@ async def process_chat_message(
         "data": tool_result.get(
             "data"
         ),
+        "data_origin": tool_result.get("data_origin"),
+        "calculation_method": calculation_method,
         "cached_at": tool_result.get("cached_at"),
         "is_stale": tool_result.get("is_stale", False),
     }
