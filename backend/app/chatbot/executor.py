@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from datetime import date, datetime
@@ -10,6 +11,7 @@ from app.cache.config import cache_settings
 from app.cache.keys import build_cache_key
 from app.cache.manager import cache_manager
 
+logger = logging.getLogger(__name__)
 
 CHATBOT_TOOL_TIMEOUT = 20.0
 
@@ -381,8 +383,13 @@ async def execute_tool(
         }
 
     except Exception:
+        logger.exception(
+            "Chatbot tool execution failed: tool=%s",
+            tool_name,
+        )
+
         # Return a safe message to the user without
-        # exposing internal errors from the backend.
+        # exposing internal errors from the backend..
         return {
             "success": False,
             "source": "tally",

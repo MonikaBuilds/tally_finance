@@ -255,10 +255,19 @@ async def _load_profit_loss_summary(
         company_name=company_name,
     )
 
-    # Reuse the existing accounting calculation logic instead of
-    # duplicating revenue and expense calculations in the chatbot.
+    profit_loss_rows = [
+        {
+            **item,
+            "main_amount": item.get("amount", 0.0),
+        }
+        for item in (
+            profit_loss.get("left", [])
+            + profit_loss.get("right", [])
+        )
+    ]
+
     return build_dashboard_financials(
-        profit_loss=profit_loss,
+        profit_loss=profit_loss_rows,
         receivables={},
         payables={},
         pending_invoices={},
@@ -275,6 +284,17 @@ async def _load_financial_summary(
         company_name=company_name
     )
 
+    profit_loss_rows = [
+        {
+            **item,
+            "main_amount": item.get("amount", 0.0),
+        }
+        for item in (
+            profit_loss.get("left", [])
+            + profit_loss.get("right", [])
+        )
+    ]
+
     receivables, payables = await _load_outstanding_data(
         company_name=company_name
     )
@@ -285,7 +305,7 @@ async def _load_financial_summary(
     )
 
     return build_dashboard_financials(
-        profit_loss=profit_loss,
+        profit_loss=profit_loss_rows,
         receivables=receivables,
         payables=payables,
         pending_invoices=pending_invoices
@@ -5445,15 +5465,15 @@ async def get_period_trend_tool(
     )
 
     current = {
-        "revenue": current_revenue.get("revenue", 0) or 0,
-        "expenses": current_expenses.get("expenses", 0) or 0,
-        "net_profit": current_profit.get("net_profit", 0) or 0,
+        "revenue": current_revenue.get("data", {}).get("revenue", 0) or 0,
+        "expenses": current_expenses.get("data", {}).get("expenses", 0) or 0,
+        "net_profit": current_profit.get("data", {}).get("net_profit", 0) or 0,
     }
 
     previous = {
-        "revenue": previous_revenue.get("revenue", 0) or 0,
-        "expenses": previous_expenses.get("expenses", 0) or 0,
-        "net_profit": previous_profit.get("net_profit", 0) or 0,
+        "revenue": previous_revenue.get("data", {}).get("revenue", 0) or 0,
+        "expenses": previous_expenses.get("data", {}).get("expenses", 0) or 0,
+        "net_profit": previous_profit.get("data", {}).get("net_profit", 0) or 0,
     }
 
     def percentage_change(current_value, previous_value):
