@@ -68,6 +68,7 @@ from app.tally.parsers.inventory import (
     parse_inventory_register_summary,
     parse_stock_valuation,
     parse_negative_stock,
+    parse_inventory_voucher_detail,
 )
 
 
@@ -112,4 +113,5 @@ __all__ = [
     "parse_inventory_register_summary",
     "parse_stock_valuation",
     "parse_negative_stock",
+    "parse_inventory_voucher_detail",
 ]

@@ -27,7 +27,17 @@ from app.tally.service import (
     fetch_negative_stock,
     fetch_inventory_register,
     fetch_stock_group_items,
+    fetch_inventory_voucher_detail,
+    fetch_stock_group_summary,
+    fetch_stock_category_summary,
+    fetch_godown_summary,
+    fetch_stock_item_monthly,
+    fetch_register_months,
+    fetch_register_voucher_list,
+    fetch_godown_item_monthly,
 )
+
+from app.tally.parsers.inventory_summary import with_root_row
 
 from app.financial.service import (
     build_outstanding_summary,
@@ -1425,28 +1435,33 @@ async def export_pending_invoices_report(
 
 def _stock_summary_row(row: dict) -> dict:
     """
-    Normalize a parse_stock_summary()/parse_stock_group_items() row
-    (name, parent, base_units, opening_quantity, opening_value,
-    closing_quantity, closing_value, rate) into the field names the
-    Stock Summary / Stock Item / Stock Group Items tables use.
+    Normalize one Stock Summary row.
+
+    All values originate from the Tally Stock Summary response.
+    No stock values are calculated or hardcoded here.
     """
+
     return {
         "stock_item": row.get("name"),
         "stock_group": row.get("parent"),
         "unit": row.get("base_units"),
-        "opening_quantity": row.get("opening_quantity", 0),
-        "opening_value": row.get("opening_value", 0),
-        "closing_quantity": row.get("closing_quantity", 0),
-        "closing_rate": row.get("rate", 0),
-        "closing_value": row.get("closing_value", 0),
+        "opening_quantity": row.get("opening_quantity"),
+        "opening_value": row.get("opening_value"),
+        "closing_quantity": row.get("closing_quantity"),
+        "closing_rate": row.get("closing_rate"),
+        "closing_value": row.get("closing_value"),
     }
 
+# The three master lists below always start with Tally's implicit
+# "Primary" root (see with_root_row) - Tally shows it in "List of Stock
+# Groups / Categories / Godowns" even though it is not a master object.
 
 def _stock_group_row(row: dict) -> dict:
     return {
         "stock_group": row.get("name"),
         "parent": row.get("parent"),
         "base_units": row.get("base_units"),
+        "is_primary": bool(row.get("is_primary")),
     }
 
 
@@ -1454,6 +1469,7 @@ def _stock_category_row(row: dict) -> dict:
     return {
         "stock_category": row.get("name"),
         "parent": row.get("parent"),
+        "is_primary": bool(row.get("is_primary")),
     }
 
 
@@ -1462,11 +1478,52 @@ def _godown_row(row: dict) -> dict:
         "godown": row.get("name"),
         "parent": row.get("parent"),
         "is_internal": row.get("is_internal"),
+        "is_primary": bool(row.get("is_primary")),
     }
+
+
+def _summary_response(summary: dict | None, label: str, selected: str | None) -> dict:
+    """Shared 404 / payload shape for the three <X> Summary endpoints."""
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{label} '{selected}' was not found in Tally",
+        )
+
+    return {
+        "success": True,
+        "source": "tally",
+        "selected": summary["selected"],
+        "report": summary["rows"],
+        "totals": summary["totals"],
+        "count": len(summary["rows"]),
+    }
+
+
+def _check_period(from_date: date | None, to_date: date | None) -> None:
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
 
 
 def _stock_movement_row(row: dict) -> dict:
     quantity = row.get("quantity", 0) or 0
+
+    # Tally's ACTUALQTY is unsigned; ISDEEMEDPOSITIVE says whether the
+    # entry brought stock in (Yes) or took it out (No). Sign the
+    # quantity so the monthly / location pages, which split inward and
+    # outward on the sign, classify every entry correctly.
+    deemed = row.get("is_deemed_positive")
+
+    if deemed is True:
+        quantity = abs(quantity)
+    elif deemed is False:
+        quantity = -abs(quantity)
+
+    row = {**row, "quantity": quantity}
+
     return {
         **row,
         "value": row.get("amount", 0),
@@ -1488,11 +1545,15 @@ def _stock_valuation_row(row: dict) -> dict:
 async def get_stock_summary_report(
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    _check_period(from_date, to_date)
+
     try:
         report = await fetch_stock_summary(
             company_name=company_name,
             to_date=to_date,
+            from_date=from_date,
         )
 
         rows = [_stock_summary_row(r) for r in report.get("rows", [])]
@@ -1586,6 +1647,40 @@ async def get_stock_item_report(
         )
 
 
+
+# ------------------------------------------------------------------
+# Inventory Voucher Alteration (Stock/Inventory drill-down)
+# ------------------------------------------------------------------
+
+@router.get("/inventory-voucher")
+async def get_inventory_voucher_detail_report(
+    voucher_type: str,
+    voucher_number: str,
+    voucher_date: date | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    try:
+        report = await fetch_inventory_voucher_detail(
+            voucher_type=voucher_type,
+            voucher_number=voucher_number,
+            voucher_date=voucher_date,
+            company_name=company_name,
+        )
+
+        return {
+            "success": True,
+            "source": "tally",
+            "voucher": report.get("voucher"),
+        }
+
+    except Exception as e:
+        print("Inventory Voucher Detail error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Inventory Voucher Alteration from Tally",
+        )
+
+
 # ------------------------------------------------------------------
 # Stock Group Summary (list) + Stock Group Items (drill-down)
 # ------------------------------------------------------------------
@@ -1596,7 +1691,10 @@ async def get_stock_groups_report(
 ):
     try:
         report = await fetch_stock_groups(company_name=company_name)
-        rows = [_stock_group_row(r) for r in report.get("rows", [])]
+        rows = [
+            _stock_group_row(r)
+            for r in with_root_row(report.get("rows", []), "name")
+        ]
 
         return {
             "success": True,
@@ -1636,6 +1734,165 @@ async def export_stock_groups_report(
         company_name=company_name,
         filename_base="stock_group_summary",
     )
+
+
+@router.get("/stock-item-monthly")
+async def get_stock_item_monthly_report(
+    stock_item_name: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    godown_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    """
+    Tally's Stock Item Monthly Summary: all months of the period with
+    Inwards, Outwards and Closing Balance (closing from Tally).
+    Without a period, the latest financial year with stock activity is
+    used (returned as from / to). With `godown_name` this is the
+    Godown Monthly Summary of that item in that godown.
+    """
+    _check_period(from_date, to_date)
+
+    try:
+        if godown_name:
+            summary = await fetch_godown_item_monthly(
+                godown_name=godown_name,
+                stock_item_name=stock_item_name,
+                from_date=from_date,
+                to_date=to_date,
+                company_name=company_name,
+            )
+        else:
+            summary = await fetch_stock_item_monthly(
+                stock_item_name=stock_item_name,
+                from_date=from_date,
+                to_date=to_date,
+                company_name=company_name,
+            )
+    except Exception as e:
+        print("Stock Item Monthly error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Item Monthly Summary from Tally",
+        )
+
+    if not summary["item_found"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Stock item '{stock_item_name}' was not found in Tally",
+        )
+
+    return {
+        "success": True,
+        "source": "tally",
+        "item": stock_item_name,
+        "godown": summary.get("godown"),
+        "approximate": bool(summary.get("approximate")),
+        "from": summary["from"],
+        "to": summary["to"],
+        "unit": summary["unit"],
+        "opening": summary["opening"],
+        "report": summary["rows"],
+        "count": len(summary["rows"]),
+    }
+
+
+@router.get("/stock-group-summary")
+async def get_stock_group_summary_report(
+    group: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    """
+    Tally's "Stock Group Summary" for one group (omit `group` for the
+    Primary root): child groups rolled up, then the items sitting
+    directly in the group.
+    """
+    _check_period(from_date, to_date)
+
+    try:
+        summary = await fetch_stock_group_summary(
+            group_name=group,
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            include_zero=include_zero,
+        )
+    except Exception as e:
+        print("Stock Group Summary error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Group Summary from Tally",
+        )
+
+    return _summary_response(summary, "Stock group", group)
+
+
+@router.get("/stock-category-summary")
+async def get_stock_category_summary_report(
+    category: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    """
+    Tally's "Stock Category Summary" for one category (omit `category`
+    for the Primary root). Items with no category show under Primary.
+    """
+    _check_period(from_date, to_date)
+
+    try:
+        summary = await fetch_stock_category_summary(
+            category_name=category,
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            include_zero=include_zero,
+        )
+    except Exception as e:
+        print("Stock Category Summary error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Category Summary from Tally",
+        )
+
+    return _summary_response(summary, "Stock category", category)
+
+
+@router.get("/godown-summary")
+async def get_godown_summary_report(
+    godown: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    """
+    Tally's "Godown Summary" for one godown (omit `godown` for the
+    Primary root): child godowns rolled up, then the stock items held
+    directly in the godown with closing quantity, rate and value.
+    """
+    _check_period(from_date, to_date)
+
+    try:
+        summary = await fetch_godown_summary(
+            godown_name=godown,
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            include_zero=include_zero,
+        )
+    except Exception as e:
+        print("Godown Summary error:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Godown Summary from Tally",
+        )
+
+    return _summary_response(summary, "Godown", godown)
 
 
 @router.get("/stock-group-items")
@@ -1715,7 +1972,10 @@ async def get_stock_categories_report(
 ):
     try:
         report = await fetch_stock_categories(company_name=company_name)
-        rows = [_stock_category_row(r) for r in report.get("rows", [])]
+        rows = [
+            _stock_category_row(r)
+            for r in with_root_row(report.get("rows", []), "name")
+        ]
 
         return {
             "success": True,
@@ -1767,7 +2027,10 @@ async def get_godowns_report(
 ):
     try:
         report = await fetch_godowns(company_name=company_name)
-        rows = [_godown_row(r) for r in report.get("rows", [])]
+        rows = [
+            _godown_row(r)
+            for r in with_root_row(report.get("rows", []), "name")
+        ]
 
         return {
             "success": True,
@@ -2049,56 +2312,111 @@ INVENTORY_REGISTERS = {
 }
 
 
+def _get_register(register_key: str) -> dict:
+    register = INVENTORY_REGISTERS.get(register_key)
+
+    if not register:
+        raise HTTPException(status_code=404, detail="Unknown Inventory Books register")
+
+    return register
+
+
 @router.get("/inventory-register/{register_key}")
 async def get_inventory_register(
     register_key: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
 ):
-    register = INVENTORY_REGISTERS.get(register_key)
-    if not register:
-        raise HTTPException(status_code=404, detail="Unknown Inventory Books register")
-    if from_date and to_date and from_date > to_date:
-        raise HTTPException(status_code=400, detail="from_date cannot be later than to_date")
+    """
+    Register screen: one row per month of the period with the number
+    of vouchers (and how many are cancelled). Without a period the
+    latest financial year with stock activity is used and returned as
+    from / to.
+    """
+    register = _get_register(register_key)
+    _check_period(from_date, to_date)
 
     try:
-        report = await fetch_inventory_register(
+        report = await fetch_register_months(
             voucher_type=register["voucher_type"],
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
-        return {
-            "success": True,
-            "source": "tally",
-            "report_name": register["title"],
-            "count": len(report["report"]),
-            "report": report["report"],
-            "grand_total": report["grand_total"],
-            "grand_total_cancelled": report["grand_total_cancelled"],
-        }
     except Exception as e:
         print(f'{register["title"]} error:', repr(e))
         raise HTTPException(status_code=502, detail=f'Unable to fetch {register["title"]} from Tally')
+
+    return {
+        "success": True,
+        "source": "tally",
+        "report_name": register["title"],
+        "register_key": register_key,
+        "from": report["from"],
+        "to": report["to"],
+        "count": len(report["rows"]),
+        "report": report["rows"],
+        "grand_total": report["grand_total"],
+        "grand_total_cancelled": report["grand_total_cancelled"],
+    }
+
+
+@router.get("/inventory-register/{register_key}/vouchers")
+async def get_inventory_register_vouchers(
+    register_key: str,
+    from_date: date,
+    to_date: date,
+    company_name: str | None = Depends(get_authorized_company),
+):
+    """
+    "List of All <X> Vouchers": the vouchers of one register in the
+    period (normally one month). Each row carries voucher_type /
+    voucher_number / date for the voucher alteration screen.
+    """
+    register = _get_register(register_key)
+    _check_period(from_date, to_date)
+
+    try:
+        result = await fetch_register_voucher_list(
+            register_key=register_key,
+            voucher_type=register["voucher_type"],
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except Exception as e:
+        print(f'{register["title"]} vouchers error:', repr(e))
+        raise HTTPException(status_code=502, detail=f'Unable to fetch {register["title"]} vouchers from Tally')
+
+    return {
+        "success": True,
+        "source": "tally",
+        "report_name": register["title"],
+        "register_key": register_key,
+        "voucher_type": register["voucher_type"],
+        "kind": result["kind"],
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "count": len(result["rows"]),
+        "report": result["rows"],
+        "totals": result["totals"],
+    }
 
 
 @router.get("/inventory-register/{register_key}/export/{file_format}")
 async def export_inventory_register(
     register_key: str,
     file_format: str,
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
 ):
-    register = INVENTORY_REGISTERS.get(register_key)
-    if not register:
-        raise HTTPException(status_code=404, detail="Unknown Inventory Books register")
-    if from_date and to_date and from_date > to_date:
-        raise HTTPException(status_code=400, detail="from_date cannot be later than to_date")
+    register = _get_register(register_key)
+    _check_period(from_date, to_date)
 
     try:
-        result = await fetch_inventory_register(
+        result = await fetch_register_months(
             voucher_type=register["voucher_type"],
             company_name=company_name,
             from_date=from_date,
@@ -2112,8 +2430,11 @@ async def export_inventory_register(
         file_format=file_format,
         title=register["title"],
         columns=INVENTORY_REGISTER_COLUMNS,
-        rows=result["report"],
+        rows=result["rows"],
         company_name=company_name,
         filename_base=register["filename"],
-        period=_period_label(from_date=from_date, to_date=to_date),
+        period=_period_label(
+            from_date=date.fromisoformat(result["from"]),
+            to_date=date.fromisoformat(result["to"]),
+        ),
     )

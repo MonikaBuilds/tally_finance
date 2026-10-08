@@ -14,14 +14,24 @@ from app.tally.xml_builders.common import (
 # ============================================================
 # STOCK SUMMARY
 # ============================================================
-
 def build_stock_summary_request(
     company_name: str | None = None,
     to_date: date | None = None,
+    from_date: date | None = None,
+    include_godown_allocations: bool = False,
 ) -> str:
-
     company_xml = build_company_variable(company_name)
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
     to_date_xml = _date_variable("SVTODATE", to_date)
+
+    # Per-godown opening allocations of each item. Only requested by
+    # the Godown Summary, which needs to know where an item's stock
+    # sits; every other caller keeps the original, lighter request.
+    godown_fetch = (
+        ",\n                            BATCHALLOCATIONS.*"
+        if include_godown_allocations
+        else ""
+    )
 
     return f"""
 <ENVELOPE>
@@ -37,10 +47,9 @@ def build_stock_summary_request(
 
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-
                 {company_xml}
+                {from_date_xml}
                 {to_date_xml}
-
             </STATICVARIABLES>
 
             <TDL>
@@ -52,12 +61,14 @@ def build_stock_summary_request(
                         <FETCH>
                             NAME,
                             PARENT,
+                            CATEGORY,
                             BASEUNITS,
                             OPENINGBALANCE,
+                            OPENINGRATE,
                             OPENINGVALUE,
                             CLOSINGBALANCE,
-                            CLOSINGVALUE,
-                            RATE
+                            CLOSINGRATE,
+                            CLOSINGVALUE{godown_fetch}
                         </FETCH>
 
                     </COLLECTION>
@@ -69,7 +80,6 @@ def build_stock_summary_request(
     </BODY>
 </ENVELOPE>
 """
-
 
 # ============================================================
 # STOCK ITEM
@@ -138,8 +148,10 @@ def build_stock_item_request(
                             PARENT,
                             BASEUNITS,
                             OPENINGBALANCE,
+                            OPENINGRATE,
                             OPENINGVALUE,
                             CLOSINGBALANCE,
+                            CLOSINGRATE,
                             CLOSINGVALUE,
                             RATE
                         </FETCH>
@@ -380,6 +392,8 @@ def build_stock_movement_request(
                             PARTYLEDGERNAME,
                             PARTYNAME,
                             NARRATION,
+                            ISCANCELLED,
+                            ISOPTIONAL,
                             ALLINVENTORYENTRIES.*
                         </FETCH>
 
@@ -601,3 +615,165 @@ def build_stock_item_list_request(
         </BODY>
     </ENVELOPE>
     """
+
+# ============================================================
+# INVENTORY VOUCHER DETAIL
+# ============================================================
+
+def build_inventory_voucher_detail_request(
+    voucher_type: str,
+    voucher_number: str,
+    voucher_date: date | None = None,
+    company_name: str | None = None,
+) -> str:
+    """
+    Fetch the inventory side of one voucher for the Stock/Inventory
+    drill-down. This is separate from the accounting voucher request
+    so existing Ledger/Voucher behaviour is not changed.
+    """
+
+    safe_type = escape(voucher_type or "")
+    safe_number = escape(voucher_number or "")
+
+    company_xml = build_company_variable(company_name)
+
+    date_xml = ""
+    if voucher_date is not None:
+        date_xml = (
+            _date_variable("SVFROMDATE", voucher_date)
+            + _date_variable("SVTODATE", voucher_date)
+        )
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Inventory Voucher Detail</ID>
+    </HEADER>
+
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                {company_xml}
+                {date_xml}
+            </STATICVARIABLES>
+
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Inventory Voucher Detail">
+                        <TYPE>Voucher</TYPE>
+                        <FILTER>InventoryVoucherDetailFilter</FILTER>
+
+                        <FETCH>
+                            DATE,
+                            GUID,
+                            VOUCHERTYPENAME,
+                            VOUCHERNUMBER,
+                            REFERENCE,
+                            REFERENCEDATE,
+                            PARTYLEDGERNAME,
+                            PARTYNAME,
+                            NARRATION,
+                            ISDELETED,
+                            ISCANCELLED,
+                            ALLINVENTORYENTRIES.*,
+                            ALLLEDGERENTRIES.*
+                        </FETCH>
+                    </COLLECTION>
+
+                    <SYSTEM TYPE="Formulae"
+                            NAME="InventoryVoucherDetailFilter">
+                        $VoucherTypeName = "{safe_type}" AND
+                        $VoucherNumber = "{safe_number}"
+                    </SYSTEM>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+
+
+# ============================================================
+# INVENTORY REGISTER VOUCHERS (one row per voucher)
+# ============================================================
+
+def build_register_vouchers_request(
+    voucher_type: str,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> str:
+    """
+    Vouchers of one voucher type, with the cancelled / optional flags
+    and inventory entries (with units) that the Inventory Books
+    registers need. Separate from build_inventory_register_request so
+    existing callers are unchanged.
+    """
+
+    safe_voucher_type = escape(voucher_type)
+
+    company_xml = build_company_variable(company_name)
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
+    to_date_xml = _date_variable("SVTODATE", to_date)
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Register Vouchers</ID>
+    </HEADER>
+
+    <BODY>
+        <DESC>
+
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+
+                {company_xml}
+                {from_date_xml}
+                {to_date_xml}
+
+            </STATICVARIABLES>
+
+            <TDL>
+                <TDLMESSAGE>
+
+                    <COLLECTION NAME="Register Vouchers">
+                        <TYPE>Voucher</TYPE>
+
+                        <FILTER>RegisterVoucherTypeFilter</FILTER>
+
+                        <FETCH>
+                            DATE,
+                            GUID,
+                            VOUCHERTYPENAME,
+                            VOUCHERNUMBER,
+                            REFERENCE,
+                            PARTYLEDGERNAME,
+                            PARTYNAME,
+                            NARRATION,
+                            ISCANCELLED,
+                            ISOPTIONAL,
+                            ALLINVENTORYENTRIES.*
+                        </FETCH>
+
+                    </COLLECTION>
+
+                    <SYSTEM TYPE="Formulae"
+                            NAME="RegisterVoucherTypeFilter">
+                        $VoucherTypeName = "{safe_voucher_type}"
+                    </SYSTEM>
+
+                </TDLMESSAGE>
+            </TDL>
+
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
