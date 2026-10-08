@@ -87,5 +87,5 @@ async def main():
     print("Dates returned directly by Tally:", dates)
     print("\nRAW TALLY RESPONSE:")
     print(response)
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -55,6 +55,28 @@ class TallyCacheManager:
     Preserves exact Tally responses without modifying financial values.
     """
 
+    _global_outage_until: float = 0.0
+
+    @classmethod
+    def mark_tally_offline(cls, cooldown_seconds: float | None = None) -> None:
+        cooldown = (
+            cooldown_seconds
+            if cooldown_seconds is not None
+            else max(0, cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS)
+        )
+        cls._global_outage_until = max(cls._global_outage_until, time.monotonic() + cooldown)
+
+    @classmethod
+    def mark_tally_online(cls) -> None:
+        cls._global_outage_until = 0.0
+
+    @classmethod
+    def is_tally_known_offline(cls) -> bool:
+        if cls._global_outage_until <= time.monotonic():
+            cls._global_outage_until = 0.0
+            return False
+        return True
+
     def __init__(self):
         # Per-key in-flight locks to prevent cache stampedes
         self._locks: dict[str, asyncio.Lock] = {}
@@ -126,8 +148,8 @@ class TallyCacheManager:
         if redis is None:
             return False
 
-        fresh_seconds = fresh_ttl or cache_settings.REDIS_CACHE_DEFAULT_FRESH_TTL
-        retention_seconds = retention_ttl or cache_settings.REDIS_CACHE_STALE_RETENTION_TTL
+        fresh_seconds = fresh_ttl if fresh_ttl is not None else cache_settings.REDIS_CACHE_DEFAULT_FRESH_TTL
+        retention_seconds = retention_ttl if retention_ttl is not None else cache_settings.REDIS_CACHE_STALE_RETENTION_TTL
 
         now = datetime.now(timezone.utc)
         ts = cached_ts if cached_ts is not None else now.timestamp()
@@ -175,7 +197,22 @@ class TallyCacheManager:
                     cached_at=cached_at,
                     is_stale=False,
                 )
+            # Fast failover: if Tally is already known to be offline and we have retained data,
+            # serve stale immediately (< 2ms) without waiting for a TCP connect timeout.
+            if cached_data is not None and self.is_tally_known_offline():
+                logger.debug(
+                    "Tally is known offline (circuit open); fast-serving retained stale data for key %s",
+                    cache_key,
+                )
+                return CacheResult(
+                    data=cached_data,
+                    source="stale_cache",
+                    cached_at=cached_at,
+                    is_stale=True,
+                )
         else:
+            if force_refresh:
+                self.mark_tally_online()
             cached_data, state, cached_at = None, CacheState.MISS, None
 
         # 2. Acquire per-key in-flight lock to prevent cache stampedes
@@ -254,11 +291,12 @@ class TallyCacheManager:
 
                 except Exception as fetch_exc:
                     # 4. Check if error is an eligible infrastructure/connectivity failure
-                    if is_tally_connectivity_error(fetch_exc) and cached_data is not None:
+                    if is_tally_connectivity_error(fetch_exc):
                         cooldown = max(
                             0,
                             cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS,
                         )
+                        self.mark_tally_offline(cooldown)
                         if cooldown:
                             self._connectivity_failures[cache_key] = (
                                 time.monotonic() + cooldown

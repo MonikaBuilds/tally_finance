@@ -7,9 +7,36 @@
  */
 
 const MEMORY_CACHE = new Map()
+const STALE_CACHE_ENTRIES = new Map()
 const STORAGE_PREFIX = 'tfi.bcache:'
 const DEFAULT_TTL_MS = 60000 // 60 seconds (1 minute)
 const SELECTED_COMPANY_KEY = 'selected_company'
+const CACHE_STATUS_EVENT = 'tfi:browser-cache-status'
+
+export function updateBrowserCacheStatus(key, status) {
+  if (!key) return
+
+  if (status) {
+    STALE_CACHE_ENTRIES.set(key, status)
+  } else {
+    STALE_CACHE_ENTRIES.delete(key)
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CACHE_STATUS_EVENT))
+  }
+}
+
+export function getStaleBrowserCacheEntries() {
+  return Array.from(STALE_CACHE_ENTRIES.values())
+}
+
+export function subscribeToBrowserCacheStatus(listener) {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener(CACHE_STATUS_EVENT, listener)
+  listener()
+  return () => window.removeEventListener(CACHE_STATUS_EVENT, listener)
+}
 
 /**
  * Safe helper to access sessionStorage without throwing in non-browser/SSR/Node environments.
@@ -222,6 +249,9 @@ export function clearBrowserCacheForCompany(company) {
       MEMORY_CACHE.delete(key)
     }
   }
+  for (const key of STALE_CACHE_ENTRIES.keys()) {
+    if (key.startsWith(prefix)) STALE_CACHE_ENTRIES.delete(key)
+  }
 
   // Invalidate in sessionStorage
   const storage = getStorage()
@@ -241,6 +271,10 @@ export function clearBrowserCacheForCompany(company) {
       // Silently ignore
     }
   }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CACHE_STATUS_EVENT))
+  }
 }
 
 /**
@@ -248,6 +282,7 @@ export function clearBrowserCacheForCompany(company) {
  */
 export function clearBrowserCache() {
   MEMORY_CACHE.clear()
+  STALE_CACHE_ENTRIES.clear()
 
   const storage = getStorage()
   if (storage) {
@@ -265,6 +300,10 @@ export function clearBrowserCache() {
     } catch {
       // Silently ignore storage access errors
     }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CACHE_STATUS_EVENT))
   }
 }
 
