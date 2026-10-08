@@ -10,28 +10,47 @@ from app.api.dashboard import router as dashboard_router
 from app.api.reports import router as reports_router
 from app.api.tally import router as tally_router
 from app.core.logging_config import configure_logging
+from app.security.config import get_auth_settings
+from app.security.refresh_store import initialize_refresh_store
 from app.security.organization_store import (
     initialize_organization_store,
 )
+
 from app.security.user_store import initialize_user_store
 from app.tally.client import TallyClient
+from app.security.csrf import (
+    csrf_protection_middleware,
+)
+from app.cache import (
+    init_redis_client,
+    close_redis_client,
+    start_background_refresher,
+    stop_background_refresher,
+)
 
 
 configure_logging()
-
+auth_settings = get_auth_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create authentication tables in dependency order.
     initialize_organization_store()
     initialize_user_store()
+    initialize_refresh_store()
 
     # Start shared HTTP client for Tally connections.
     await TallyClient.start_shared_client()
 
+    # Initialize Redis client pool and start background cache refresher (fail-open)
+    await init_redis_client()
+    start_background_refresher()
+
     try:
         yield
     finally:
+        await stop_background_refresher()
+        await close_redis_client()
         await TallyClient.close_shared_client()
 
 
@@ -41,15 +60,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.middleware("http")(
+    csrf_protection_middleware
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=list(
+        auth_settings.cors_allowed_origins
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

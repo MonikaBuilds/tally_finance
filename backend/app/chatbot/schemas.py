@@ -14,6 +14,10 @@ class ChatRequest(BaseModel):
         max_length=200
     )
 
+    force_refresh: bool = Field(
+        default=False
+    )
+
 
 class ChatResponse(BaseModel):
     success: bool
@@ -21,3 +25,5 @@ class ChatResponse(BaseModel):
     intent: str | None = None
     source: str | None = None
     data: dict[str, Any] | None = None
+    cached_at: str | None = None
+    is_stale: bool = False

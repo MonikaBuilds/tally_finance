@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
 
 import Layout from './components/layout/Layout'
@@ -34,10 +34,9 @@ import Login from './pages/Login'
 import UserManagement from './pages/UserManagement'
 import ReportsIndex from './pages/ReportsIndex'
 
-import {
-  getAccessToken,
-  clearAccessToken,
-} from './api/client'
+import { apiGet, apiPost } from './api/client'
+import { clearBrowserCache } from './utils/browserCache'
+
 
 // Old paths that no longer have their own route. The other old
 // top-level report paths (/ledger, /profit-loss, ...) still render
@@ -48,9 +47,8 @@ const LEGACY_REPORT_REDIRECTS = [
 
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    () => Boolean(getAccessToken())
-  )
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authLoading, setAuthLoading] = useState(true)
 
   const [currentUser, setCurrentUser] = useState(() => {
     try {
@@ -63,6 +61,55 @@ function App() {
       return null
     }
   })
+
+
+  // Verify authentication with the backend when the application starts.
+  // The browser automatically sends the HttpOnly access-token cookie.
+  useEffect(() => {
+    let cancelled = false
+
+    async function verifyAuthentication() {
+      try {
+        const user = await apiGet('/auth/me')
+
+        if (cancelled) {
+          return
+        }
+
+        setCurrentUser(user)
+
+        sessionStorage.setItem(
+          'chat_user',
+          JSON.stringify(user),
+        )
+
+        setIsAuthenticated(true)
+      } catch {
+        if (cancelled) {
+          return
+        }
+
+        sessionStorage.removeItem('chat_user')
+        sessionStorage.removeItem('selected_company')
+        clearBrowserCache()
+
+        setCurrentUser(null)
+        setIsAuthenticated(false)
+      } finally {
+        if (!cancelled) {
+          setAuthLoading(false)
+        }
+      }
+    }
+
+    verifyAuthentication()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+
   function handleLogin() {
     try {
       const storedUser = sessionStorage.getItem('chat_user')
@@ -79,19 +126,42 @@ function App() {
     setIsAuthenticated(true)
   }
 
-  function handleLogout() {
-    clearAccessToken()
 
+  // Temporary frontend logout.
+  // The next step will add /auth/logout so the backend
+  // can delete the HttpOnly authentication cookie.
+  async function handleLogout() {
+  try {
+    await apiPost('/auth/logout')
+  } catch (error) {
+    console.error(
+      'Backend logout failed:',
+      error
+    )
+  } finally {
+    clearBrowserCache()
     sessionStorage.removeItem('chat_user')
     sessionStorage.removeItem('selected_company')
-    sessionStorage.removeItem('tfi.dashboard.date_filter')
+    sessionStorage.removeItem(
+      'tfi.dashboard.date_filter'
+    )
 
+    setCurrentUser(null)
     setIsAuthenticated(false)
   }
+}
+
+
+  // Wait until /auth/me has checked the HttpOnly cookie.
+  if (authLoading) {
+    return null
+  }
+
 
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />
   }
+
 
   const roles = Array.isArray(currentUser?.roles)
     ? currentUser.roles
@@ -100,6 +170,8 @@ function App() {
   const canManageUsers =
     roles.includes('superadmin') ||
     roles.includes('admin')
+
+
   return (
     <Routes>
       <Route element={<Layout onLogout={handleLogout} />}>
@@ -147,7 +219,12 @@ function App() {
           path="/tally-status"
           element={<TallyStatus />}
         />
-        <Route path="/chatbot" element={<Chatbot />} />
+
+        <Route
+          path="/chatbot"
+          element={<Chatbot />}
+        />
+
         <Route
           path="/admin/users"
           element={
@@ -156,44 +233,136 @@ function App() {
               : <Navigate to="/" replace />
           }
         />
-        <Route path="/tally-status" element={<TallyStatus />} />
 
-        <Route path="/reports" element={<ReportsIndex />} />
+        <Route
+          path="/reports"
+          element={<ReportsIndex />}
+        />
+
         {/* Financial Reports */}
-        <Route path="/reports/profit-loss" element={<ProfitLoss />} />
-        <Route path="/reports/group-summary" element={<GroupSummary />} />
-        <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
-        <Route path="/reports/balance-sheet/group" element={<BalanceSheetGroup />} />
-        <Route path="/reports/closing-stock" element={<ClosingStockSummary />} />
-        <Route path="/reports/trial-balance" element={<TrialBalance />} />
-        <Route path="/reports/trial-balance/group" element={<TrialBalanceGroup />} />
-        <Route path="/reports/trial-balance/opening-stock" element={<TrialBalanceOpeningStock />} />
-        <Route path="/reports/trial-balance/purchase-bills-pending" element={<TrialBalancePurchaseBillsPending />} />
+
+        <Route
+          path="/reports/profit-loss"
+          element={<ProfitLoss />}
+        />
+
+        <Route
+          path="/reports/group-summary"
+          element={<GroupSummary />}
+        />
+
+        <Route
+          path="/reports/balance-sheet"
+          element={<BalanceSheet />}
+        />
+
+        <Route
+          path="/reports/balance-sheet/group"
+          element={<BalanceSheetGroup />}
+        />
+
+        <Route
+          path="/reports/closing-stock"
+          element={<ClosingStockSummary />}
+        />
+
+        <Route
+          path="/reports/trial-balance"
+          element={<TrialBalance />}
+        />
+
+        <Route
+          path="/reports/trial-balance/group"
+          element={<TrialBalanceGroup />}
+        />
+
+        <Route
+          path="/reports/trial-balance/opening-stock"
+          element={<TrialBalanceOpeningStock />}
+        />
+
+        <Route
+          path="/reports/trial-balance/purchase-bills-pending"
+          element={<TrialBalancePurchaseBillsPending />}
+        />
+
         {/* Ledger Reports */}
-        <Route path="/reports/ledger" element={<Ledger />} />
-        <Route path="/reports/ledger/month" element={<LedgerMonthDetail />} />
-        <Route path="/reports/voucher" element={<VoucherDetail />} />
+
+        <Route
+          path="/reports/ledger"
+          element={<Ledger />}
+        />
+
+        <Route
+          path="/reports/ledger/month"
+          element={<LedgerMonthDetail />}
+        />
+
+        <Route
+          path="/reports/voucher"
+          element={<VoucherDetail />}
+        />
+
         {/* Outstanding Reports */}
-        <Route path="/reports/receivables" element={<Receivables />} />
-        <Route path="/reports/payables" element={<Payables />} />
-        <Route path="/reports/pending-invoices" element={<PendingInvoices />} />
+
+        <Route
+          path="/reports/receivables"
+          element={<Receivables />}
+        />
+
+        <Route
+          path="/reports/payables"
+          element={<Payables />}
+        />
+
+        <Route
+          path="/reports/pending-invoices"
+          element={<PendingInvoices />}
+        />
+
         {/* Stock Reports */}
-        <Route path="/reports/inventory" element={<Inventory />} />
-        <Route path="/reports/stock-item-monthly" element={<StockItemMonthlySummary />} />
-        <Route path="/reports/stock-item-vouchers" element={<StockItemVouchers />} />
-        <Route path="/reports/inventory-voucher" element={<InventoryVoucherDetail />} />
-        <Route path="/reports/registers/:key/vouchers" element={<RegisterVouchers />} />
-        <Route path="/reports/stock-groups/:name" element={<StockSummaryDrill kind="group" />} />
-        <Route path="/reports/stock-categories/:name" element={<StockSummaryDrill kind="category" />} />
-        <Route path="/reports/godowns/:name" element={<StockSummaryDrill kind="godown" />} />
-        {/* Old query-string links; both redirect to the dynamic routes above. */}
-        <Route path="/reports/stock-group-items" element={<StockGroupItems />} />
-        <Route path="/reports/location-summary" element={<LocationSummary />} />
-        <Route path="/reports/location-monthly" element={<LocationMonthlySummary />} />
-        <Route path="/reports/location-vouchers" element={<LocationVouchers />} />
+
+        <Route
+          path="/reports/inventory"
+          element={<Inventory />}
+        />
+
+        <Route
+          path="/reports/stock-item-monthly"
+          element={<StockItemMonthlySummary />}
+        />
+
+        <Route
+          path="/reports/stock-item-vouchers"
+          element={<StockItemVouchers />}
+        />
+
+        <Route
+          path="/reports/stock-group-items"
+          element={<StockGroupItems />}
+        />
+
+        <Route
+          path="/reports/location-summary"
+          element={<LocationSummary />}
+        />
+
+        <Route
+          path="/reports/location-monthly"
+          element={<LocationMonthlySummary />}
+        />
 
         {LEGACY_REPORT_REDIRECTS.map(([from, to]) => (
-          <Route key={from} path={from} element={<Navigate to={to} replace />} />
+          <Route
+            key={from}
+            path={from}
+            element={
+              <Navigate
+                to={to}
+                replace
+              />
+            }
+          />
         ))}
       </Route>
     </Routes>

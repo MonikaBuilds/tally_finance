@@ -10,9 +10,11 @@ import {
 
 import { NAV_SECTIONS } from './navConfig'
 
+
 function getCurrentUser() {
   try {
-    const storedUser = sessionStorage.getItem('chat_user')
+    const storedUser =
+      sessionStorage.getItem('chat_user')
 
     if (!storedUser) {
       return null
@@ -24,6 +26,7 @@ function getCurrentUser() {
   }
 }
 
+
 function getInitial(username) {
   if (!username) {
     return 'U'
@@ -34,6 +37,19 @@ function getInitial(username) {
     .charAt(0)
     .toUpperCase()
 }
+
+
+function formatRole(role) {
+  return role
+    .split('_')
+    .map(
+      (part) =>
+        part.charAt(0).toUpperCase() +
+        part.slice(1)
+    )
+    .join(' ')
+}
+
 
 function Sidebar({
   collapsed,
@@ -49,26 +65,39 @@ function Sidebar({
   const user = getCurrentUser()
 
   const hasWildcard =
-    Array.isArray(user?.companies) && user.companies.includes('*')
+    Array.isArray(user?.companies) &&
+    user.companies.includes('*')
 
   const companyLabel =
     selectedCompany ||
-    (hasWildcard ? 'All companies' : 'No company')
+    (hasWildcard
+      ? 'All companies'
+      : 'No company')
 
-  const canSwitchCompany = companies.length > 1 && !collapsed
+  const canSwitchCompany =
+    companies.length > 1 && !collapsed
 
   const roles = Array.isArray(user?.roles)
     ? user.roles
     : []
 
+  const roleLabel = roles.length
+    ? roles.map(formatRole).join(', ')
+    : 'Authorized user'
+
   const canManageUsers =
     roles.includes('superadmin') ||
     roles.includes('admin')
+
   // Tooltips are only needed when labels are hidden.
-  const tooltip = (label) => (collapsed ? label : undefined)
+  const tooltip = (label) =>
+    collapsed ? label : undefined
 
   return (
-    <aside className="sidebar" aria-label="Sidebar">
+    <aside
+      className="sidebar"
+      aria-label="Sidebar"
+    >
       <div className="sidebar-brand">
         <div className="sidebar-brand-logo">
           <BarChart3 size={18} />
@@ -93,11 +122,23 @@ function Sidebar({
             type="button"
             className="sidebar-top-toggle"
             onClick={onToggle}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={
+              collapsed
+                ? 'Expand sidebar'
+                : 'Collapse sidebar'
+            }
             aria-expanded={!collapsed}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={
+              collapsed
+                ? 'Expand sidebar'
+                : 'Collapse sidebar'
+            }
           >
-            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            {collapsed ? (
+              <PanelLeftOpen size={16} />
+            ) : (
+              <PanelLeftClose size={16} />
+            )}
           </button>
         )}
       </div>
@@ -110,22 +151,32 @@ function Sidebar({
 
         <div className="sidebar-company-copy">
           <span>Company</span>
+
           {canSwitchCompany ? (
             <select
               className="sidebar-company-select"
               value={selectedCompany || ''}
-              onChange={(event) => onCompanyChange?.(event.target.value)}
+              onChange={(event) =>
+                onCompanyChange?.(
+                  event.target.value
+                )
+              }
               aria-label="Select company"
               title={companyLabel}
             >
               {companies.map((company) => (
-                <option key={company} value={company}>
+                <option
+                  key={company}
+                  value={company}
+                >
                   {company}
                 </option>
               ))}
             </select>
           ) : (
-            <strong title={companyLabel}>{companyLabel}</strong>
+            <strong title={companyLabel}>
+              {companyLabel}
+            </strong>
           )}
         </div>
       </div>
@@ -135,7 +186,10 @@ function Sidebar({
         aria-label="Main navigation"
       >
         {NAV_SECTIONS.map((section) => (
-          <div className="sidebar-section" key={section.label}>
+          <div
+            className="sidebar-section"
+            key={section.label}
+          >
             <span className="sidebar-section-label">
               {section.label}
             </span>
@@ -149,25 +203,39 @@ function Sidebar({
               .map((link) => {
                 const Icon = link.icon
 
-              return (
-                <NavLink
-                  key={link.to}
-                  to={link.to}
-                  end={link.end}
-                  onClick={onNavigate}
-                  aria-label={collapsed ? link.label : undefined}
-                  data-tooltip={tooltip(link.label)}
-                  className={({ isActive }) =>
-                    isActive
-                      ? 'sidebar-link sidebar-link--active'
-                      : 'sidebar-link'
-                  }
-                >
-                  <Icon size={18} strokeWidth={1.9} />
-                  <span className="sidebar-link-label">{link.label}</span>
-                </NavLink>
-              )
-            })}
+                return (
+                  <NavLink
+                    key={link.to}
+                    to={link.to}
+                    end={link.end}
+                    onClick={onNavigate}
+                    aria-label={
+                      collapsed
+                        ? link.label
+                        : undefined
+                    }
+                    data-tooltip={tooltip(
+                      link.label
+                    )}
+                    className={({
+                      isActive,
+                    }) =>
+                      isActive
+                        ? 'sidebar-link sidebar-link--active'
+                        : 'sidebar-link'
+                    }
+                  >
+                    <Icon
+                      size={18}
+                      strokeWidth={1.9}
+                    />
+
+                    <span className="sidebar-link-label">
+                      {link.label}
+                    </span>
+                  </NavLink>
+                )
+              })}
           </div>
         ))}
       </nav>
@@ -175,7 +243,9 @@ function Sidebar({
       <div className="sidebar-footer">
         <div
           className="sidebar-user"
-          data-tooltip={tooltip(user?.username || 'User')}
+          data-tooltip={tooltip(
+            user?.username || 'User'
+          )}
         >
           <div className="sidebar-avatar">
             {getInitial(user?.username)}
@@ -185,7 +255,8 @@ function Sidebar({
             <strong title={user?.username}>
               {user?.username || 'User'}
             </strong>
-            <span>Authorized user</span>
+
+            <span>{roleLabel}</span>
           </div>
         </div>
 
@@ -215,5 +286,6 @@ function Sidebar({
     </aside>
   )
 }
+
 
 export default Sidebar

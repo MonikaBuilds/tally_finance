@@ -13,6 +13,7 @@ from app.chatbot.schemas import (
     ChatResponse,
 )
 from app.chatbot.service import process_chat_message
+from app.security.user_store import get_user_organization_id
 from app.security.auth import (
     UserContext,
     authorize_company,
@@ -80,6 +81,17 @@ async def chat(
             requested_company=request.company_name,
         )
 
+        # Resolve the organization only from the authenticated user.
+        resolved_org = get_user_organization_id(current_user.user_id)
+
+        if not resolved_org:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to resolve user organization.",
+            )
+
+        org_id = str(resolved_org)
+
         # Process the user's financial question only after
         # authentication, rate limiting and company authorization pass.
         result = await process_chat_message(
@@ -87,6 +99,8 @@ async def chat(
             company_name=company_name,
             allowed_companies=current_user.allowed_companies,
             user_id=current_user.user_id,
+            org_id=org_id,
+            force_refresh=getattr(request, "force_refresh", False),
         )
 
         return ChatResponse(
@@ -101,8 +115,9 @@ async def chat(
             intent=result.get("intent"),
             source=result.get("source"),
             data=result.get("data"),
+            cached_at=result.get("cached_at"),
+            is_stale=result.get("is_stale", False),
         )
-
     except HTTPException:
         # Preserve expected API errors such as
         # 401, 403 and 429 responses.

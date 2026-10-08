@@ -1,13 +1,10 @@
-import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Request, status
 
-
-security = HTTPBearer(auto_error=False)
+from app.security.config import get_auth_settings
 
 
 @dataclass(frozen=True)
@@ -19,11 +16,10 @@ class UserContext:
 def _auth_enabled() -> bool:
     """
     Return whether authentication enforcement is enabled.
+    """
+    settings = get_auth_settings()
 
-    The flag is configurable so local development and automated
-    tests can explicitly control authentication behaviour.
-    """ 
-    return os.getenv("CHAT_AUTH_ENABLED", "false").lower() == "true"
+    return settings.auth_enabled
 
 
 def create_access_token(
@@ -43,34 +39,13 @@ def create_access_token(
     Passwords and financial data must never be stored in the token.
     """
 
-    secret = os.getenv("CHAT_JWT_SECRET")
-
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWT secret is not configured.",
-        )
-
-    algorithm = os.getenv("CHAT_JWT_ALGORITHM", "HS256")
-
-    try:
-        expire_minutes = int(
-            os.getenv("CHAT_JWT_EXPIRE_MINUTES", "60")
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Invalid JWT expiry configuration.",
-        ) from exc
-
-    if expire_minutes <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWT expiry must be greater than zero.",
-        )
+    settings = get_auth_settings()
 
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=expire_minutes)
+
+    expires_at = now + timedelta(
+        minutes=settings.jwt_expire_minutes
+    )
 
     payload = {
         "sub": user_id,
@@ -81,8 +56,8 @@ def create_access_token(
 
     return jwt.encode(
         payload,
-        secret,
-        algorithm=algorithm,
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
     )
 
 
@@ -91,20 +66,15 @@ def _decode_token(token: str) -> dict:
     Verify and decode an incoming JWT access token.
     """
 
-    secret = os.getenv("CHAT_JWT_SECRET")
-    algorithm = os.getenv("CHAT_JWT_ALGORITHM", "HS256")
-
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWT secret is not configured.",
-        )
+    settings = get_auth_settings()
 
     try:
         return jwt.decode(
             token,
-            secret,
-            algorithms=[algorithm],
+            settings.jwt_secret,
+            algorithms=[
+                settings.jwt_algorithm,
+            ],
         )
 
     except jwt.ExpiredSignatureError:
@@ -121,32 +91,37 @@ def _decode_token(token: str) -> dict:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    request: Request,
 ) -> UserContext:
     """
-    Resolve the authenticated user from the Bearer token.
+    Resolve the authenticated user from the HttpOnly
+    access-token cookie.
 
-    When authentication is disabled explicitly, a development
-    context is returned for local testing only.
+    When authentication is explicitly disabled, a
+    development context is returned for local testing only.
     """
 
-    # Development-only fallback. Production environments should keep
-    # CHAT_AUTH_ENABLED=true.
-    if not _auth_enabled():
+    settings = get_auth_settings()
+
+    # Development-only fallback.
+    # Production must keep authentication enabled.
+    if not settings.auth_enabled:
         return UserContext(
             user_id="development-user",
             allowed_companies=("*",),
         )
 
-    if credentials is None:
+    access_token = request.cookies.get(
+        settings.access_token_cookie_name
+    )
+
+    if not access_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required.",
         )
 
-    payload = _decode_token(
-        credentials.credentials
-    )
+    payload = _decode_token(access_token)
 
     user_id = payload.get("sub")
     companies = payload.get("companies", [])
@@ -171,29 +146,35 @@ async def get_current_user(
         ),
     )
 
+
 async def get_authorized_company(
     company_name: str | None = None,
-    current_user: UserContext = Depends(get_current_user),
+    current_user: UserContext = Depends(
+        get_current_user
+    ),
 ) -> str | None:
     """
-    Resolve the requested company and verify that the logged-in
-    user is allowed to access it.
+    Resolve the requested company and verify that the
+    logged-in user is allowed to access it.
 
-    This dependency is shared by dashboard and report routes so
-    company-level authorization is enforced consistently.
+    This dependency is shared by dashboard and report
+    routes so company-level authorization is enforced
+    consistently.
     """
+
     return authorize_company(
         user=current_user,
         requested_company=company_name,
     )
+
 
 def authorize_company(
     user: UserContext,
     requested_company: str | None,
 ) -> str | None:
     """
-    Verify that the authenticated user is allowed to access
-    the requested Tally company.
+    Verify that the authenticated user is allowed to
+    access the requested Tally company.
     """
 
     allowed = user.allowed_companies

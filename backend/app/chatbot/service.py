@@ -122,6 +122,8 @@ async def process_chat_message(
     company_name: str | None = None,
     allowed_companies: list[str] | None = None,
     user_id: str | None = None,
+    org_id: str = "default",
+    force_refresh: bool = False,
 ) -> dict:
     """
     Process a chatbot message and return financial data
@@ -467,11 +469,19 @@ async def process_chat_message(
 
     # Execute only a tool registered in our approved
     # read-only financial tool registry.
-    tool_result = await execute_tool(
-        tool_name=tool_name,
-        arguments=arguments,
-        user_id = user_id,
-    )
+    import inspect
+    sig = inspect.signature(execute_tool)
+    tool_kwargs = {
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "user_id": user_id,
+    }
+    if "org_id" in sig.parameters:
+        tool_kwargs["org_id"] = org_id
+    if "force_refresh" in sig.parameters:
+        tool_kwargs["force_refresh"] = force_refresh
+
+    tool_result = await execute_tool(**tool_kwargs)
 
     if not tool_result.get("success"):
         log_chat_event(
@@ -507,15 +517,17 @@ async def process_chat_message(
         request_id=request_id,
         event="request_completed",
         intent=tool_name,
-        source="tally",
+        source=tool_result.get("source", "tally"),
     )
 
     return {
         "success": True,
-        "source": "tally",
+        "source": tool_result.get("source", "tally"),
         "intent": tool_name,
         "answer": answer,
         "data": tool_result.get(
             "data"
         ),
+        "cached_at": tool_result.get("cached_at"),
+        "is_stale": tool_result.get("is_stale", False),
     }
