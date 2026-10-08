@@ -59,6 +59,23 @@ from app.tally.parsers import (
 from app.tally.parsers.inventory import (
     filter_stock_movement_by_godown,
 )
+
+from app.tally.parsers.inventory_registers import (
+    build_register_months,
+    build_voucher_register,
+    clip_vouchers,
+    parse_register_vouchers,
+)
+
+from app.tally.parsers.inventory_summary import (
+    build_godown_balances,
+    build_hierarchy_summary,
+    month_starts,
+    movement_effect,
+    parse_item_godown_openings,
+    pick_default_godown,
+)
+
 from app.tally.parsers.financial import (
     parse_balance_sheet_report,
 )
@@ -1255,6 +1272,21 @@ async def fetch_stock_movement(
     # Tally's TDL formulas cannot easily filter vouchers by
     # godown of a nested inventory entry, so apply the location
     # filter in Python after parsing.
+    # The voucher collection returns WHOLE vouchers, so the item and
+    # period filters have to be applied to the parsed entries: a
+    # voucher that merely contains the item also brings its other
+    # items, and Tally does not clip vouchers to SVFROMDATE/SVTODATE.
+    result = _clip_movement(
+        result,
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    # Tally's TDL formulas cannot easily filter vouchers by the
+    # godown of a nested inventory entry, so a location (godown)
+    # is applied here in Python, against the already-parsed rows,
+    # for the Location Summary / Location Monthly Summary screens.
     if godown_name:
         # Entries saved without a godown belong to the default
         # location, which must be resolved from the godown masters.
