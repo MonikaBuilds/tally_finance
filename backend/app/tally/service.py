@@ -27,6 +27,8 @@ from app.tally.xml_builders import (
     build_stock_item_list_request,
     build_chatbot_ledger_request,
     build_stock_group_items_request,
+    build_inventory_voucher_detail_request,
+    build_register_vouchers_request,
 )
 
 from app.tally.parsers import (
@@ -51,10 +53,27 @@ from app.tally.parsers import (
     parse_stock_valuation,
     parse_negative_stock,
     parse_stock_item_list,
+    parse_inventory_voucher_detail,
 )
 
 from app.tally.parsers.inventory import (
     filter_stock_movement_by_godown,
+)
+
+from app.tally.parsers.inventory_registers import (
+    build_register_months,
+    build_voucher_register,
+    clip_vouchers,
+    parse_register_vouchers,
+)
+
+from app.tally.parsers.inventory_summary import (
+    build_godown_balances,
+    build_hierarchy_summary,
+    month_starts,
+    movement_effect,
+    parse_item_godown_openings,
+    pick_default_godown,
 )
 
 from app.tally.parsers.financial import (
@@ -923,6 +942,57 @@ async def fetch_voucher_detail(
     return vouchers
 
 
+
+
+# ============================================================
+# INVENTORY VOUCHER DETAIL
+# ============================================================
+
+async def fetch_inventory_voucher_detail(
+    voucher_type: str,
+    voucher_number: str,
+    voucher_date: date | None = None,
+    company_name: str | None = None,
+):
+    response = await client.send_xml(
+        build_inventory_voucher_detail_request(
+            voucher_type=voucher_type,
+            voucher_number=voucher_number,
+            voucher_date=voucher_date,
+            company_name=company_name,
+        )
+    )
+
+    result = parse_inventory_voucher_detail(
+        response,
+        voucher_type=voucher_type,
+        voucher_number=voucher_number,
+        voucher_date=(
+            voucher_date.isoformat() if voucher_date else None
+        ),
+    )
+
+    # Some Tally installations are less consistent about applying
+    # date variables to custom collections. Retry with only the
+    # voucher type/number filter if the dated request found nothing.
+    if result.get("voucher") is None and voucher_date is not None:
+        response = await client.send_xml(
+            build_inventory_voucher_detail_request(
+                voucher_type=voucher_type,
+                voucher_number=voucher_number,
+                voucher_date=None,
+                company_name=company_name,
+            )
+        )
+
+        result = parse_inventory_voucher_detail(
+            response,
+            voucher_type=voucher_type,
+            voucher_number=voucher_number,
+        )
+
+    return result
+
 # ============================================================
 # STOCK SUMMARY
 # ============================================================
@@ -930,11 +1000,13 @@ async def fetch_voucher_detail(
 async def fetch_stock_summary(
     company_name: str | None = None,
     to_date: date | None = None,
+    from_date: date | None = None,
 ):
     response = await client.send_xml(
         build_stock_summary_request(
             company_name=company_name,
             to_date=to_date,
+            from_date=from_date,
         )
     )
 
@@ -999,14 +1071,6 @@ async def fetch_stock_groups(
         )
     )
 
-    print(
-        "\n========== TALLY RAW STOCK GROUP XML =========="
-    )
-    print(response)
-    print(
-        "========== END TALLY RAW STOCK GROUP XML ==========\n"
-    )
-
     return parse_stock_groups(response)
 
 
@@ -1064,14 +1128,32 @@ async def fetch_stock_movement(
 
     result = parse_stock_movement(response)
 
+    # The voucher collection returns WHOLE vouchers, so the item and
+    # period filters have to be applied to the parsed entries: a
+    # voucher that merely contains the item also brings its other
+    # items, and Tally does not clip vouchers to SVFROMDATE/SVTODATE.
+    result = _clip_movement(
+        result,
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
     # Tally's TDL formulas cannot easily filter vouchers by the
     # godown of a nested inventory entry, so a location (godown)
     # is applied here in Python, against the already-parsed rows,
     # for the Location Summary / Location Monthly Summary screens.
     if godown_name:
+        # Entries saved without a godown belong to the default
+        # location, which must be resolved from the godown masters.
+        masters = await fetch_godowns(company_name=company_name)
+
         rows = filter_stock_movement_by_godown(
             result.get("rows", []),
             godown_name,
+            default_godown=pick_default_godown(
+                masters.get("rows", [])
+            ),
         )
 
         result = {
@@ -1083,6 +1165,353 @@ async def fetch_stock_movement(
     return result
 
 
+def _clip_movement(result, stock_item_name, from_date, to_date):
+    rows = result.get("rows", [])
+
+    if stock_item_name:
+        target = stock_item_name.strip().casefold()
+        rows = [
+            r for r in rows
+            if (r.get("stock_item") or "").strip().casefold() == target
+        ]
+
+    if from_date:
+        rows = [r for r in rows if (r.get("date") or "") >= from_date.isoformat()]
+
+    if to_date:
+        rows = [r for r in rows if (r.get("date") or "") <= to_date.isoformat()]
+
+    return {"success": True, "rows": rows, "count": len(rows)}
+
+
+# ============================================================
+# STOCK ITEM MONTHLY SUMMARY
+# ============================================================
+
+async def resolve_stock_period(
+    company_name: str | None = None,
+    stock_item_name: str | None = None,
+) -> tuple[date, date]:
+    """
+    Financial year (1 Apr - 31 Mar) to use when the caller gave no
+    period: the year of the latest stock voucher in Tally, or - for a
+    company with no stock vouchers - the year containing today. Using
+    today's year blindly gives an empty report once you are past the
+    last year that has data.
+    """
+    movement = await fetch_stock_movement(
+        company_name=company_name,
+        stock_item_name=stock_item_name,
+    )
+
+    dates = [r["date"] for r in movement.get("rows", []) if r.get("date")]
+    latest = date.fromisoformat(max(dates)) if dates else date.today()
+
+    start_year = latest.year if latest.month >= 4 else latest.year - 1
+
+    return date(start_year, 4, 1), date(start_year + 1, 3, 31)
+
+
+async def fetch_stock_item_monthly(
+    stock_item_name: str,
+    from_date: date | None,
+    to_date: date | None,
+    company_name: str | None = None,
+):
+    """
+    Tally's "Stock Item Monthly Summary": every month of the period,
+    with Inwards / Outwards from the item's vouchers and the Closing
+    Balance for each month taken from Tally itself (the item's closing
+    balance as on each month end). Tally's closing value follows its
+    valuation method, so it can't be rebuilt by adding vouchers up.
+    """
+    import asyncio
+    import calendar
+    from datetime import timedelta
+
+    if not from_date or not to_date:
+        default_from, default_to = await resolve_stock_period(
+            company_name=company_name,
+            stock_item_name=stock_item_name,
+        )
+        from_date = from_date or default_from
+        to_date = to_date or default_to
+
+    months = month_starts(from_date, to_date)
+
+    async def closing_as_on(day):
+        report = await fetch_stock_item(
+            company_name=company_name,
+            stock_item_name=stock_item_name,
+            to_date=day,
+        )
+        rows = report.get("rows", [])
+        return rows[0] if rows else None
+
+    month_ends = []
+
+    for year, month in months:
+        last = date(year, month, calendar.monthrange(year, month)[1])
+        month_ends.append(min(last, to_date))
+
+    opening_task = closing_as_on(from_date - timedelta(days=1))
+    movement_task = fetch_stock_movement(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        stock_item_name=stock_item_name,
+    )
+
+    opening, movement, *closings = await asyncio.gather(
+        opening_task,
+        movement_task,
+        *[closing_as_on(day) for day in month_ends],
+    )
+
+    buckets = {
+        key: {
+            "inward_quantity": 0.0,
+            "inward_value": 0.0,
+            "outward_quantity": 0.0,
+            "outward_value": 0.0,
+        }
+        for key in months
+    }
+
+    for row in movement.get("rows", []):
+        effect = movement_effect(row)
+
+        if effect is None:
+            continue
+
+        key = (int(row["date"][:4]), int(row["date"][5:7]))
+
+        if key not in buckets:
+            continue
+
+        side = effect["side"]
+        buckets[key][f"{side}ward_quantity" if side == "out" else "inward_quantity"] += effect["quantity"]
+        buckets[key][f"{side}ward_value" if side == "out" else "inward_value"] += effect["value"]
+
+    rows = []
+    running_quantity = opening["closing_quantity"] if opening else 0.0
+
+    for (year, month), closing in zip(months, closings):
+        first = date(year, month, 1)
+        last = date(year, month, calendar.monthrange(year, month)[1])
+
+        bucket = buckets[(year, month)]
+        closing_quantity = closing["closing_quantity"] if closing else 0.0
+
+        # Tally's closing quantity also reflects Sale / Purchase Bills
+        # Pending (delivered but not yet billed), which are not
+        # vouchers and so never appear in the voucher entries. The gap
+        # between Tally's closing and opening + vouchers is that
+        # adjustment; it is shown in Outwards (as Tally does, e.g.
+        # "(Sale Bills Pending) (-)7 NOS") and reported separately.
+        # Only the quantity is adjusted - Tally does not give a value.
+        expected = (
+            running_quantity
+            + bucket["inward_quantity"]
+            - bucket["outward_quantity"]
+        )
+        gap = round(closing_quantity - expected, 6)
+
+        if gap:
+            bucket["outward_quantity"] -= gap
+
+        running_quantity = closing_quantity
+
+        rows.append(
+            {
+                "month": f"{year:04d}-{month:02d}",
+                "from": max(first, from_date).isoformat(),
+                "to": min(last, to_date).isoformat(),
+                **bucket,
+                "pending_bills_quantity": gap,
+                "closing_quantity": closing_quantity,
+                "closing_value": closing["closing_value"] if closing else 0.0,
+            }
+        )
+
+    return {
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "opening": (
+            {
+                "quantity": opening["closing_quantity"],
+                "value": opening["closing_value"],
+            }
+            if opening
+            else {"quantity": 0.0, "value": 0.0}
+        ),
+        "unit": (opening or (closings[0] if closings else None) or {}).get("base_units", ""),
+        "rows": rows,
+        "item_found": bool(opening or any(closings)),
+    }
+
+
+async def fetch_godown_item_monthly(
+    godown_name: str,
+    stock_item_name: str,
+    from_date: date | None,
+    to_date: date | None,
+    company_name: str | None = None,
+):
+    """
+    Tally's "Godown Monthly Summary" for one item in one godown.
+
+    * Item held in a single godown (the usual case): that godown simply
+      gets the item's Stock Item Monthly Summary, Tally figures intact.
+      Any other godown shows zeros.
+    * Item spread over several godowns: each godown's quantity is its
+      opening allocation plus signed voucher movement, valued at
+      Tally's closing rate for the month (flagged approximate).
+    """
+    from app.tally.parsers.inventory_summary import (
+        name_key,
+        resolve_godown,
+    )
+
+    base = await fetch_stock_item_monthly(
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+        company_name=company_name,
+    )
+
+    masters = await fetch_godowns(company_name=company_name)
+    default_godown = pick_default_godown(masters.get("rows", []))
+    target = name_key(godown_name)
+
+    response = await client.send_xml(
+        build_stock_summary_request(
+            company_name=company_name,
+            include_godown_allocations=True,
+        )
+    )
+
+    openings = [
+        a for a in parse_item_godown_openings(response)
+        if a["stock_item"].strip().casefold() == stock_item_name.strip().casefold()
+    ]
+
+    history = await fetch_stock_movement(
+        company_name=company_name,
+        stock_item_name=stock_item_name,
+    )
+
+    stock_rows = [
+        r for r in history.get("rows", [])
+        if movement_effect(r) is not None
+    ]
+
+    touched = {
+        name_key(resolve_godown(a.get("godown"), default_godown))
+        for a in openings
+        if a.get("quantity")
+    } | {
+        name_key(resolve_godown(r.get("godown"), default_godown))
+        for r in stock_rows
+    }
+
+    zero = {
+        "inward_quantity": 0.0,
+        "inward_value": 0.0,
+        "outward_quantity": 0.0,
+        "outward_value": 0.0,
+        "pending_bills_quantity": 0.0,
+        "closing_quantity": 0.0,
+        "closing_value": 0.0,
+    }
+
+    if len(touched) <= 1:
+        only = next(iter(touched), name_key(default_godown))
+
+        if only == target:
+            return {**base, "godown": godown_name, "approximate": False}
+
+        return {
+            **base,
+            "godown": godown_name,
+            "approximate": False,
+            "opening": {"quantity": 0.0, "value": 0.0},
+            "rows": [{**row, **zero} for row in base["rows"]],
+        }
+
+    def in_godown(row):
+        return name_key(resolve_godown(row.get("godown"), default_godown)) == target
+
+    start = base["from"]
+    running = sum(
+        a["quantity"] for a in openings
+        if name_key(resolve_godown(a.get("godown"), default_godown)) == target
+    )
+
+    for r in stock_rows:
+        if in_godown(r) and (r.get("date") or "") < start:
+            effect = movement_effect(r)
+            running += effect["quantity"] if effect["side"] == "in" else -effect["quantity"]
+
+    opening_rate = (
+        base["opening"]["value"] / base["opening"]["quantity"]
+        if base["opening"]["quantity"]
+        else 0.0
+    )
+
+    rows = []
+
+    for month in base["rows"]:
+        inward_q = inward_v = outward_q = outward_v = 0.0
+
+        for r in stock_rows:
+            if not in_godown(r) or not (month["from"] <= (r.get("date") or "") <= month["to"]):
+                continue
+
+            effect = movement_effect(r)
+
+            if effect["side"] == "in":
+                inward_q += effect["quantity"]
+                inward_v += effect["value"]
+            else:
+                outward_q += effect["quantity"]
+                outward_v += effect["value"]
+
+        running += inward_q - outward_q
+
+        rate = (
+            month["closing_value"] / month["closing_quantity"]
+            if month["closing_quantity"]
+            else 0.0
+        )
+
+        rows.append(
+            {
+                **month,
+                "inward_quantity": inward_q,
+                "inward_value": inward_v,
+                "outward_quantity": outward_q,
+                "outward_value": outward_v,
+                "pending_bills_quantity": 0.0,
+                "closing_quantity": running,
+                "closing_value": running * rate,
+            }
+        )
+
+    opening_quantity = running - sum(r["inward_quantity"] - r["outward_quantity"] for r in rows)
+
+    return {
+        **base,
+        "godown": godown_name,
+        "approximate": True,
+        "opening": {
+            "quantity": opening_quantity,
+            "value": opening_quantity * opening_rate,
+        },
+        "rows": rows,
+    }
+
+
 # ============================================================
 # STOCK GROUP ITEMS (Stock Group Summary -> items in that group)
 # ============================================================
@@ -1091,16 +1520,165 @@ async def fetch_stock_group_items(
     group_name: str,
     company_name: str | None = None,
     to_date: date | None = None,
+    from_date: date | None = None,
 ):
+    """
+    Items sitting directly in one stock group. Kept for the existing
+    /stock-group-items endpoint; it now goes through the same
+    Primary-aware summary as the Stock Group Summary screen.
+    """
+    summary = await fetch_stock_group_summary(
+        group_name=group_name,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        include_zero=True,
+    )
+
+    if summary is None:
+        return {"success": True, "rows": [], "count": 0}
+
+    items = [
+        {
+            "name": r["name"],
+            "parent": r.get("stock_group") or r["parent"],
+            "base_units": r.get("unit"),
+            "opening_quantity": r.get("opening_quantity"),
+            "opening_value": r.get("opening_value"),
+            "closing_quantity": r.get("closing_quantity"),
+            "closing_rate": r.get("closing_rate"),
+            "closing_value": r.get("closing_value"),
+        }
+        for r in summary["rows"]
+        if r["kind"] == "item"
+    ]
+
+    return {"success": True, "rows": items, "count": len(items)}
+
+
+# ============================================================
+# STOCK GROUP / CATEGORY / GODOWN SUMMARIES
+# ============================================================
+#
+# Each of these is Tally's "<X> Summary" screen for one node of the
+# Primary-rooted tree. They return None when the requested node does
+# not exist (the API turns that into a 404) and an empty row list when
+# the node exists but holds no stock.
+
+async def fetch_stock_group_summary(
+    group_name: str | None = None,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    masters = await fetch_stock_groups(company_name=company_name)
+    items = await fetch_stock_summary(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return build_hierarchy_summary(
+        selected=group_name,
+        masters=masters.get("rows", []),
+        name_field="name",
+        leaf_rows=_items_as_leaf_rows(items.get("rows", [])),
+        node_field="stock_group",
+        na_is_root=False,
+        include_zero=include_zero,
+        kind_label="group",
+    )
+
+
+async def fetch_stock_category_summary(
+    category_name: str | None = None,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    masters = await fetch_stock_categories(company_name=company_name)
+    items = await fetch_stock_summary(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return build_hierarchy_summary(
+        selected=category_name,
+        masters=masters.get("rows", []),
+        name_field="name",
+        leaf_rows=_items_as_leaf_rows(items.get("rows", [])),
+        node_field="category",
+        na_is_root=True,
+        include_zero=include_zero,
+        kind_label="category",
+    )
+
+
+async def fetch_godown_summary(
+    godown_name: str | None = None,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    include_zero: bool = False,
+):
+    masters = await fetch_godowns(company_name=company_name)
+
     response = await client.send_xml(
-        build_stock_group_items_request(
-            group_name=group_name,
+        build_stock_summary_request(
             company_name=company_name,
+            from_date=from_date,
             to_date=to_date,
+            include_godown_allocations=True,
         )
     )
 
-    return parse_stock_summary(response)
+    items = parse_stock_summary(response)
+    openings = parse_item_godown_openings(response)
+
+    movement = await fetch_stock_movement(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    balances = build_godown_balances(
+        items=items.get("rows", []),
+        godown_masters=masters.get("rows", []),
+        opening_allocations=openings,
+        movement_rows=movement.get("rows", []),
+    )
+
+    return build_hierarchy_summary(
+        selected=godown_name,
+        masters=masters.get("rows", []),
+        name_field="name",
+        leaf_rows=balances,
+        node_field="godown",
+        na_is_root=True,
+        include_zero=include_zero,
+        kind_label="godown",
+    )
+
+
+def _items_as_leaf_rows(rows: list[dict]) -> list[dict]:
+    """Stock Summary rows in the shape build_hierarchy_summary reads."""
+    return [
+        {
+            "stock_item": r.get("name"),
+            "stock_group": r.get("parent"),
+            "category": r.get("category"),
+            "unit": r.get("base_units"),
+            "opening_quantity": r.get("opening_quantity"),
+            "opening_value": r.get("opening_value"),
+            "closing_quantity": r.get("closing_quantity"),
+            "closing_rate": r.get("closing_rate"),
+            "closing_value": r.get("closing_value"),
+        }
+        for r in rows
+    ]
 
 
 # ============================================================
@@ -1125,6 +1703,75 @@ async def fetch_inventory_register(
     return parse_inventory_register_summary(
         response
     )
+
+
+async def fetch_register_vouchers(
+    voucher_type: str,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    """All vouchers of one type within the period (period applied here)."""
+    response = await client.send_xml(
+        build_register_vouchers_request(
+            voucher_type=voucher_type,
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    )
+
+    return clip_vouchers(parse_register_vouchers(response), from_date, to_date)
+
+
+async def fetch_register_months(
+    voucher_type: str,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    """
+    Register screen (month-wise voucher counts). Without a period the
+    latest financial year with stock activity is used, so a register
+    that is empty today still shows the year the company works in.
+    """
+    if not from_date or not to_date:
+        default_from, default_to = await resolve_stock_period(
+            company_name=company_name
+        )
+        from_date = from_date or default_from
+        to_date = to_date or default_to
+
+    vouchers = await fetch_register_vouchers(
+        voucher_type=voucher_type,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return {
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        **build_register_months(vouchers, from_date, to_date),
+    }
+
+
+async def fetch_register_voucher_list(
+    register_key: str,
+    voucher_type: str,
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    """"List of All <X> Vouchers" for one register and period."""
+    vouchers = await fetch_register_vouchers(
+        voucher_type=voucher_type,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return build_voucher_register(register_key, vouchers)
 
 
 # ============================================================

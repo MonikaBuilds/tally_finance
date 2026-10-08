@@ -45,6 +45,8 @@ from .inventory import (
     build_inventory_register_request,
     build_stock_item_list_request,
     build_stock_group_items_request,
+    build_inventory_voucher_detail_request,
+    build_register_vouchers_request,
 )
 
 
@@ -83,4 +85,6 @@ __all__ = [
     "build_inventory_register_request",
     "build_stock_item_list_request",
     "build_stock_group_items_request",
+    "build_inventory_voucher_detail_request",
+    "build_register_vouchers_request",
 ]
