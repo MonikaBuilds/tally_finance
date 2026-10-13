@@ -7,7 +7,10 @@ import httpx
 
 from app.core.config import settings
 from app.cache.config import cache_settings
-from app.cache.errors import is_tally_connectivity_error
+from app.cache.errors import (
+    is_tally_connectivity_error,
+    is_tally_unreachable_error,
+)
 
 
 class TallyClient:
@@ -126,6 +129,18 @@ class TallyClient:
         raise RuntimeError(message)
 
     async def check_connection(self) -> dict:
+        # TallyPrime handles one request at a time. If one of our own
+        # report requests is currently in flight, Tally is obviously up
+        # and just busy, so do not ping it (the ping would queue behind
+        # the report, time out and wrongly show "disconnected").
+        if self._lock.locked() and not self._circuit_is_open():
+            return {
+                "connected": True,
+                "status_code": None,
+                "url": self.base_url,
+                "busy": True,
+            }
+
         try:
             conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
             req_timeout = httpx.Timeout(timeout=3.0, connect=conn_timeout)
@@ -152,6 +167,17 @@ class TallyClient:
                 "connected": True,
                 "status_code": response.status_code,
                 "url": self.base_url,
+            }
+
+        except httpx.ReadTimeout:
+            # The connection was accepted but Tally did not answer within
+            # the short status timeout: it is running but busy (for example
+            # a report is open in the Tally window). Not an outage.
+            return {
+                "connected": True,
+                "status_code": None,
+                "url": self.base_url,
+                "busy": True,
             }
 
         except Exception as exc:
@@ -257,7 +283,9 @@ class TallyClient:
                 raise
 
             except Exception as exc:
-                if is_tally_connectivity_error(exc):
+                # A ReadTimeout means Tally is up but slow on a heavy
+                # report, so it must not open the "unavailable" circuit.
+                if is_tally_unreachable_error(exc):
                     self._mark_unavailable()
 
                 duration = time.perf_counter() - start_time

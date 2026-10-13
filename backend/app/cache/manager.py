@@ -17,7 +17,10 @@ from redis.exceptions import RedisError
 
 from app.cache.client import get_redis_client
 from app.cache.config import cache_settings
-from app.cache.errors import is_tally_connectivity_error
+from app.cache.errors import (
+    is_tally_connectivity_error,
+    is_tally_unreachable_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +299,10 @@ class TallyCacheManager:
                             0,
                             cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS,
                         )
-                        self.mark_tally_offline(cooldown)
+                        # Only a real outage flags Tally as offline. A
+                        # ReadTimeout (busy on a heavy report) does not.
+                        if is_tally_unreachable_error(fetch_exc):
+                            self.mark_tally_offline(cooldown)
                         if cooldown:
                             self._connectivity_failures[cache_key] = (
                                 time.monotonic() + cooldown

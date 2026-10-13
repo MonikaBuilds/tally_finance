@@ -61,3 +61,19 @@ def is_tally_connectivity_error(exc: BaseException) -> bool:
             return True
 
     return False
+
+
+def is_tally_unreachable_error(exc: BaseException) -> bool:
+    """
+    Determine if an exception means Tally cannot be reached at all
+    (connection refused, host unreachable, connect timeout, connection dropped).
+
+    A ReadTimeout is deliberately NOT included. It means Tally accepted the
+    connection but is still busy processing a heavy report (for example Stock
+    Summary), so Tally is up. Such an error is still a connectivity error
+    (stale cached data may be served), but it must not flip the app to
+    "Tally disconnected".
+    """
+    if isinstance(exc, httpx.ReadTimeout):
+        return False
+    return is_tally_connectivity_error(exc)

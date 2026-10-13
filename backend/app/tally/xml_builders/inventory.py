@@ -14,6 +14,16 @@ from app.tally.xml_builders.common import (
 # ============================================================
 # STOCK SUMMARY
 # ============================================================
+# Probe against the live Tally server showed that sending SVFROMDATE together
+# with this Stock Item collection makes Tally accept the request and then never
+# answer it (it also stops accepting new connections until it recovers). The
+# same request with only SVTODATE answers in well under a second. So the
+# from-date is not sent. Closing figures are still "as on" the to-date; opening
+# figures use Tally's own current period start. Set this to True to restore the
+# old behaviour.
+STOCK_COLLECTION_SEND_FROM_DATE = False
+
+
 def build_stock_summary_request(
     company_name: str | None = None,
     to_date: date | None = None,
@@ -21,7 +31,11 @@ def build_stock_summary_request(
     include_godown_allocations: bool = False,
 ) -> str:
     company_xml = build_company_variable(company_name)
-    from_date_xml = _date_variable("SVFROMDATE", from_date)
+    from_date_xml = (
+        _date_variable("SVFROMDATE", from_date)
+        if STOCK_COLLECTION_SEND_FROM_DATE
+        else ""
+    )
     to_date_xml = _date_variable("SVTODATE", to_date)
 
     # Per-godown opening allocations of each item. Only requested by
