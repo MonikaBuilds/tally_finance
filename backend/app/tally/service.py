@@ -1136,6 +1136,10 @@ async def fetch_inventory_voucher_detail(
 # STOCK SUMMARY
 # ============================================================
 
+# Stock Summary makes Tally calculate closing figures for every stock
+# item, which can take far longer than the default 30 seconds.
+STOCK_SUMMARY_TIMEOUT = 120.0
+
 async def fetch_stock_summary(
     company_name: str | None = None,
     to_date: date | None = None,
@@ -1146,7 +1150,8 @@ async def fetch_stock_summary(
             company_name=company_name,
             to_date=to_date,
             from_date=from_date,
-        )
+        ),
+        timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
     return parse_stock_summary(response)
@@ -1532,7 +1537,8 @@ async def fetch_godown_item_monthly(
         build_stock_summary_request(
             company_name=company_name,
             include_godown_allocations=True,
-        )
+        ),
+        timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
     openings = [
@@ -1776,7 +1782,8 @@ async def fetch_godown_summary(
             from_date=from_date,
             to_date=to_date,
             include_godown_allocations=True,
-        )
+        ),
+        timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
     items = parse_stock_summary(response)
@@ -1930,7 +1937,8 @@ async def fetch_stock_valuation(
         build_stock_summary_request(
             company_name=company_name,
             to_date=to_date,
-        )
+        ),
+        timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
     return parse_stock_valuation(response)
@@ -1948,7 +1956,8 @@ async def fetch_negative_stock(
         build_stock_summary_request(
             company_name=company_name,
             to_date=to_date,
-        )
+        ),
+        timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
     return parse_negative_stock(response)
