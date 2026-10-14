@@ -13,83 +13,117 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 ---
 
-## Architecture Overview & End-to-End Request Flow
+## Architecture Hierarchy & End-to-End Request Flow
+
+The platform is engineered as a **5-tier architectural hierarchy** ensuring complete tenant isolation, sub-millisecond cached responses, zero-loss ERP accounting accuracy, and deterministic AI safety.
+
+### 1. Mobile-Universal Architecture Hierarchy Diagram
+> [!NOTE]
+> *This diagrammatic hierarchy renders universally across all devices, including the native GitHub Mobile App (iOS / Android), mobile browsers, and desktop viewports without requiring client-side JavaScript execution.*
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       TIER 1: PRESENTATION & CLIENT                         │
+│   React 19 SPA (Executive Dashboard • Statements • Godown Ledger • AI Chat) │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ [1] HTTPS + HttpOnly JWT + CSRF Token
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      TIER 2: API GATEWAY & ZERO-TRUST                       │
+│    FastAPI Gateway (CORS Middleware • CSRF Defense • Asynchronous Router)   │
+│             ▲                                                               │
+│             │ [2] RBAC / Multi-Tenant Isolation Check                       │
+│             ▼                                                               │
+│   MySQL 8.0 Database (Organizations • Users • Roles • Refresh Token Store)  │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ [3] Authenticated Request
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TIER 3: CORE INTELLIGENCE & ROUTING                      │
+│                                                                             │
+│       ┌──────────────────────────────┴──────────────────────────────┐       │
+│       ▼                                                             ▼       │
+│  [BRANCH A: FINANCIAL REPORTS]                 [BRANCH B: AI ASSISTANT]     │
+│  Dynamic TDL XML Generator                     Safety Interceptor (Regex)   │
+│  Collection Filters & Date Scopes              Blocks Mutating/Write Intents│
+│       │                                                             │       │
+│       ▼                                                             ▼       │
+│  Redis SWR Cache Engine                        Google Gemini 2.5 Flash      │
+│  • Fresh Hit (<300s): Sub-ms Return            • Intent & Entity Detection  │
+│  • Stale Hit (<24h): Serve + Revalidate        • 13 Read-Only Tool Mappings │
+│  • Miss / Offline: Fail-Open Bypass            • Zero Hallucination Guard   │
+│       │                                                             │       │
+└───────┼─────────────────────────────────────────────────────────────┼───────┘
+        │                                                             │
+        │ [4] HTTP/XML (Port 9000)                                    │ [5] Tool Call
+        ▼                                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   TIER 4: TALLY PRIME ERP SYSTEM OF RECORD                  │
+│       Native C++ Accounting Core & Local HTTP XML Gateway (Port 9000)       │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ [6] Native TDL XML Response Stream
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   TIER 5: HIGH-PRECISION PARSER & DELIVERY                  │
+│     Direct XML Deserializer (Exact Decimals • No Lossy Approximations)      │
+│      Write-Through Cache Update  ──►  Delivered to React 19 Client UI       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. Interactive Request Flow Diagram (Mermaid)
 
 ```mermaid
 flowchart TD
-    %% ==========================================
-    %% CLIENT & TRANSPORT INGESTION
-    %% ==========================================
-    User(["👤 Enterprise User / CFO / Auditor"]) -->|"1. User Action or AI Query"| UI["🖥️ React 19 Client SPA\n(Dashboard • Godown Drilldown • AI Chat)"]
-    
-    UI -->|"2. HTTPS + HttpOnly JWT + CSRF Header"| Gateway["🛡️ FastAPI Security Gateway\n(CORS Defense • CSRF Check • Rate Limiter)"]
+    subgraph Tier1["Tier 1: Client & Presentation"]
+        User["👤 Enterprise User / CFO / Auditor"] -->|"1. User Action or Prompt"| UI["🖥️ React 19 Client SPA\n(Dashboard, Reports, AI Chat)"]
+    end
 
-    Gateway <-->|"3. RBAC & Org Scope Lookup"| MySQL[("🗄️ MySQL 8 Database\n(Users, Roles, Permissions, Sessions)")]
+    subgraph Tier2["Tier 2: API Gateway & Security"]
+        UI -->|"2. HTTPS + HttpOnly JWT + CSRF"| Gateway["🛡️ FastAPI Security Gateway\n(CORS, CSRF, Rate Limiter)"]
+        Gateway <-->|"3. RBAC & Scope Lookup"| MySQL[("🗄️ MySQL 8 Database\n(Users, Roles, Permissions)")]
+    end
 
-    Gateway -->|"4. Authenticated Request"| Router{"5. Route Classifier"}
+    subgraph Tier3["Tier 3: Core Intelligence & Routing"]
+        Gateway -->|"4. Route Dispatch"| Router{"5. Request Classifier"}
 
-    %% ==========================================
-    %% BRANCH A: FINANCIAL & INVENTORY FLOW
-    %% ==========================================
-    Router -->|"Reports / Metrics / Godown Vouchers"| SWR{"6. Redis SWR Cache Check\n(Key: Org + Route + Query Hash)"}
+        Router -->|"Reports / Inventory"| SWR{"6. Redis SWR Cache Check"}
+        SWR -->|"Fresh Hit (under 300s)"| FreshReturn["⚡ Fresh Cache Return\n(Sub-1ms JSON Response)"]
+        FreshReturn -->|"Deliver to Client"| UI
 
-    SWR -->|"Hit (Age &lt; 300s)"| FreshReturn["⚡ Fresh Cache Hit\n(&lt; 1ms Latency JSON Return)"]
-    FreshReturn -->|"Deliver Cached Data"| UI
+        SWR -->|"Stale Hit (under 24h)"| StaleReturn["⏳ Stale Cache Return\n(Instant Serve + Revalidate)"]
+        StaleReturn -->|"Immediate Delivery"| UI
+        StaleReturn -.->|"Async Background Refresh"| TDLGen
 
-    SWR -->|"Hit (300s &lt; Age &lt; 24h)"| StaleReturn["⏳ Stale Cache Hit\n(Serve Instantly + Trigger Async Revalidation)"]
-    StaleReturn -->|"Immediate Delivery"| UI
-    StaleReturn -.->|"Background Refresh"| TDLGen
+        SWR -->|"Miss or Offline (Fail-Open)"| TDLGen["7. Dynamic TDL XML Generator\n(Scoped Filters & Date Ranges)"]
 
-    SWR -->|"Miss or Redis Offline\n(Fail-Open Circuit)"| TDLGen["7. Dynamic TDL XML Generator\n(Scoped Date, Godown & Ledger Envelopes)"]
+        Router -->|"Natural Language Prompt"| SafetyGuard["6. Deterministic Safety Interceptor\n(Regex Filter Rejects Write Actions)"]
+        SafetyGuard -->|"7. Clean Query Prompt"| GeminiAI["🤖 Google Gemini 2.5 Flash\n(Intent Detection & 13 Read-Only Tools)"]
+        GeminiAI -->|"8. Tool Execution Payload"| Dispatcher["9. Tool Dispatcher Engine\n(Invokes Core Report Pipelines)"]
+    end
 
-    TDLGen -->|"8. Direct HTTP XML Request (Port 9000)"| Tally[("🏢 Tally Prime ERP Core\n(Native C++ Engine • Port 9000)")]
+    subgraph Tier4["Tier 4: Enterprise ERP Gateway"]
+        TDLGen -->|"8. Direct HTTP/XML (Port 9000)"| Tally[("🏢 Tally Prime ERP Core\n(Native C++ Engine • Port 9000)")]
+        Dispatcher -->|"10. Live Ground Truth Query"| Tally
+    end
 
-    Tally -->|"9. Raw TDL XML Envelope"| Parser["10. High-Precision XML Parser\n• Direct Tally Extraction (Zero Loss)\n• Exact Closing Decimals & Voucher Ledgers"]
-
-    Parser -->|"11. Write-Through Update"| RedisStore[("🚀 Redis Cache\n(SWR TTL Stored)")]
-    Parser -->|"12. Formatted JSON Response"| UI
-
-    %% ==========================================
-    %% BRANCH B: DETERMINISTIC AI ASSISTANT FLOW
-    %% ==========================================
-    Router -->|"Natural Language Chat Prompt"| SafetyGuard["6. Deterministic Safety Interceptor\n(Regex Filter Rejects All Mutating/Write Queries)"]
-
-    SafetyGuard -->|"7. Clean Query Prompt"| GeminiAI["🤖 Google Gemini 2.5 Flash\n• Intent Detection & Parameter Extraction\n• Constrained to 13 Read-Only Financial Tools\n• (Never Calculates or Hallucinates Numbers)"]
-
-    GeminiAI -->|"8. Tool Execution Payload\n(Selected Function + Extracted Parameters)"| Dispatcher["9. Financial Tool Dispatcher\n(Invokes Scoped Ledger & Report Pipelines)"]
-
-    Dispatcher -->|"10. Query Live Ground Truth"| Tally
-
-    Dispatcher -->|"11. Deterministic Formatter\n(Injects Audited Tally Figures)"| UI
-
-    %% ==========================================
-    %% VISUAL STYLING
-    %% ==========================================
-    classDef clientClass fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0369a1;
-    classDef gatewayClass fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e;
-    classDef tallyClass fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b;
-    classDef cacheClass fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8;
-    classDef aiClass fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#065f46;
-    classDef dbClass fill:#f1f5f9,stroke:#475569,stroke-width:2px,color:#334155;
-
-    class User,UI clientClass;
-    class Gateway,Router,TDLGen,Parser,Dispatcher,SafetyGuard gatewayClass;
-    class Tally tallyClass;
-    class SWR,FreshReturn,StaleReturn,RedisStore cacheClass;
-    class GeminiAI aiClass;
-    class MySQL dbClass;
+    subgraph Tier5["Tier 5: Precision Parsing & Return"]
+        Tally -->|"9. Raw TDL XML Stream"| Parser["10. High-Precision XML Parser\n(Exact Decimals • Zero Loss)"]
+        Parser -->|"11. Write-Through Update"| RedisStore[("🚀 Redis SWR Cache")]
+        Parser -->|"12. Formatted Financial JSON"| UI
+        Dispatcher -->|"11. Audited AI Response"| UI
+    end
 ```
 
-### Request Execution & Data Flow Lifecycle
+### 3. Tier-by-Tier Architecture Hierarchy Breakdown
 
-| Stage | Component | Operations & Guarantees |
+| Tier | Component | Responsibilities & Architectural Guarantees |
 | :--- | :--- | :--- |
-| **1. Client Ingestion** | **React 19 SPA** | Dispatches authenticated requests with HttpOnly session cookies and CSRF tokens in request headers. |
-| **2. Security & Gateway** | **FastAPI Gateway** | Validates JWT token, extracts tenant organization scope, and checks role permissions against MySQL 8. |
-| **3. Caching & SWR** | **Redis SWR Engine** | Evaluates cache key `org:{org_id}:{endpoint}:{query_hash}`. Fresh hits (`<300s`) return in `<1ms`. Stale hits (`<24h`) return immediately while triggering async background revalidation. |
-| **4. Fail-Open ERP Gateway** | **Dynamic TDL Generator** | If cache misses or Redis is offline, dynamic XML TDL envelopes are built and dispatched directly to Tally Prime on port 9000. |
-| **5. High-Precision Parsing** | **Native XML Parser** | Parses Tally Prime's raw C++ XML responses, extracting exact decimal balances for ledgers, godowns, and vouchers without synthetic Python approximations. |
-| **6. Deterministic AI Guard** | **Gemini + Safety Interceptor** | Intercepts chat queries, enforces read-only access (regex blocks write/update), maps prompt to 1 of 13 tools, and pulls ground-truth figures directly from Tally Prime. |
+| **Tier 1: Presentation** | **React 19 SPA** | Single-page application providing real-time financial dashboards, audited statements, godown/stock voucher drill-downs, and natural-language AI chat. Secured via HttpOnly cookies and SameSite CSRF tokens. |
+| **Tier 2: Gateway & Security** | **FastAPI + MySQL 8** | Enforces zero-trust multi-tenancy, JWT session validation, role-based permission bitmasks (`superadmin`, `admin`, `user`), and PBKDF2-HMAC-SHA256 password hashing. |
+| **Tier 3: Core Intelligence** | **SWR Caching & Gemini AI** | Routes requests between cached financial pipelines and the deterministic AI assistant. AI is restricted to 13 read-only tools with zero hallucination. Cache delivers fresh data in `<1ms` and revalidates stale records asynchronously. |
+| **Tier 4: ERP Gateway** | **Tally Prime (Port 9000)** | Direct integration with Tally Prime's native C++ accounting core over HTTP/XML without intermediary ODBC bridges or lossy approximations. |
+| **Tier 5: Precision Parsing** | **Native XML Parser** | Ingests raw TDL XML responses and calculates exact closing decimals, voucher ledger movements, and stock batches matching Tally desktop reports to 100% precision. |
+
 
 
 ### Architectural Highlights & Resilience Pillars
