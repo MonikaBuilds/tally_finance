@@ -53,9 +53,9 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 | Layer | Technologies & Libraries | Purpose |
 | :--- | :--- | :--- |
-| **Backend Framework** | **Python 3.11+**, **FastAPI**, **Uvicorn** | High-performance asynchronous REST API backend |
+| **Backend Framework** | **Python 3.13.5**, **FastAPI**, **Uvicorn** | High-performance asynchronous REST API backend |
 | **Accounting Integration** | **Tally Prime**, **Tally XML / TDL Interface** | Real-time source of truth via local HTTP/XML gateway (port 9000) |
-| **Database & Persistence** | **MySQL 8.0+**, `mysql-connector-python` | Multi-tenant organizations, users, RBAC roles, permissions, and sessions |
+| **Database & Persistence** | **MySQL 8.0.41**, `mysql-connector-python` | Multi-tenant organizations, users, RBAC roles, permissions, and sessions |
 | **Caching & Acceleration** | **Redis-py 8.1.0**| Stale-While-Revalidate (SWR) caching layer with background warming daemon |
 | **Artificial Intelligence** | **Google Gemini** (`google-genai`), OpenRouter (fallback) | Deterministic intent classification and read-only tool selection |
 | **Security & Auth** | **JWT**, **PBKDF2-HMAC-SHA256**, SameSite Cookies, CSRF | Zero-trust authentication with 310,000 hash iterations & HttpOnly cookies |
