@@ -15,8 +15,6 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 ## Architecture Overview & End-to-End Request Flow
 
-The platform is engineered as a high-throughput, deterministic 5-tier architecture connecting modern web clients to Tally Prime's desktop C++ accounting engine with sub-millisecond cache acceleration and zero accounting loss.
-
 ```mermaid
 flowchart LR
     %% Ingestion
