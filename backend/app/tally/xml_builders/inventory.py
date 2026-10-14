@@ -347,26 +347,13 @@ def build_stock_movement_request(
     stock_item_name: str | None = None,
 ) -> str:
 
+    # stock_item_name is filtered in Python (_clip_movement), exactly like
+    # ledger_name in build_ledger_voucher_collection_request, because a TDL
+    # formula $StockItemName on a Voucher collection only tests the first item,
+    # dropping vouchers where the target item is the 2nd or Nth allocation.
     company_xml = build_company_variable(company_name)
     from_date_xml = _date_variable("SVFROMDATE", from_date)
     to_date_xml = _date_variable("SVTODATE", to_date)
-
-    if stock_item_name:
-        safe_stock_item = escape(stock_item_name)
-
-        filter_xml = """
-                        <FILTER>StockMovementItemFilter</FILTER>
-        """
-
-        system_formula = f"""
-                    <SYSTEM TYPE="Formulae"
-                            NAME="StockMovementItemFilter">
-                        $StockItemName = "{safe_stock_item}"
-                    </SYSTEM>
-        """
-    else:
-        filter_xml = ""
-        system_formula = ""
 
     return f"""
 <ENVELOPE>
@@ -395,8 +382,6 @@ def build_stock_movement_request(
                     <COLLECTION NAME="Stock Movement">
                         <TYPE>Voucher</TYPE>
 
-                        {filter_xml}
-
                         <FETCH>
                             DATE,
                             GUID,
@@ -408,12 +393,12 @@ def build_stock_movement_request(
                             NARRATION,
                             ISCANCELLED,
                             ISOPTIONAL,
-                            ALLINVENTORYENTRIES.*
+                            ALLINVENTORYENTRIES.*,
+                            INVENTORYENTRIESIN.*,
+                            INVENTORYENTRIESOUT.*
                         </FETCH>
 
                     </COLLECTION>
-
-                    {system_formula}
 
                 </TDLMESSAGE>
             </TDL>

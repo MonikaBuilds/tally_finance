@@ -9,6 +9,7 @@ import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatCurrency, formatQuantity, formatDate } from '../utils/format'
+import StockItemVouchers from './StockItemVouchers'
 
 function toQuery(params) {
   const query = new URLSearchParams(
@@ -38,6 +39,11 @@ function LocationVouchers() {
 
   const locationName = params.get('location') || ''
   const itemName = params.get('item') || ''
+
+  if (itemName) {
+    return <StockItemVouchers />
+  }
+
   const fromDate = params.get('from') || ''
   const toDate = params.get('to') || ''
 

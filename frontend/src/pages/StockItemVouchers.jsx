@@ -29,12 +29,14 @@ function StockItemVouchers() {
   const navigate = useNavigate()
   const params = new URLSearchParams(location.search)
 
+  const godownName = params.get('location') || params.get('godown') || ''
   const itemName = params.get('item') || ''
   const fromDate = params.get('from') || ''
   const toDate = params.get('to') || ''
 
   const queryParams = {
     stock_item_name: itemName || undefined,
+    godown_name: godownName || undefined,
     from_date: fromDate || undefined,
     to_date: toDate || undefined,
   }
@@ -148,7 +150,11 @@ function StockItemVouchers() {
   return (
     <>
       <PageHeader
-        title={`Stock Item Vouchers${itemName ? `: ${itemName}` : ''}`}
+        title={
+          godownName
+            ? `Godown Vouchers: ${godownName}`
+            : `Stock Item Vouchers${itemName ? `: ${itemName}` : ''}`
+        }
         subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
         actions={
           <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>

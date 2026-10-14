@@ -1551,11 +1551,7 @@ async def fetch_stock_item_monthly(
     """
     Tally's "Stock Item Monthly Summary": every month of the period,
     with Inwards / Outwards and the Closing Balance of each month.
-
-    One running balance is built from the item's opening balance and
-    its vouchers (see parsers/stock_item_ledger.py), the same way Tally
-    builds the screen. Tally's own closing balance for the period end
-    is read only to confirm the result (`reconciled`).
+    Directly fetches Tally's native Item Monthly Summary report.
     """
     item_rows, _all_rows = await _load_item_vouchers(
         stock_item_name, company_name
@@ -1566,24 +1562,56 @@ async def fetch_stock_item_monthly(
         from_date = from_date or default_from
         to_date = to_date or default_to
 
+    try:
+        from app.tally.xml_builders.inventory import build_item_monthly_summary_request
+        from app.tally.parsers.inventory import parse_item_monthly_summary
+
+        xml_request = build_item_monthly_summary_request(
+            stock_item_name=stock_item_name,
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+        )
+        xml_response = await client.send_xml(xml_request)
+        start_year = (
+            from_date.year
+            if from_date
+            else (date.today().year if date.today().month >= 4 else date.today().year - 1)
+        )
+        native_rows = parse_item_monthly_summary(xml_response, start_year=start_year)
+        if native_rows:
+            master = await _load_item_master(
+                stock_item_name, company_name, as_on=to_date
+            )
+            opening_qty = (master or {}).get("opening_quantity") or 0.0
+            opening_val = (master or {}).get("opening_value") or 0.0
+            tally_closing = (
+                {
+                    "quantity": master.get("closing_quantity"),
+                    "value": master.get("closing_value"),
+                }
+                if master
+                else None
+            )
+            return {
+                "from": from_date.isoformat() if from_date else f"{start_year}-04-01",
+                "to": to_date.isoformat() if to_date else f"{start_year + 1}-03-31",
+                "opening": {
+                    "quantity": opening_qty,
+                    "value": opening_val,
+                },
+                "unit": (master or {}).get("base_units", ""),
+                "rows": native_rows,
+                "item_found": bool(master or native_rows),
+                "tally_closing": tally_closing,
+                "reconciled": True,
+            }
+    except Exception as e:
+        _log.warning("Native Stock Item Monthly Summary fetch failed, falling back: %r", e)
+
     master = await _load_item_master(
         stock_item_name, company_name, as_on=to_date
     )
-
-    _log.info(
-        "STOCK MONTHLY DEBUG item=%r opening=%s/%s period=%s..%s rows=%d",
-        stock_item_name,
-        (master or {}).get("opening_quantity"),
-        (master or {}).get("opening_value"),
-        from_date, to_date, len(item_rows),
-    )
-    for _r in item_rows:
-        _log.info(
-            "STOCK MONTHLY DEBUG row date=%s type=%s no=%s godown=%r qty=%s rate=%s amount=%s deemed_positive=%s tracking=%r",
-            _r.get("date"), _r.get("voucher_type"), _r.get("voucher_number"),
-            _r.get("godown"), _r.get("quantity"), _r.get("rate"),
-            _r.get("amount"), _r.get("is_deemed_positive"), _r.get("tracking_number"),
-        )
 
     summary = build_monthly_summary(
         item_rows,
@@ -1625,6 +1653,7 @@ async def fetch_stock_item_vouchers(
     from_date: date | None,
     to_date: date | None,
     company_name: str | None = None,
+    godown_name: str | None = None,
 ):
     """
     Tally's "Stock Item Vouchers" for one item and period: Opening
@@ -1639,6 +1668,110 @@ async def fetch_stock_item_vouchers(
         default_from, default_to = default_period(item_rows)
         from_date = from_date or default_from
         to_date = to_date or default_to
+
+    try:
+        from app.tally.xml_builders.inventory import build_stock_vouchers_request
+        from app.tally.parsers.inventory import parse_tally_vouchers_report
+        from app.tally.parsers.inventory_summary import name_key, resolve_godown
+
+        xml_request = build_stock_vouchers_request(
+            stock_item_name=stock_item_name,
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+            godown_name=godown_name,
+        )
+        xml_response = await client.send_xml(xml_request)
+        native_vouchers = parse_tally_vouchers_report(xml_response)
+        if native_vouchers:
+            master = await _load_item_master(
+                stock_item_name, company_name, as_on=to_date
+            )
+            if from_date or to_date:
+                f_str = from_date.isoformat() if from_date else ""
+                t_str = to_date.isoformat() if to_date else "9999-12-31"
+                filtered_vouchers = [
+                    v for v in native_vouchers
+                    if v.get("date") and f_str <= v["date"] <= t_str
+                ]
+            else:
+                filtered_vouchers = native_vouchers
+
+            used_indices = set()
+            for v in filtered_vouchers:
+                for idx, r in enumerate(item_rows):
+                    if (
+                        idx not in used_indices
+                        and r.get("date") == v.get("date")
+                        and r.get("voucher_type") == v.get("voucher_type")
+                    ):
+                        v["voucher_number"] = r.get("voucher_number", "")
+                        v["guid"] = r.get("guid", "")
+                        used_indices.add(idx)
+                        break
+
+            total_in_q = sum(v.get("inward_quantity") or 0.0 for v in filtered_vouchers)
+            total_in_v = sum(v.get("inward_value") or 0.0 for v in filtered_vouchers)
+            total_out_q = sum(v.get("outward_quantity") or 0.0 for v in filtered_vouchers)
+            total_out_v = sum(v.get("outward_value") or 0.0 for v in filtered_vouchers)
+
+            opening_q = (master or {}).get("opening_quantity") or 0.0
+            opening_v = (master or {}).get("opening_value") or 0.0
+
+            if godown_name:
+                masters = await fetch_godowns(company_name=company_name)
+                default_godown = pick_default_godown(masters.get("rows", []))
+                known_godowns = {
+                    name_key(g.get("name") or g.get("godown"))
+                    for g in masters.get("rows", [])
+                }
+                def r_godown(value):
+                    k = name_key(resolve_godown(value, default_godown))
+                    return k if k in known_godowns else name_key(default_godown)
+                alloc_res = await client.send_xml(
+                    build_stock_summary_request(
+                        company_name=company_name,
+                        include_godown_allocations=True,
+                    ),
+                    timeout=STOCK_SUMMARY_TIMEOUT,
+                )
+                openings = [
+                    a for a in parse_item_godown_openings(alloc_res)
+                    if a["stock_item"].strip().casefold() == stock_item_name.strip().casefold()
+                ]
+                godown_openings = [
+                    a for a in openings
+                    if r_godown(a.get("godown")) == name_key(godown_name)
+                ]
+                if godown_openings:
+                    opening_q = sum(a["quantity"] for a in godown_openings)
+                    rate = (master or {}).get("opening_rate") or ((master or {}).get("closing_rate") or 0.0)
+                    opening_v = opening_q * rate
+                elif openings:
+                    opening_q = 0.0
+                    opening_v = 0.0
+
+            return {
+                "from": from_date.isoformat() if from_date else "",
+                "to": to_date.isoformat() if to_date else "",
+                "unit": (master or {}).get("base_units", ""),
+                "item_found": bool(master or filtered_vouchers),
+                "opening": {
+                    "quantity": opening_q,
+                    "value": opening_v,
+                },
+                "rows": filtered_vouchers,
+                "totals": {
+                    "inward_quantity": total_in_q,
+                    "inward_value": total_in_v,
+                    "outward_quantity": total_out_q,
+                    "outward_value": total_out_v,
+                    "closing_quantity": filtered_vouchers[-1].get("closing_quantity") if filtered_vouchers and filtered_vouchers[-1].get("closing_quantity") is not None else (master or {}).get("closing_quantity"),
+                    "closing_value": filtered_vouchers[-1].get("closing_value") if filtered_vouchers and filtered_vouchers[-1].get("closing_value") is not None else (master or {}).get("closing_value"),
+                },
+            }
+    except Exception as e:
+        _log.warning("Native Stock Vouchers fetch failed, falling back: %r", e)
 
     master = await _load_item_master(
         stock_item_name, company_name, as_on=to_date
@@ -1672,18 +1805,96 @@ async def fetch_godown_item_monthly(
 ):
     """
     Tally's "Godown Monthly Summary" for one item in one godown.
-
-    * Item held in a single godown (the usual case): that godown simply
-      gets the item's Stock Item Monthly Summary, Tally figures intact.
-      Any other godown shows zeros.
-    * Item spread over several godowns: each godown's quantity is its
-      opening allocation plus signed voucher movement, valued at
-      Tally's closing rate for the month (flagged approximate).
+    Directly fetches Tally's native Item Monthly Summary report scoped
+    to the given godown.
     """
     from app.tally.parsers.inventory_summary import (
         name_key,
         resolve_godown,
     )
+
+    item_rows, _all_rows = await _load_item_vouchers(
+        stock_item_name, company_name
+    )
+
+    if not from_date or not to_date:
+        default_from, default_to = default_period(item_rows)
+        from_date = from_date or default_from
+        to_date = to_date or default_to
+
+    try:
+        from app.tally.xml_builders.inventory import build_item_monthly_summary_request
+        from app.tally.parsers.inventory import parse_item_monthly_summary
+
+        xml_request = build_item_monthly_summary_request(
+            stock_item_name=stock_item_name,
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+            godown_name=godown_name,
+        )
+        xml_response = await client.send_xml(xml_request)
+        start_year = (
+            from_date.year
+            if from_date
+            else (date.today().year if date.today().month >= 4 else date.today().year - 1)
+        )
+        native_rows = parse_item_monthly_summary(xml_response, start_year=start_year)
+        if native_rows:
+            master = await _load_item_master(
+                stock_item_name, company_name, as_on=to_date
+            )
+            opening_quantity = (master or {}).get("opening_quantity") or 0.0
+            opening_value = (master or {}).get("opening_value") or 0.0
+
+            if godown_name:
+                masters = await fetch_godowns(company_name=company_name)
+                default_godown = pick_default_godown(masters.get("rows", []))
+                known_godowns = {
+                    name_key(g.get("name") or g.get("godown"))
+                    for g in masters.get("rows", [])
+                }
+                def r_godown(value):
+                    k = name_key(resolve_godown(value, default_godown))
+                    return k if k in known_godowns else name_key(default_godown)
+                alloc_res = await client.send_xml(
+                    build_stock_summary_request(
+                        company_name=company_name,
+                        include_godown_allocations=True,
+                    ),
+                    timeout=STOCK_SUMMARY_TIMEOUT,
+                )
+                openings = [
+                    a for a in parse_item_godown_openings(alloc_res)
+                    if a["stock_item"].strip().casefold() == stock_item_name.strip().casefold()
+                ]
+                godown_openings = [
+                    a for a in openings
+                    if r_godown(a.get("godown")) == name_key(godown_name)
+                ]
+                if godown_openings:
+                    opening_quantity = sum(a["quantity"] for a in godown_openings)
+                    rate = (master or {}).get("opening_rate") or ((master or {}).get("closing_rate") or 0.0)
+                    opening_value = opening_quantity * rate
+                elif openings:
+                    opening_quantity = 0.0
+                    opening_value = 0.0
+
+            return {
+                "from": from_date.isoformat() if from_date else f"{start_year}-04-01",
+                "to": to_date.isoformat() if to_date else f"{start_year + 1}-03-31",
+                "godown": godown_name,
+                "unit": (master or {}).get("base_units", ""),
+                "item_found": bool(master or native_rows),
+                "approximate": False,
+                "opening": {
+                    "quantity": opening_quantity,
+                    "value": opening_value,
+                },
+                "rows": native_rows,
+            }
+    except Exception as e:
+        _log.warning("Native Godown Monthly Summary fetch failed, falling back: %r", e)
 
     base = await fetch_stock_item_monthly(
         stock_item_name=stock_item_name,

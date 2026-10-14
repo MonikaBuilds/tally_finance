@@ -2387,6 +2387,7 @@ async def get_stock_item_vouchers_report(
     stock_item_name: str,
     from_date: date | None = None,
     to_date: date | None = None,
+    godown_name: str | None = None,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
     force_refresh: bool = False,
@@ -2405,6 +2406,7 @@ async def get_stock_item_vouchers_report(
             from_date=from_date,
             to_date=to_date,
             company_name=company_name,
+            godown_name=godown_name,
         )
 
     try:
@@ -2414,6 +2416,7 @@ async def get_stock_item_vouchers_report(
             current_user=current_user,
             params={
                 "stock_item_name": stock_item_name,
+                "godown_name": godown_name,
                 "from_date": from_date.isoformat() if from_date else None,
                 "to_date": to_date.isoformat() if to_date else None,
             },

@@ -627,6 +627,10 @@ def parse_stock_movement(xml_text: str):
             if not stock_item:
                 continue
 
+            # Sales Order and Purchase Order are order commitments, not physical stock movements
+            if (voucher_type or "").strip().casefold() in ("sales order", "purchase order"):
+                continue
+
             quantity = _stock_quantity_value(
                 _text(
                     entry,
