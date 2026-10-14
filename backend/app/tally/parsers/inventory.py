@@ -1256,6 +1256,34 @@ VCH_TYPE_DISPLAY_MAP = {
 }
 
 
+def _optional_number(text):
+    """None when Tally left the field blank, else the signed number."""
+    if text is None or not str(text).strip():
+        return None
+
+    return _stock_quantity_value(text)
+
+
+def _tally_amount(text, *, debit: bool):
+    """
+    An amount the way Tally prints it, sign included.
+
+    Tally's XML carries debit amounts (stock coming in, closing stock)
+    with a minus sign and credit amounts (stock going out) as they are,
+    so the printed sign is the XML sign reversed for the debit columns.
+    A blank field stays None. Returns are therefore negative on the
+    printed screen too: "(-)10,50,000.00".
+    """
+    value = _optional_number(text)
+
+    if value is None:
+        return None
+
+    value = -value if debit else value
+
+    return 0.0 if value == 0 else value
+
+
 def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[dict]:
     """
     Parse Tally's native Item Monthly Summary XML response.
@@ -1279,11 +1307,11 @@ def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[di
         month_str = f"{year}-{month_num:02d}"
 
         in_qty = _stock_quantity_value(_text(s_node, ".//DSPINQTY"))
-        in_val = _stock_numeric_value(_text(s_node, ".//DSPDRAMTA"))
+        in_val = _tally_amount(_text(s_node, ".//DSPDRAMTA"), debit=True)
         out_qty = _stock_quantity_value(_text(s_node, ".//DSPOUTQTY"))
-        out_val = _stock_numeric_value(_text(s_node, ".//DSPNETTCRAMTA"))
+        out_val = _tally_amount(_text(s_node, ".//DSPNETTCRAMTA"), debit=False)
         cl_qty = _stock_quantity_value(_text(s_node, ".//DSPCLQTY"))
-        cl_val = _stock_numeric_value(_text(s_node, ".//DSPCLAMTA"))
+        cl_val = _tally_amount(_text(s_node, ".//DSPCLAMTA"), debit=True)
 
         _, last_day = calendar.monthrange(year, month_num)
 
@@ -1292,11 +1320,11 @@ def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[di
             "from": f"{month_str}-01",
             "to": f"{month_str}-{last_day:02d}",
             "inward_quantity": in_qty or 0.0,
-            "inward_value": abs(in_val) if in_val is not None else 0.0,
+            "inward_value": in_val or 0.0,
             "outward_quantity": out_qty or 0.0,
-            "outward_value": abs(out_val) if out_val is not None else 0.0,
+            "outward_value": out_val or 0.0,
             "closing_quantity": cl_qty or 0.0,
-            "closing_value": abs(cl_val) if cl_val is not None else 0.0,
+            "closing_value": cl_val or 0.0,
             "pending_bills_quantity": 0.0,
         })
 
@@ -1312,53 +1340,114 @@ def parse_tally_vouchers_report(xml_text: str) -> list[dict]:
     Parse Tally's native Godown Vouchers or Stock Vouchers report XML.
     Returns rows matching Tally's display with Particulars, Vch Type,
     Inwards, Outwards and daily Closing balances.
+
+    The report is read line by line, in document order: every
+    DSPVCHDATE starts a new line and the fields that follow belong to
+    it. Lines do not all carry every field (the "(Sale Bills Pending)"
+    line has no voucher type), so the fields are not paired up by
+    position. Amounts keep Tally's sign; fields Tally leaves blank stay
+    None.
+
+    A line without a voucher type that follows a Bills Pending line is
+    one of the notes that line is made of; it is returned in that
+    line's "children" instead of as a voucher of its own.
     """
     root = parse_xml(xml_text)
+
+    lines = []
+    current = None
+
+    def clean(node):
+        return (node.text or "").strip()
+
+    for node in root.iter():
+        tag = node.tag
+
+        if tag == "DSPVCHDATE":
+            current = {
+                "date": clean(node),
+                "account": "",
+                "vtype": "",
+                "in": None,
+                "out": None,
+                "cl": None,
+            }
+            lines.append(current)
+
+        elif current is None:
+            continue
+
+        elif tag == "DSPVCHITEMACCOUNT":
+            current["account"] = clean(node)
+
+        elif tag == "DSPVCHTYPE":
+            current["vtype"] = clean(node)
+
+        elif tag == "DSPINBLOCK":
+            current["in"] = node
+
+        elif tag == "DSPOUTBLOCK":
+            current["out"] = node
+
+        elif tag == "DSPCLBLOCK":
+            current["cl"] = node
+
     rows = []
+    last_date = ""
+    last_pending = None
 
-    dates = root.findall(".//DSPVCHDATE")
-    accounts = root.findall(".//DSPVCHITEMACCOUNT")
-    vtypes = root.findall(".//DSPVCHTYPE")
-    inblocks = root.findall(".//DSPINBLOCK")
-    outblocks = root.findall(".//DSPOUTBLOCK")
-    clblocks = root.findall(".//DSPCLBLOCK")
+    for line in lines:
+        date_raw = line["date"] or last_date
+        last_date = date_raw
 
-    count = min(len(dates), len(accounts), len(vtypes), len(inblocks), len(outblocks))
+        account = line["account"]
+        is_pending = account.startswith("(") and account.endswith(")")
 
-    for i in range(count):
-        d_raw = (dates[i].text or "").strip()
-        acc = (accounts[i].text or "").strip()
-        vt_raw = (vtypes[i].text or "").strip()
+        in_qty = _optional_number(_text(line["in"], "DSPVCHINQTY"))
+        in_val = _tally_amount(_text(line["in"], "DSPVCHINAMT"), debit=True)
+        out_qty = _optional_number(_text(line["out"], "DSPVCHOUTQTY"))
+        out_val = _tally_amount(_text(line["out"], "DSPVCHNETTOUTAMT"), debit=False)
+        cl_qty = _optional_number(_text(line["cl"], "DSPVCHCLQTY"))
+        cl_val = _tally_amount(_text(line["cl"], "DSPVCHCLAMT"), debit=True)
 
-        in_qty = _stock_quantity_value(_text(inblocks[i], "DSPVCHINQTY"))
-        in_val = _stock_numeric_value(_text(inblocks[i], "DSPVCHINAMT"))
-        out_qty = _stock_quantity_value(_text(outblocks[i], "DSPVCHOUTQTY"))
-        out_val = _stock_numeric_value(_text(outblocks[i], "DSPVCHNETTOUTAMT"))
+        date = format_tally_date(date_raw) if date_raw else None
 
-        cl_qty = None
-        cl_val = None
-        if i < len(clblocks):
-            cl_qty = _stock_quantity_value(_text(clblocks[i], "DSPVCHCLQTY"))
-            cl_val = _stock_numeric_value(_text(clblocks[i], "DSPVCHCLAMT"))
+        if last_pending is not None and not is_pending and not line["vtype"]:
+            last_pending["children"].append(
+                {
+                    "date": date,
+                    "party": account,
+                    "tracking_number": "",
+                    "quantity": out_qty if out_qty is not None else in_qty,
+                }
+            )
+            continue
 
-        full_vt = VCH_TYPE_DISPLAY_MAP.get(vt_raw.lower(), vt_raw)
-        is_pending = acc.startswith("(") and acc.endswith(")")
+        full_vt = VCH_TYPE_DISPLAY_MAP.get(line["vtype"].lower(), line["vtype"])
 
-        rows.append({
+        row = {
             "kind": "pending" if is_pending else "voucher",
-            "date": format_tally_date(d_raw) if d_raw else None,
-            "particulars": acc,
+            "date": date,
+            "particulars": account,
             "voucher_type": full_vt,
             "voucher_number": "",
             "reference": "",
             "guid": "",
             "inward_quantity": in_qty,
-            "inward_value": abs(in_val) if in_val is not None else None,
+            "inward_value": in_val,
             "outward_quantity": out_qty,
-            "outward_value": abs(out_val) if out_val is not None else None,
+            "outward_value": out_val,
             "closing_quantity": cl_qty,
-            "closing_value": abs(cl_val) if cl_val is not None else None,
-        })
+            "closing_value": cl_val,
+        }
+
+        if is_pending:
+            row["children"] = []
+            last_pending = row
+        else:
+            last_pending = None
+
+        rows.append(row)
 
     return rows
 

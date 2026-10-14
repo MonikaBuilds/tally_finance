@@ -20,6 +20,18 @@ export function formatAmount(value) {
   return AMOUNT_FORMAT.format(Number(value))
 }
 
+// Same as formatAmount, but a negative amount is printed the way Tally
+// prints it - "(-)10,50,000.00" - instead of with a bare minus sign.
+export function formatSignedAmount(value) {
+  if (value === undefined || value === null || value === '') return '-'
+
+  const number = Number(value)
+
+  return number < 0
+    ? `(-)${AMOUNT_FORMAT.format(Math.abs(number))}`
+    : AMOUNT_FORMAT.format(number)
+}
+
 // (3, 'NOS') -> "3 NOS". Quantity is null when Tally items in the
 // roll-up use different units, in which case Tally shows no total.
 export function formatQuantityWithUnit(quantity, unit) {

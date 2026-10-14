@@ -8,7 +8,7 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import { formatMonthKey } from '../utils/format'
-import { formatAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
+import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 /*
  * Stock Item Monthly Summary - every month of the period, like Tally.
@@ -85,7 +85,7 @@ function StockItemMonthlySummary() {
     if (row.kind === 'month' && !value) return ''
     if (row.kind !== 'month' && (value === undefined || value === null)) return ''
 
-    return emphasis(row, formatAmount(value))
+    return emphasis(row, formatSignedAmount(value))
   }
 
   const qtyCell = (row, key) => {
