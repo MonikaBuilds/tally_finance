@@ -13,108 +13,42 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 ---
 
-## Architecture Hierarchy & End-to-End Request Flow
+## Architecture Overview & End-to-End Request Flow
 
-The platform is engineered as a **5-tier architectural hierarchy** ensuring complete tenant isolation, sub-millisecond cached responses, zero-loss ERP accounting accuracy, and deterministic AI safety.
-
-### 1. Mobile-Universal Architecture Hierarchy Diagram
-> [!NOTE]
-> *This diagrammatic hierarchy renders universally across all devices, including the native GitHub Mobile App (iOS / Android), mobile browsers, and desktop viewports without requiring client-side JavaScript execution.*
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       TIER 1: PRESENTATION & CLIENT                         │
-│   React 19 SPA (Executive Dashboard • Statements • Godown Ledger • AI Chat) │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ [1] HTTPS + HttpOnly JWT + CSRF Token
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      TIER 2: API GATEWAY & ZERO-TRUST                       │
-│    FastAPI Gateway (CORS Middleware • CSRF Defense • Asynchronous Router)   │
-│             ▲                                                               │
-│             │ [2] RBAC / Multi-Tenant Isolation Check                       │
-│             ▼                                                               │
-│   MySQL 8.0 Database (Organizations • Users • Roles • Refresh Token Store)  │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ [3] Authenticated Request
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    TIER 3: CORE INTELLIGENCE & ROUTING                      │
-│                                                                             │
-│       ┌──────────────────────────────┴──────────────────────────────┐       │
-│       ▼                                                             ▼       │
-│  [BRANCH A: FINANCIAL REPORTS]                 [BRANCH B: AI ASSISTANT]     │
-│  Dynamic TDL XML Generator                     Safety Interceptor (Regex)   │
-│  Collection Filters & Date Scopes              Blocks Mutating/Write Intents│
-│       │                                                             │       │
-│       ▼                                                             ▼       │
-│  Redis SWR Cache Engine                        Google Gemini 2.5 Flash      │
-│  • Fresh Hit (<300s): Sub-ms Return            • Intent & Entity Detection  │
-│  • Stale Hit (<24h): Serve + Revalidate        • 13 Read-Only Tool Mappings │
-│  • Miss / Offline: Fail-Open Bypass            • Zero Hallucination Guard   │
-│       │                                                             │       │
-└───────┼─────────────────────────────────────────────────────────────┼───────┘
-        │                                                             │
-        │ [4] HTTP/XML (Port 9000)                                    │ [5] Tool Call
-        ▼                                                             ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   TIER 4: TALLY PRIME ERP SYSTEM OF RECORD                  │
-│       Native C++ Accounting Core & Local HTTP XML Gateway (Port 9000)       │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ [6] Native TDL XML Response Stream
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   TIER 5: HIGH-PRECISION PARSER & DELIVERY                  │
-│     Direct XML Deserializer (Exact Decimals • No Lossy Approximations)      │
-│      Write-Through Cache Update  ──►  Delivered to React 19 Client UI       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 2. Interactive Request Flow Diagram (Mermaid)
+The platform is engineered as a high-throughput, deterministic 5-tier architecture connecting modern web clients to Tally Prime's desktop C++ accounting engine with sub-millisecond cache acceleration and zero accounting loss.
 
 ```mermaid
-flowchart TD
-    subgraph Tier1["Tier 1: Client & Presentation"]
-        User["👤 Enterprise User / CFO / Auditor"] -->|"1. User Action or Prompt"| UI["🖥️ React 19 Client SPA\n(Dashboard, Reports, AI Chat)"]
-    end
+flowchart LR
+    %% Ingestion
+    Client["🖥️ React 19 Client SPA\n(Dashboard • Reports • AI Chat)"]
+    Gateway["🛡️ FastAPI Gateway\n(CORS • CSRF • RBAC)"]
+    MySQL[("🗄️ MySQL 8 Database\n(Users • Roles • Scope)")]
+    Router{"Route\nClassifier"}
 
-    subgraph Tier2["Tier 2: API Gateway & Security"]
-        UI -->|"2. HTTPS + HttpOnly JWT + CSRF"| Gateway["🛡️ FastAPI Security Gateway\n(CORS, CSRF, Rate Limiter)"]
-        Gateway <-->|"3. RBAC & Scope Lookup"| MySQL[("🗄️ MySQL 8 Database\n(Users, Roles, Permissions)")]
-    end
+    Client -->|"HTTPS + JWT + CSRF"| Gateway
+    Gateway <-->|"Session & RBAC"| MySQL
+    Gateway -->|"Dispatch"| Router
 
-    subgraph Tier3["Tier 3: Core Intelligence & Routing"]
-        Gateway -->|"4. Route Dispatch"| Router{"5. Request Classifier"}
+    %% Branch A: Financial & Inventory Reports
+    Router -->|"Reports / Inventory"| SWR{"Redis SWR\nCache"}
+    SWR -->|"Fresh Hit (<300s)"| Deliver["⚡ Response Delivery\n(Instant Cached / Audited JSON)"]
+    SWR -->|"Miss / Revalidate"| TDL["📄 Dynamic TDL\nXML Generator"]
+    TDL -->|"HTTP POST (Port 9000)"| Tally[("🏢 Tally Prime ERP\n(Native C++ Core)")]
+    Tally -->|"Raw TDL XML"| Parser["📊 High-Precision\nXML Parser"]
+    Parser -->|"Write-through & Deliver"| Deliver
 
-        Router -->|"Reports / Inventory"| SWR{"6. Redis SWR Cache Check"}
-        SWR -->|"Fresh Hit (under 300s)"| FreshReturn["⚡ Fresh Cache Return\n(Sub-1ms JSON Response)"]
-        FreshReturn -->|"Deliver to Client"| UI
+    %% Branch B: Deterministic AI Assistant
+    Router -->|"Natural Language"| Guard["🛑 Safety Interceptor\n(Regex Write Blocker)"]
+    Guard -->|"Read-only"| Gemini["🤖 Google Gemini 2.5\n(13 Read-Only Tools)"]
+    Gemini -->|"Tool Payload"| Tools["⚙️ Tool Dispatcher\nEngine"]
+    Tools -->|"Live Ground Truth"| Tally
+    Tools -->|"Audited Figures"| Deliver
 
-        SWR -->|"Stale Hit (under 24h)"| StaleReturn["⏳ Stale Cache Return\n(Instant Serve + Revalidate)"]
-        StaleReturn -->|"Immediate Delivery"| UI
-        StaleReturn -.->|"Async Background Refresh"| TDLGen
-
-        SWR -->|"Miss or Offline (Fail-Open)"| TDLGen["7. Dynamic TDL XML Generator\n(Scoped Filters & Date Ranges)"]
-
-        Router -->|"Natural Language Prompt"| SafetyGuard["6. Deterministic Safety Interceptor\n(Regex Filter Rejects Write Actions)"]
-        SafetyGuard -->|"7. Clean Query Prompt"| GeminiAI["🤖 Google Gemini 2.5 Flash\n(Intent Detection & 13 Read-Only Tools)"]
-        GeminiAI -->|"8. Tool Execution Payload"| Dispatcher["9. Tool Dispatcher Engine\n(Invokes Core Report Pipelines)"]
-    end
-
-    subgraph Tier4["Tier 4: Enterprise ERP Gateway"]
-        TDLGen -->|"8. Direct HTTP/XML (Port 9000)"| Tally[("🏢 Tally Prime ERP Core\n(Native C++ Engine • Port 9000)")]
-        Dispatcher -->|"10. Live Ground Truth Query"| Tally
-    end
-
-    subgraph Tier5["Tier 5: Precision Parsing & Return"]
-        Tally -->|"9. Raw TDL XML Stream"| Parser["10. High-Precision XML Parser\n(Exact Decimals • Zero Loss)"]
-        Parser -->|"11. Write-Through Update"| RedisStore[("🚀 Redis SWR Cache")]
-        Parser -->|"12. Formatted Financial JSON"| UI
-        Dispatcher -->|"11. Audited AI Response"| UI
-    end
+    %% Final Presentation
+    Deliver --> UI["📈 Interactive UI Views\n(Statements • Godown Vouchers • AI Chat)"]
 ```
 
-### 3. Tier-by-Tier Architecture Hierarchy Breakdown
+### Architecture Hierarchy Breakdown
 
 | Tier | Component | Responsibilities & Architectural Guarantees |
 | :--- | :--- | :--- |
