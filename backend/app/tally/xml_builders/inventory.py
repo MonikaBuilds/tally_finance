@@ -791,3 +791,105 @@ def build_register_vouchers_request(
     </BODY>
 </ENVELOPE>
 """
+
+
+# ============================================================
+# ITEM MONTHLY SUMMARY (Tally native report)
+# ============================================================
+
+def build_item_monthly_summary_request(
+    stock_item_name: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    company_name: str | None = None,
+    godown_name: str | None = None,
+) -> str:
+    """
+    Export Tally's native Item Monthly Summary report directly.
+    Provides twelve-month Inwards, Outwards and Closing figures
+    calculated by Tally without manual balance accumulation.
+    """
+    safe_stock_item = escape(stock_item_name or "")
+    company_xml = build_company_variable(company_name)
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
+    to_date_xml = _date_variable("SVTODATE", to_date)
+    godown_xml = (
+        f"<GODOWNNAME>{escape(godown_name)}</GODOWNNAME>"
+        if godown_name
+        else ""
+    )
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Item Monthly Summary</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                {company_xml}
+                {from_date_xml}
+                {to_date_xml}
+                <STOCKITEMNAME>{safe_stock_item}</STOCKITEMNAME>
+                {godown_xml}
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+
+
+# ============================================================
+# STOCK / GODOWN VOUCHERS (Tally native report)
+# ============================================================
+
+def build_stock_vouchers_request(
+    stock_item_name: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    company_name: str | None = None,
+    godown_name: str | None = None,
+) -> str:
+    """
+    Export Tally's native Stock Vouchers or Godown Vouchers report.
+    Returns the exact vouchers, party/particulars, voucher types,
+    and running closing figures as displayed in Tally Prime.
+    """
+    safe_stock_item = escape(stock_item_name or "")
+    company_xml = build_company_variable(company_name)
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
+    to_date_xml = _date_variable("SVTODATE", to_date)
+    report_id = "Godown Vouchers" if godown_name else "Stock Vouchers"
+    godown_xml = (
+        f"<GODOWNNAME>{escape(godown_name)}</GODOWNNAME>"
+        if godown_name
+        else ""
+    )
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>{report_id}</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                {company_xml}
+                {from_date_xml}
+                {to_date_xml}
+                <STOCKITEMNAME>{safe_stock_item}</STOCKITEMNAME>
+                {godown_xml}
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+

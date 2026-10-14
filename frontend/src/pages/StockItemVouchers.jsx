@@ -8,33 +8,21 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
-import { formatCurrency, formatQuantity, formatDate } from '../utils/format'
-
-function toQuery(params) {
-  const query = new URLSearchParams(
-    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
-  ).toString()
-  return query ? `?${query}` : ''
-}
-
-const COLUMNS = [
-  { key: 'date', label: 'Date', render: (r) => formatDate(r.date) },
-  { key: 'party', label: 'Particulars' },
-  { key: 'voucher_type', label: 'Vch Type' },
-  { key: 'voucher_number', label: 'Vch No.' },
-  { key: 'quantity', label: 'Quantity', align: 'right', render: (r) => formatQuantity(r.quantity) },
-  { key: 'rate', label: 'Rate', align: 'right', render: (r) => formatCurrency(r.rate) },
-  { key: 'value', label: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
-  { key: 'tracking_number', label: 'Tracking Number' },
-  { key: 'godown', label: 'Godown' },
-  { key: 'batch', label: 'Batch' },
-  { key: 'direction', label: 'Movement' },
-]
+import { formatDate } from '../utils/format'
+import { formatAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 /*
  * Stock Item Monthly Summary -> (click a month) -> Stock Item
- * Vouchers - the voucher-level detail for that item in that month,
- * matching Tally's own "Stock Item Vouchers" drill-down screen.
+ * Vouchers: Tally's own drill-down screen.
+ *
+ *   Opening Balance
+ *   one line per voucher (Inwards / Outwards, closing on the last line
+ *   of each day)
+ *   (Sale Bills Pending) - delivery notes not yet billed - with the
+ *   notes it is made of
+ *   totals
+ *
+ * Everything is built by /reports/stock-item-vouchers.
  */
 function StockItemVouchers() {
   const location = useLocation()
@@ -51,18 +39,111 @@ function StockItemVouchers() {
     to_date: toDate || undefined,
   }
 
-  const path = itemName ? `/reports/stock-movement${toQuery(queryParams)}` : null
+  const path = itemName ? `/reports/stock-item-vouchers${toQuery(queryParams)}` : null
   const { data: response, loading, error } = useFetch(path)
 
-  const pendingPath = itemName
-    ? `/reports/stock-item-bills-pending${toQuery({
-        stock_item_name: itemName,
-        from_date: fromDate || undefined,
-        to_date: toDate || undefined,
-      })}`
-    : null
+  const unit = response?.unit
+  const qty = (value) => formatQuantityWithUnit(value, unit)
 
-  const { data: pendingResponse } = useFetch(pendingPath)
+  const opening = response?.opening
+  const totals = response?.totals
+
+  // Flatten the backend lines into table rows: Opening Balance, the
+  // vouchers, each Bills Pending line followed by its notes, Totals.
+  const rows = []
+
+  if (response?.success) {
+    rows.push({
+      kind: 'opening',
+      date: response.from,
+      inward_quantity: opening?.quantity,
+      inward_value: opening?.value,
+      closing_quantity: opening?.quantity,
+      closing_value: opening?.value,
+    })
+
+    for (const line of response.report || []) {
+      rows.push(line)
+
+      for (const child of line.children || []) {
+        rows.push({ kind: 'pending_child', ...child, pending_side: line.pending_side })
+      }
+    }
+
+    if (totals) rows.push({ kind: 'total', ...totals })
+  }
+
+  const hasValue = (value) => value !== undefined && value !== null
+
+  const quantityCell = (row, key) => {
+    const value = row[key]
+
+    if (!hasValue(value)) return ''
+
+    const text = qty(value)
+
+    return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
+  }
+
+  // Tally prints no value on the Bills Pending line, only its quantity.
+  const valueCell = (row, key) => {
+    const value = row[key]
+
+    if (!hasValue(value) || row.kind === 'pending') return ''
+
+    const text = formatAmount(value)
+
+    return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
+  }
+
+  const columns = [
+    {
+      key: 'date',
+      label: 'Date',
+      render: (r) => (r.kind === 'total' ? '' : r.date ? formatDate(r.date) : ''),
+    },
+    {
+      key: 'particulars',
+      label: 'Particulars',
+      render: (r) => {
+        if (r.kind === 'opening') return <strong>Opening Balance</strong>
+        if (r.kind === 'total') return <strong>Totals</strong>
+        if (r.kind === 'pending') return <strong><em>{r.particulars}</em></strong>
+        if (r.kind === 'pending_child') return <em>{r.party}</em>
+        return r.particulars
+      },
+    },
+    { key: 'voucher_type', label: 'Vch Type', render: (r) => (r.kind === 'voucher' ? r.voucher_type : '') },
+    {
+      key: 'voucher_number',
+      label: 'Vch No.',
+      render: (r) => (r.kind === 'voucher' ? r.voucher_number : r.kind === 'pending_child' ? r.tracking_number : ''),
+    },
+    { key: 'inward_quantity', label: 'Inwards Qty', align: 'right', render: (r) => quantityCell(r, 'inward_quantity') },
+    { key: 'inward_value', label: 'Inwards Value', align: 'right', render: (r) => valueCell(r, 'inward_value') },
+    {
+      key: 'outward_quantity',
+      label: 'Outwards Qty',
+      align: 'right',
+      render: (r) => (r.kind === 'pending_child' ? qty(r.quantity) : quantityCell(r, 'outward_quantity')),
+    },
+    { key: 'outward_value', label: 'Outwards Value', align: 'right', render: (r) => valueCell(r, 'outward_value') },
+    { key: 'closing_quantity', label: 'Closing Qty', align: 'right', render: (r) => quantityCell(r, 'closing_quantity') },
+    { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => valueCell(r, 'closing_value') },
+  ]
+
+  const billsPendingPath = (extra = {}) =>
+    `/reports/stock-item-bills-pending${toQuery({
+      item: itemName,
+      from: fromDate,
+      to: toDate,
+      ...extra,
+    })}`
+
+  const isClickable = (row) =>
+    row.kind === 'pending' ||
+    row.kind === 'pending_child' ||
+    (row.kind === 'voucher' && Boolean(row.voucher_type && row.voucher_number))
 
   return (
     <>
@@ -89,23 +170,22 @@ function StockItemVouchers() {
                 params={queryParams}
                 filenameBase="stock_item_vouchers"
               />
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => navigate(`/reports/stock-item-bills-pending${toQuery({
-                  item: itemName,
-                  from: fromDate,
-                  to: toDate,
-                })}`)}
-              >
-                Bills Pending
-              </button>
             </div>
+
             <DataTable
-              columns={COLUMNS}
-              rows={response.report || []}
+              columns={columns}
+              rows={rows}
+              isRowClickable={isClickable}
               onRowClick={(row) => {
-                if (!row.voucher_type || !row.voucher_number) return
+                if (row.kind === 'pending') {
+                  navigate(billsPendingPath())
+                  return
+                }
+
+                if (row.kind === 'pending_child') {
+                  navigate(billsPendingPath({ tracking_number: row.tracking_number, party: row.party }))
+                  return
+                }
 
                 navigate(`/reports/inventory-voucher${toQuery({
                   voucher_type: row.voucher_type,
@@ -114,31 +194,6 @@ function StockItemVouchers() {
                 })}`)
               }}
             />
-
-            {pendingResponse?.success && (pendingResponse.report || []).length > 0 && (
-              <div className="card-section">
-                <p className="table-hint">Bills Made but Goods not Delivered</p>
-                <DataTable
-                  columns={[
-                    { key: 'date', label: 'Date', render: (row) => formatDate(row.date) },
-                    { key: 'tracking_number', label: 'Tracking Number' },
-                    { key: 'party', label: 'Name of Party' },
-                    { key: 'initial_quantity', label: 'Initial Quantity', align: 'right', render: (row) => formatQuantity(row.initial_quantity) },
-                    { key: 'pending_quantity', label: 'Pending Quantity', align: 'right', render: (row) => formatQuantity(row.pending_quantity) },
-                    { key: 'rate', label: 'Rate', align: 'right', render: (row) => formatCurrency(row.rate) },
-                    { key: 'value', label: 'Value', align: 'right', render: (row) => formatCurrency(row.value) },
-                  ]}
-                  rows={pendingResponse.report}
-                  onRowClick={(row) => navigate(`/reports/stock-item-bills-pending${toQuery({
-                    item: itemName,
-                    from: fromDate,
-                    to: toDate,
-                    tracking_number: row.tracking_number,
-                    party: row.party,
-                  })}`)}
-                />
-              </div>
-            )}
           </>
         )}
       </Card>

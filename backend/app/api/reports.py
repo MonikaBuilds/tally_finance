@@ -99,6 +99,8 @@ from app.tally.service import (
     fetch_stock_category_summary,
     fetch_godown_summary,
     fetch_stock_item_monthly,
+    fetch_stock_item_vouchers,
+    fetch_sales_bills_pending,
     fetch_register_months,
     fetch_register_voucher_list,
     fetch_godown_item_monthly,
@@ -2270,6 +2272,32 @@ async def export_stock_groups_report(
     )
 
 
+@router.get("/stock-item-monthly-debug")
+async def get_stock_item_monthly_debug(
+    stock_item_name: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    """Raw rows behind the monthly summary, for checking against Tally."""
+    from app.tally.service import _load_item_vouchers, _load_item_master
+
+    item_rows, _all = await _load_item_vouchers(stock_item_name, company_name)
+    masters = await fetch_godowns(company_name=company_name)
+    master = await _load_item_master(stock_item_name, company_name, as_on=date.today())
+
+    keep = (
+        "date", "voucher_type", "voucher_number", "party", "quantity",
+        "rate", "amount", "is_deemed_positive", "godown", "tracking_number",
+    )
+
+    return {
+        "item_master": master,
+        "godown_masters": [g.get("name") or g.get("godown") for g in masters.get("rows", [])],
+        "row_count": len(item_rows),
+        "rows": [{k: r.get(k) for k in keep} for r in item_rows],
+    }
+
+
 @router.get("/stock-item-monthly")
 async def get_stock_item_monthly_report(
     stock_item_name: str,
@@ -2303,7 +2331,7 @@ async def get_stock_item_monthly_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="stock_item_monthly",
+            report_name="stock_item_monthly_v3",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -2337,6 +2365,8 @@ async def get_stock_item_monthly_report(
             "to": summary.get("to"),
             "unit": summary.get("unit"),
             "opening": summary.get("opening"),
+            "reconciled": summary.get("reconciled", True),
+            "tally_closing": summary.get("tally_closing"),
             "report": summary.get("rows", []),
             "count": len(summary.get("rows", [])),
         }
@@ -2349,6 +2379,145 @@ async def get_stock_item_monthly_report(
         raise HTTPException(
             status_code=502,
             detail="Unable to fetch Stock Item Monthly Summary from Tally",
+        )
+
+
+@router.get("/stock-item-vouchers")
+async def get_stock_item_vouchers_report(
+    stock_item_name: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
+):
+    """
+    Tally's "Stock Item Vouchers": opening balance, the item's vouchers
+    with Inwards / Outwards / Closing, the Bills Pending roll-up and the
+    totals for the period.
+    """
+    _check_period(from_date, to_date)
+
+    async def _fetch():
+        return await fetch_stock_item_vouchers(
+            stock_item_name=stock_item_name,
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+        )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_item_vouchers",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "stock_item_name": stock_item_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_movement",
+        )
+        ledger = cache_res.data
+
+        if not ledger or not ledger.get("item_found"):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Stock item '{stock_item_name}' was not found in Tally",
+            )
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "item": stock_item_name,
+            "from": ledger.get("from"),
+            "to": ledger.get("to"),
+            "unit": ledger.get("unit"),
+            "opening": ledger.get("opening"),
+            "report": ledger.get("rows", []),
+            "totals": ledger.get("totals"),
+            "count": len(ledger.get("rows", [])),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("Stock Item Vouchers error: %r", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Stock Item Vouchers from Tally",
+        )
+
+
+@router.get("/stock-item-bills-pending")
+async def get_stock_item_bills_pending_report(
+    stock_item_name: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    tracking_number: str | None = None,
+    party: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
+):
+    """Sale Bills Pending for one stock item (opened from Stock Item Vouchers)."""
+    _check_period(from_date, to_date)
+
+    async def _fetch():
+        return await fetch_sales_bills_pending(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+            stock_item_name=stock_item_name,
+            tracking_number=tracking_number,
+            party=party,
+        )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="stock_item_bills_pending",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "stock_item_name": stock_item_name,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "tracking_number": tracking_number,
+                "party": party,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="stock_movement",
+        )
+        result = cache_res.data
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report": result.get("rows", []),
+            "details": result.get("details", []),
+            "count": result.get("count", 0),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("Stock Item Bills Pending error: %r", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch Bills Pending from Tally",
         )
 
 

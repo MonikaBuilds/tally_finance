@@ -202,8 +202,12 @@ def _inventory_entry_nodes(voucher):
     paths = [
         "./ALLINVENTORYENTRIES.LIST",
         "./INVENTORYENTRIES.LIST",
+        "./INVENTORYENTRIESIN.LIST",
+        "./INVENTORYENTRIESOUT.LIST",
         ".//ALLINVENTORYENTRIES.LIST",
         ".//INVENTORYENTRIES.LIST",
+        ".//INVENTORYENTRIESIN.LIST",
+        ".//INVENTORYENTRIESOUT.LIST",
     ]
 
     for path in paths:
