@@ -1289,10 +1289,6 @@ async def fetch_sales_bills_pending(
             if (r.get("tracking_number") or r.get("voucher_number") or "").strip().casefold() == target
         ]
 
-    if party:
-        target = party.strip().casefold()
-        rows = [r for r in rows if (r.get("party") or "").strip().casefold() == target]
-
     groups = {}
     details = []
 
@@ -1361,6 +1357,25 @@ async def fetch_sales_bills_pending(
             "batch": row.get("batch"),
             "narration": row.get("narration"),
         })
+
+    # The party narrows down which bills are shown. It is judged on the
+    # bill (its delivery note), not on every note: a return booked
+    # against the bill may carry no party or another one, and must still
+    # be listed under it.
+    if party:
+        wanted = party.strip().casefold()
+        kept = {
+            key for key, g in groups.items()
+            if (g.get("party") or "").strip().casefold() == wanted
+        }
+        details = [
+            d for d in details
+            if (
+                (d["stock_item"] or "").strip().casefold(),
+                (d["tracking_number"] or "").strip().casefold(),
+            ) in kept
+        ]
+        groups = {key: g for key, g in groups.items() if key in kept}
 
     summary = [
         {k: v for k, v in g.items() if not k.startswith("_")}
@@ -1697,26 +1712,31 @@ async def fetch_stock_item_vouchers(
             else:
                 filtered_vouchers = native_vouchers
 
+            # Voucher numbers are not part of Tally's report lines; take
+            # them from the item's own voucher entries so a line can
+            # open its voucher.
             used_indices = set()
             for v in filtered_vouchers:
+                if v.get("kind") == "pending":
+                    continue
+
+                v_type = (v.get("voucher_type") or "").strip().casefold()
+
                 for idx, r in enumerate(item_rows):
                     if (
                         idx not in used_indices
                         and r.get("date") == v.get("date")
-                        and r.get("voucher_type") == v.get("voucher_type")
+                        and (r.get("voucher_type") or "").strip().casefold() == v_type
                     ):
                         v["voucher_number"] = r.get("voucher_number", "")
                         v["guid"] = r.get("guid", "")
                         used_indices.add(idx)
                         break
 
-            total_in_q = sum(v.get("inward_quantity") or 0.0 for v in filtered_vouchers)
-            total_in_v = sum(v.get("inward_value") or 0.0 for v in filtered_vouchers)
-            total_out_q = sum(v.get("outward_quantity") or 0.0 for v in filtered_vouchers)
-            total_out_v = sum(v.get("outward_value") or 0.0 for v in filtered_vouchers)
-
             opening_q = (master or {}).get("opening_quantity") or 0.0
             opening_v = (master or {}).get("opening_value") or 0.0
+
+            scoped_rows = item_rows
 
             if godown_name:
                 masters = await fetch_godowns(company_name=company_name)
@@ -1751,6 +1771,107 @@ async def fetch_stock_item_vouchers(
                     opening_q = 0.0
                     opening_v = 0.0
 
+                scoped_rows = [
+                    r for r in item_rows
+                    if r_godown(r.get("godown")) == name_key(godown_name)
+                ]
+
+            # The Bills Pending line: Tally's own line is kept (quantity,
+            # closing); what the report does not print - the value, and
+            # the delivery / return notes behind the line with their
+            # tracking numbers - is worked out from the voucher entries.
+            pending_notes = {}
+
+            try:
+                derived = build_voucher_ledger(
+                    scoped_rows,
+                    all_rows=all_rows,
+                    stock_item_name=stock_item_name,
+                    opening_quantity=opening_q,
+                    opening_value=opening_v,
+                    from_date=from_date,
+                    to_date=to_date,
+                )
+
+                for line in derived.get("rows", []):
+                    if line.get("kind") == "pending":
+                        pending_notes[line.get("pending_side")] = line
+            except Exception as e:
+                _log.warning("Could not derive Bills Pending detail: %r", e)
+
+            # Tally's Stock / Godown Vouchers screen shows only the
+            # "(Sale Bills Pending)" line; the purchase side is a toggle
+            # (F5) that is off by default. The purchase notes are already
+            # listed as ordinary voucher lines (Receipt Note, Rejections
+            # Out), so adding a "(Purchase Bills Pending)" line would
+            # count them twice in the totals.
+            def _is_purchase_pending(v):
+                return (
+                    v.get("kind") == "pending"
+                    and "purchase" in (v.get("particulars") or "").casefold()
+                )
+
+            filtered_vouchers = [
+                v for v in filtered_vouchers if not _is_purchase_pending(v)
+            ]
+
+            native_pending = [v for v in filtered_vouchers if v.get("kind") == "pending"]
+
+            for v in native_pending:
+                v["pending_side"] = "sale"
+                note = pending_notes.get("sale")
+
+                if note:
+                    v["children"] = note.get("children") or v.get("children") or []
+                    if v.get("outward_value") is None:
+                        v["outward_value"] = note.get("outward_value")
+                        v["inward_value"] = note.get("inward_value")
+
+            # No Sale Bills Pending line in Tally's report for the
+            # period: add the one the delivery notes call for.
+            if not native_pending and pending_notes.get("sale"):
+                filtered_vouchers.append({**pending_notes["sale"], "derived": True})
+
+            # The pending line closes on the balance of the line above
+            # it, moved by the pending quantity. Tally carries the
+            # closing value across unchanged.
+            previous = None
+
+            for v in filtered_vouchers:
+                if v.get("kind") != "pending":
+                    if v.get("closing_quantity") is not None:
+                        previous = v
+                    continue
+
+                if previous is not None and (
+                    v.get("derived") or v.get("closing_quantity") is None
+                ):
+                    v["closing_quantity"] = (
+                        (previous.get("closing_quantity") or 0.0)
+                        + (v.get("inward_quantity") or 0.0)
+                        - (v.get("outward_quantity") or 0.0)
+                    )
+                    v["closing_value"] = previous.get("closing_value")
+
+            # Tally prints no value on a Bills Pending line, so it adds
+            # nothing to the value totals either (the quantity does).
+            def _sum(key):
+                is_value = key.endswith("_value")
+
+                return sum(
+                    0.0 if (is_value and v.get("kind") == "pending") else (v.get(key) or 0.0)
+                    for v in filtered_vouchers
+                )
+
+            # Tally's totals count the opening balance as Inwards.
+            last_closing = next(
+                (
+                    v for v in reversed(filtered_vouchers)
+                    if v.get("closing_quantity") is not None
+                ),
+                None,
+            )
+
             return {
                 "from": from_date.isoformat() if from_date else "",
                 "to": to_date.isoformat() if to_date else "",
@@ -1762,12 +1883,20 @@ async def fetch_stock_item_vouchers(
                 },
                 "rows": filtered_vouchers,
                 "totals": {
-                    "inward_quantity": total_in_q,
-                    "inward_value": total_in_v,
-                    "outward_quantity": total_out_q,
-                    "outward_value": total_out_v,
-                    "closing_quantity": filtered_vouchers[-1].get("closing_quantity") if filtered_vouchers and filtered_vouchers[-1].get("closing_quantity") is not None else (master or {}).get("closing_quantity"),
-                    "closing_value": filtered_vouchers[-1].get("closing_value") if filtered_vouchers and filtered_vouchers[-1].get("closing_value") is not None else (master or {}).get("closing_value"),
+                    "inward_quantity": opening_q + _sum("inward_quantity"),
+                    "inward_value": opening_v + _sum("inward_value"),
+                    "outward_quantity": _sum("outward_quantity"),
+                    "outward_value": _sum("outward_value"),
+                    "closing_quantity": (
+                        last_closing["closing_quantity"]
+                        if last_closing
+                        else (master or {}).get("closing_quantity")
+                    ),
+                    "closing_value": (
+                        last_closing["closing_value"]
+                        if last_closing
+                        else (master or {}).get("closing_value")
+                    ),
                 },
             }
     except Exception as e:

@@ -9,7 +9,7 @@ import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
-import { formatAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
+import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 /*
  * Stock Item Monthly Summary -> (click a month) -> Stock Item
@@ -87,13 +87,15 @@ function StockItemVouchers() {
     return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
   }
 
-  // Tally prints no value on the Bills Pending line, only its quantity.
+  // Tally prints no Inwards / Outwards value on the Bills Pending line,
+  // only its quantity - but it does print the closing value.
   const valueCell = (row, key) => {
     const value = row[key]
 
-    if (!hasValue(value) || row.kind === 'pending') return ''
+    if (!hasValue(value)) return ''
+    if (row.kind === 'pending' && key !== 'closing_value') return ''
 
-    const text = formatAmount(value)
+    const text = formatSignedAmount(value)
 
     return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
   }
@@ -170,6 +172,19 @@ function StockItemVouchers() {
 
         {itemName && !loading && !error && response?.success && (
           <>
+            <div className="meta-list">
+              <div className="meta-item">
+                <span>Stock Item</span>
+                <strong>{itemName}</strong>
+              </div>
+              {godownName && (
+                <div className="meta-item">
+                  <span>Godown</span>
+                  <strong>{godownName}</strong>
+                </div>
+              )}
+            </div>
+
             <div className="card-toolbar">
               <ExportButtons
                 basePath="/reports/stock-movement/export"

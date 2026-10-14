@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 
@@ -8,6 +9,7 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import { formatCurrency, formatDate, formatQuantity } from '../utils/format'
+import { formatSignedAmount } from '../utils/stockFormat'
 
 function toQuery(params) {
   const query = new URLSearchParams(
@@ -71,6 +73,37 @@ function StockItemBillsPending() {
   const rows = response?.report || []
   const details = response?.details || []
 
+  // Tally opens a bill with Enter / double-click: the delivery and
+  // return notes it is made of are listed under it.
+  const [expanded, setExpanded] = useState({})
+
+  const billKey = (row) => `${row.tracking_number}|${row.party || ''}`
+
+  // A bill is its tracking number. The party is not compared: a return
+  // (Rej In) booked against the bill may carry no party, or another one.
+  const notesOf = (row) =>
+    details.filter(
+      (note) => (note.tracking_number || '') === (row.tracking_number || '')
+    )
+
+  const toggle = (row) =>
+    setExpanded((current) => ({ ...current, [billKey(row)]: !current[billKey(row)] }))
+
+  // Tally leaves the rate and value blank when the bill carries none.
+  const amountOrBlank = (value) => (value ? formatSignedAmount(value) : '')
+
+  const totalOf = (key) => rows.reduce((sum, row) => sum + (row[key] || 0), 0)
+
+  const openVoucher = (note) => {
+    if (!note.voucher_type || !note.voucher_number) return
+
+    navigate(`/reports/inventory-voucher${toQuery({
+      voucher_type: note.voucher_type,
+      voucher_number: note.voucher_number,
+      date: note.date,
+    })}`)
+  }
+
   return (
     <>
       <PageHeader
@@ -95,19 +128,79 @@ function StockItemBillsPending() {
         {itemName && !loading && !error && response?.success && !detailView && (
           <>
             <p className="table-hint">
-              Bills Made but Goods not Delivered
+              Bills Made but Goods not Delivered — double-click a bill to see the notes it is made of.
             </p>
-            <DataTable
-              columns={SUMMARY_COLUMNS}
-              rows={rows}
-              onRowClick={(row) => navigate(`/reports/stock-item-bills-pending${toQuery({
-                item: itemName,
-                from: fromDate,
-                to: toDate,
-                tracking_number: row.tracking_number,
-                party: row.party,
-              })}`)}
-            />
+
+            {rows.length === 0 ? (
+              <div className="empty-state">
+                <span>No records found.</span>
+              </div>
+            ) : (
+              <div className="data-table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {SUMMARY_COLUMNS.map((column) => (
+                        <th key={column.key} className={column.align === 'right' ? 'is-numeric' : undefined}>
+                          {column.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => {
+                      const open = Boolean(expanded[billKey(row)])
+
+                      return [
+                        <tr
+                          key={billKey(row)}
+                          className="data-table-row--clickable"
+                          onDoubleClick={() => toggle(row)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') toggle(row)
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-expanded={open}
+                        >
+                          <td>{formatDate(row.date)}</td>
+                          <td>{row.tracking_number}</td>
+                          <td>{row.party}</td>
+                          <td className="is-numeric">{formatQuantity(row.initial_quantity)}</td>
+                          <td className="is-numeric">{formatQuantity(row.pending_quantity)}</td>
+                          <td className="is-numeric">{amountOrBlank(row.rate)}</td>
+                          <td className="is-numeric">{amountOrBlank(row.rate ? row.value : 0)}</td>
+                        </tr>,
+                        ...(open
+                          ? notesOf(row).map((note, noteIndex) => (
+                              <tr
+                                key={`${billKey(row)}-${noteIndex}`}
+                                className={note.voucher_number ? 'data-table-row--clickable' : undefined}
+                                onClick={() => openVoucher(note)}
+                              >
+                                <td><em>{formatDate(note.date)}</em></td>
+                                <td><em>{note.voucher_type} {note.voucher_number}</em></td>
+                                <td />
+                                <td className="is-numeric"><em>{formatQuantity(note.quantity)} @</em></td>
+                                <td />
+                                <td className="is-numeric"><em>{amountOrBlank(note.rate)}</em></td>
+                                <td />
+                              </tr>
+                            ))
+                          : []),
+                      ]
+                    })}
+                    <tr>
+                      <td colSpan={3}><strong>Total</strong></td>
+                      <td className="is-numeric"><strong>{formatQuantity(totalOf('initial_quantity'))}</strong></td>
+                      <td className="is-numeric"><strong>{formatQuantity(totalOf('pending_quantity'))}</strong></td>
+                      <td />
+                      <td />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
 

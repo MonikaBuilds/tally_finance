@@ -2331,7 +2331,7 @@ async def get_stock_item_monthly_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="stock_item_monthly_v3",
+            report_name="stock_item_monthly_v4",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -2411,7 +2411,7 @@ async def get_stock_item_vouchers_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="stock_item_vouchers",
+            report_name="stock_item_vouchers_v3",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -2486,7 +2486,7 @@ async def get_stock_item_bills_pending_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="stock_item_bills_pending",
+            report_name="stock_item_bills_pending_v2",
             company_name=company_name,
             current_user=current_user,
             params={
