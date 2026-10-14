@@ -661,12 +661,24 @@ def parse_stock_movement(xml_text: str):
                 "GODOWNNAME",
                 "GODOWN",
             )
+            if not godown:
+                godown = _first_text(
+                    entry.find(".//BATCHALLOCATIONS.LIST"),
+                    "GODOWNNAME",
+                    "GODOWN",
+                )
 
             batch = _first_text(
                 entry,
                 "BATCHNAME",
                 "BATCH",
             )
+            if not batch:
+                batch = _first_text(
+                    entry.find(".//BATCHALLOCATIONS.LIST"),
+                    "BATCHNAME",
+                    "BATCH",
+                )
 
             # Present on Receipt Note / Purchase entries that use
             # Tally's Tracking Number (Order/Bill pending) feature -
@@ -676,6 +688,14 @@ def parse_stock_movement(xml_text: str):
                 entry,
                 "TRACKINGNUMBER",
             )
+
+            # The tracking number is usually stored one level down, on
+            # the entry's batch allocation.
+            if not tracking_number:
+                nested = entry.find(".//TRACKINGNUMBER")
+
+                if nested is not None and nested.text:
+                    tracking_number = nested.text.strip()
 
             # ACTUALQTY is always unsigned in Tally; the direction of
             # the movement is carried by ISDEEMEDPOSITIVE
@@ -1143,9 +1163,17 @@ def parse_inventory_voucher_detail(
                     ),
                     "godown": _first_text(
                         entry, "GODOWNNAME", "GODOWN"
+                    ) or _first_text(
+                        entry.find(".//BATCHALLOCATIONS.LIST"),
+                        "GODOWNNAME",
+                        "GODOWN",
                     ),
                     "batch": _first_text(
                         entry, "BATCHNAME", "BATCH"
+                    ) or _first_text(
+                        entry.find(".//BATCHALLOCATIONS.LIST"),
+                        "BATCHNAME",
+                        "BATCH",
                     ),
                     "actual_quantity": _first_text(
                         entry, "ACTUALQTY"
@@ -1196,3 +1224,137 @@ def parse_inventory_voucher_detail(
         "success": True,
         "voucher": None,
     }
+
+
+# ============================================================
+# ITEM MONTHLY SUMMARY (Tally native report)
+# ============================================================
+
+MONTH_MAP = {
+    "april": 4, "may": 5, "june": 6, "july": 7,
+    "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12, "january": 1, "february": 2, "march": 3,
+}
+
+VCH_TYPE_DISPLAY_MAP = {
+    "stk jrnl": "Stock Journal",
+    "mat out": "Material Out",
+    "mat in": "Material In",
+    "rej out": "Rejections Out",
+    "rej in": "Rejections In",
+    "rcpt note": "Receipt Note",
+    "del note": "Delivery Note",
+    "purc": "Purchase",
+    "sales": "Sales",
+    "pymt": "Payment",
+    "rcpt": "Receipt",
+    "jrnl": "Journal",
+}
+
+
+def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[dict]:
+    """
+    Parse Tally's native Item Monthly Summary XML response.
+    Each period node contains exact inward, outward and closing quantities and values.
+    """
+    root = parse_xml(xml_text)
+    rows = []
+
+    periods = root.findall(".//DSPPERIOD")
+    stkinfos = root.findall(".//DSPSTKINFO")
+
+    import calendar
+
+    for p_node, s_node in zip(periods, stkinfos):
+        p_name = (p_node.text or "").strip().lower()
+        month_num = MONTH_MAP.get(p_name)
+        if not month_num:
+            continue
+
+        year = start_year if month_num >= 4 else start_year + 1
+        month_str = f"{year}-{month_num:02d}"
+
+        in_qty = _stock_quantity_value(_text(s_node, ".//DSPINQTY"))
+        in_val = _stock_numeric_value(_text(s_node, ".//DSPDRAMTA"))
+        out_qty = _stock_quantity_value(_text(s_node, ".//DSPOUTQTY"))
+        out_val = _stock_numeric_value(_text(s_node, ".//DSPNETTCRAMTA"))
+        cl_qty = _stock_quantity_value(_text(s_node, ".//DSPCLQTY"))
+        cl_val = _stock_numeric_value(_text(s_node, ".//DSPCLAMTA"))
+
+        _, last_day = calendar.monthrange(year, month_num)
+
+        rows.append({
+            "month": month_str,
+            "from": f"{month_str}-01",
+            "to": f"{month_str}-{last_day:02d}",
+            "inward_quantity": in_qty or 0.0,
+            "inward_value": abs(in_val) if in_val is not None else 0.0,
+            "outward_quantity": out_qty or 0.0,
+            "outward_value": abs(out_val) if out_val is not None else 0.0,
+            "closing_quantity": cl_qty or 0.0,
+            "closing_value": abs(cl_val) if cl_val is not None else 0.0,
+            "pending_bills_quantity": 0.0,
+        })
+
+    return rows
+
+
+# ============================================================
+# STOCK / GODOWN VOUCHERS (Tally native report)
+# ============================================================
+
+def parse_tally_vouchers_report(xml_text: str) -> list[dict]:
+    """
+    Parse Tally's native Godown Vouchers or Stock Vouchers report XML.
+    Returns rows matching Tally's display with Particulars, Vch Type,
+    Inwards, Outwards and daily Closing balances.
+    """
+    root = parse_xml(xml_text)
+    rows = []
+
+    dates = root.findall(".//DSPVCHDATE")
+    accounts = root.findall(".//DSPVCHITEMACCOUNT")
+    vtypes = root.findall(".//DSPVCHTYPE")
+    inblocks = root.findall(".//DSPINBLOCK")
+    outblocks = root.findall(".//DSPOUTBLOCK")
+    clblocks = root.findall(".//DSPCLBLOCK")
+
+    count = min(len(dates), len(accounts), len(vtypes), len(inblocks), len(outblocks))
+
+    for i in range(count):
+        d_raw = (dates[i].text or "").strip()
+        acc = (accounts[i].text or "").strip()
+        vt_raw = (vtypes[i].text or "").strip()
+
+        in_qty = _stock_quantity_value(_text(inblocks[i], "DSPVCHINQTY"))
+        in_val = _stock_numeric_value(_text(inblocks[i], "DSPVCHINAMT"))
+        out_qty = _stock_quantity_value(_text(outblocks[i], "DSPVCHOUTQTY"))
+        out_val = _stock_numeric_value(_text(outblocks[i], "DSPVCHNETTOUTAMT"))
+
+        cl_qty = None
+        cl_val = None
+        if i < len(clblocks):
+            cl_qty = _stock_quantity_value(_text(clblocks[i], "DSPVCHCLQTY"))
+            cl_val = _stock_numeric_value(_text(clblocks[i], "DSPVCHCLAMT"))
+
+        full_vt = VCH_TYPE_DISPLAY_MAP.get(vt_raw.lower(), vt_raw)
+        is_pending = acc.startswith("(") and acc.endswith(")")
+
+        rows.append({
+            "kind": "pending" if is_pending else "voucher",
+            "date": format_tally_date(d_raw) if d_raw else None,
+            "particulars": acc,
+            "voucher_type": full_vt,
+            "voucher_number": "",
+            "reference": "",
+            "guid": "",
+            "inward_quantity": in_qty,
+            "inward_value": abs(in_val) if in_val is not None else None,
+            "outward_quantity": out_qty,
+            "outward_value": abs(out_val) if out_val is not None else None,
+            "closing_quantity": cl_qty,
+            "closing_value": abs(cl_val) if cl_val is not None else None,
+        })
+
+    return rows
+

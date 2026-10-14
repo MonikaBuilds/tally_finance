@@ -488,6 +488,11 @@ def movement_effect(row: dict) -> dict | None:
     quantity = abs(row.get("quantity") or 0.0)
     value = abs(row.get("amount") if row.get("amount") is not None else row.get("value") or 0.0)
 
+    # Tally leaves AMOUNT empty on entries it values itself (e.g. the
+    # consumed side of a Stock Journal) and only gives quantity x rate.
+    if not value:
+        value = quantity * abs(row.get("rate") or 0.0)
+
     if voucher_type in _NEGATIVE_INWARD_TYPES:
         side, sign = "in", -1
     elif voucher_type in _NEGATIVE_OUTWARD_TYPES:

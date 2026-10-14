@@ -21,6 +21,7 @@ import ClosingStockSummary from './pages/ClosingStockSummary'
 import Inventory from './pages/Inventory'
 import StockItemMonthlySummary from './pages/StockItemMonthlySummary'
 import StockItemVouchers from './pages/StockItemVouchers'
+import StockItemBillsPending from './pages/StockItemBillsPending'
 import InventoryVoucherDetail from './pages/InventoryVoucherDetail'
 import StockGroupItems from './pages/StockGroupItems'
 import StockSummaryDrill from './pages/StockSummaryDrill'
@@ -324,6 +325,7 @@ function App() {
         <Route path="/reports/inventory" element={<Inventory />} />
         <Route path="/reports/stock-item-monthly" element={<StockItemMonthlySummary />} />
         <Route path="/reports/stock-item-vouchers" element={<StockItemVouchers />} />
+        <Route path="/reports/stock-item-bills-pending" element={<StockItemBillsPending />} />
         <Route path="/reports/inventory-voucher" element={<InventoryVoucherDetail />} />
         <Route path="/reports/registers/:key/vouchers" element={<RegisterVouchers />} />
         <Route path="/reports/stock-groups/:name" element={<StockSummaryDrill kind="group" />} />

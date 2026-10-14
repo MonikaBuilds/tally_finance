@@ -1,4 +1,5 @@
 import re
+import logging
 from datetime import date, datetime
 
 from app.cache.config import cache_settings
@@ -67,6 +68,12 @@ from app.tally.parsers.inventory_registers import (
     parse_register_vouchers,
 )
 
+from app.tally.parsers.stock_item_ledger import (
+    build_monthly_summary,
+    build_voucher_ledger,
+    default_period,
+)
+
 from app.tally.parsers.inventory_summary import (
     build_godown_balances,
     build_hierarchy_summary,
@@ -82,6 +89,8 @@ from app.tally.parsers.financial import (
 from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
+
+_log = logging.getLogger(__name__)
 
 
 client = TallyClient()
@@ -1253,6 +1262,118 @@ async def fetch_godowns(
 
 
 # ============================================================
+# SALES BILLS PENDING (STOCK ITEM)
+# ============================================================
+
+async def fetch_sales_bills_pending(
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    stock_item_name: str | None = None,
+    tracking_number: str | None = None,
+    party: str | None = None,
+):
+    report = await fetch_stock_movement(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        stock_item_name=stock_item_name,
+    )
+
+    rows = report.get("rows", [])
+
+    if tracking_number:
+        target = tracking_number.strip().casefold()
+        rows = [
+            r for r in rows
+            if (r.get("tracking_number") or r.get("voucher_number") or "").strip().casefold() == target
+        ]
+
+    if party:
+        target = party.strip().casefold()
+        rows = [r for r in rows if (r.get("party") or "").strip().casefold() == target]
+
+    groups = {}
+    details = []
+
+    for row in rows:
+        voucher_type = (row.get("voucher_type") or "").strip().casefold()
+        item = row.get("stock_item")
+
+        is_delivery = "delivery note" in voucher_type
+        is_rejection_in = "rejections in" in voucher_type
+
+        if not item or not (is_delivery or is_rejection_in):
+            continue
+
+        # A return belongs to the delivery it was booked against; with
+        # no tracking number it is netted against the item's delivery.
+        tracking = (row.get("tracking_number") or "").strip()
+
+        if not tracking and is_delivery:
+            tracking = (row.get("voucher_number") or "").strip()
+
+        key = (item.strip().casefold(), tracking.casefold())
+
+        group = groups.setdefault(key, {
+            "date": row.get("date"),
+            "tracking_number": tracking,
+            "stock_item": item,
+            "party": row.get("party"),
+            "initial_quantity": 0.0,
+            "pending_quantity": 0.0,
+            "rate": row.get("rate") or 0.0,
+            "value": 0.0,
+            "_has_delivery": False,
+        })
+
+        quantity = abs(row.get("quantity") or 0.0)
+        amount = abs(row.get("amount") or 0.0)
+
+        if is_delivery:
+            group["initial_quantity"] += quantity
+            group["pending_quantity"] += quantity
+            group["value"] += amount
+
+            if not group["_has_delivery"]:
+                group.update(
+                    _has_delivery=True,
+                    date=row.get("date"),
+                    party=row.get("party"),
+                    rate=row.get("rate") or 0.0,
+                )
+        else:
+            group["pending_quantity"] -= quantity
+            group["value"] -= amount
+
+        details.append({
+            "date": row.get("date"),
+            "tracking_number": tracking,
+            "party": row.get("party"),
+            "stock_item": item,
+            "voucher_type": row.get("voucher_type"),
+            "voucher_number": row.get("voucher_number"),
+            "quantity": row.get("quantity"),
+            "rate": row.get("rate"),
+            "value": row.get("amount"),
+            "reference": row.get("reference"),
+            "godown": row.get("godown"),
+            "batch": row.get("batch"),
+            "narration": row.get("narration"),
+        })
+
+    summary = [
+        {k: v for k, v in g.items() if not k.startswith("_")}
+        for g in groups.values()
+        if abs(g["pending_quantity"]) > 0.0001
+    ]
+    summary.sort(key=lambda r: (r.get("date") or "", r.get("tracking_number") or ""))
+    details.sort(key=lambda r: (r.get("date") or "", r.get("voucher_number") or ""))
+
+    return {"success": True, "rows": summary, "details": details, "count": len(summary)}
+
+
+# ============================================================
 # STOCK MOVEMENT
 # ============================================================
 
@@ -1361,6 +1482,66 @@ async def resolve_stock_period(
     return date(start_year, 4, 1), date(start_year + 1, 3, 31)
 
 
+async def _load_item_vouchers(
+    stock_item_name: str,
+    company_name: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Every inventory entry Tally holds for one stock item, plus all the
+    entries of those same vouchers (the other items of a Stock Journal
+    are needed to name the voucher's counterpart).
+
+    No period is sent: Tally answers for its current period, which also
+    carries the item's opening balance (see _load_item_master).
+    """
+    response = await client.send_xml(
+        build_stock_movement_request(
+            company_name=company_name,
+            stock_item_name=stock_item_name,
+        )
+    )
+
+    all_rows = parse_stock_movement(response).get("rows", [])
+    target = stock_item_name.strip().casefold()
+
+    item_rows = [
+        r for r in all_rows
+        if (r.get("stock_item") or "").strip().casefold() == target
+    ]
+
+    return item_rows, all_rows
+
+
+async def _load_item_master(
+    stock_item_name: str,
+    company_name: str | None = None,
+    as_on: date | None = None,
+) -> dict | None:
+    """
+    The stock item as Tally reports it: opening balance / value at the
+    start of Tally's current period, unit, and the closing balance as on
+    `as_on`.
+
+    Only the to-date is sent. Tally stops answering the Stock Item
+    collection when a from-date is sent with it (see
+    STOCK_COLLECTION_SEND_FROM_DATE), and a from-date = to-date request
+    returned the same balance for every date.
+    """
+    report = await fetch_stock_item(
+        company_name=company_name,
+        stock_item_name=stock_item_name,
+        to_date=as_on,
+    )
+
+    target = stock_item_name.strip().casefold()
+
+    for row in report.get("rows", []):
+        if (row.get("name") or "").strip().casefold() == target:
+            return row
+
+    return None
+
+
 async def fetch_stock_item_monthly(
     stock_item_name: str,
     from_date: date | None,
@@ -1369,134 +1550,116 @@ async def fetch_stock_item_monthly(
 ):
     """
     Tally's "Stock Item Monthly Summary": every month of the period,
-    with Inwards / Outwards from the item's vouchers and the Closing
-    Balance for each month taken from Tally itself (the item's closing
-    balance as on each month end). Tally's closing value follows its
-    valuation method, so it can't be rebuilt by adding vouchers up.
+    with Inwards / Outwards and the Closing Balance of each month.
+
+    One running balance is built from the item's opening balance and
+    its vouchers (see parsers/stock_item_ledger.py), the same way Tally
+    builds the screen. Tally's own closing balance for the period end
+    is read only to confirm the result (`reconciled`).
     """
-    import asyncio
-    import calendar
-    from datetime import timedelta
+    item_rows, _all_rows = await _load_item_vouchers(
+        stock_item_name, company_name
+    )
 
     if not from_date or not to_date:
-        default_from, default_to = await resolve_stock_period(
-            company_name=company_name,
-            stock_item_name=stock_item_name,
-        )
+        default_from, default_to = default_period(item_rows)
         from_date = from_date or default_from
         to_date = to_date or default_to
 
-    months = month_starts(from_date, to_date)
+    master = await _load_item_master(
+        stock_item_name, company_name, as_on=to_date
+    )
 
-    async def closing_as_on(day):
-        report = await fetch_stock_item(
-            company_name=company_name,
-            stock_item_name=stock_item_name,
-            to_date=day,
+    _log.info(
+        "STOCK MONTHLY DEBUG item=%r opening=%s/%s period=%s..%s rows=%d",
+        stock_item_name,
+        (master or {}).get("opening_quantity"),
+        (master or {}).get("opening_value"),
+        from_date, to_date, len(item_rows),
+    )
+    for _r in item_rows:
+        _log.info(
+            "STOCK MONTHLY DEBUG row date=%s type=%s no=%s godown=%r qty=%s rate=%s amount=%s deemed_positive=%s tracking=%r",
+            _r.get("date"), _r.get("voucher_type"), _r.get("voucher_number"),
+            _r.get("godown"), _r.get("quantity"), _r.get("rate"),
+            _r.get("amount"), _r.get("is_deemed_positive"), _r.get("tracking_number"),
         )
-        rows = report.get("rows", [])
-        return rows[0] if rows else None
 
-    month_ends = []
-
-    for year, month in months:
-        last = date(year, month, calendar.monthrange(year, month)[1])
-        month_ends.append(min(last, to_date))
-
-    opening_task = closing_as_on(from_date - timedelta(days=1))
-    movement_task = fetch_stock_movement(
-        company_name=company_name,
+    summary = build_monthly_summary(
+        item_rows,
+        opening_quantity=(master or {}).get("opening_quantity") or 0.0,
+        opening_value=(master or {}).get("opening_value") or 0.0,
         from_date=from_date,
         to_date=to_date,
-        stock_item_name=stock_item_name,
     )
 
-    opening, movement, *closings = await asyncio.gather(
-        opening_task,
-        movement_task,
-        *[closing_as_on(day) for day in month_ends],
-    )
-
-    buckets = {
-        key: {
-            "inward_quantity": 0.0,
-            "inward_value": 0.0,
-            "outward_quantity": 0.0,
-            "outward_value": 0.0,
+    tally_closing = (
+        {
+            "quantity": master.get("closing_quantity"),
+            "value": master.get("closing_value"),
         }
-        for key in months
-    }
-
-    for row in movement.get("rows", []):
-        effect = movement_effect(row)
-
-        if effect is None:
-            continue
-
-        key = (int(row["date"][:4]), int(row["date"][5:7]))
-
-        if key not in buckets:
-            continue
-
-        side = effect["side"]
-        buckets[key][f"{side}ward_quantity" if side == "out" else "inward_quantity"] += effect["quantity"]
-        buckets[key][f"{side}ward_value" if side == "out" else "inward_value"] += effect["value"]
-
-    rows = []
-    running_quantity = opening["closing_quantity"] if opening else 0.0
-
-    for (year, month), closing in zip(months, closings):
-        first = date(year, month, 1)
-        last = date(year, month, calendar.monthrange(year, month)[1])
-
-        bucket = buckets[(year, month)]
-        closing_quantity = closing["closing_quantity"] if closing else 0.0
-
-        # Tally's closing quantity also reflects Sale / Purchase Bills
-        # Pending (delivered but not yet billed), which are not
-        # vouchers and so never appear in the voucher entries. The gap
-        # between Tally's closing and opening + vouchers is that
-        # adjustment; it is shown in Outwards (as Tally does, e.g.
-        # "(Sale Bills Pending) (-)7 NOS") and reported separately.
-        # Only the quantity is adjusted - Tally does not give a value.
-        expected = (
-            running_quantity
-            + bucket["inward_quantity"]
-            - bucket["outward_quantity"]
-        )
-        gap = round(closing_quantity - expected, 6)
-
-        if gap:
-            bucket["outward_quantity"] -= gap
-
-        running_quantity = closing_quantity
-
-        rows.append(
-            {
-                "month": f"{year:04d}-{month:02d}",
-                "from": max(first, from_date).isoformat(),
-                "to": min(last, to_date).isoformat(),
-                **bucket,
-                "pending_bills_quantity": gap,
-                "closing_quantity": closing_quantity,
-                "closing_value": closing["closing_value"] if closing else 0.0,
-            }
-        )
+        if master
+        else None
+    )
 
     return {
         "from": from_date.isoformat(),
         "to": to_date.isoformat(),
-        "opening": (
-            {
-                "quantity": opening["closing_quantity"],
-                "value": opening["closing_value"],
-            }
-            if opening
-            else {"quantity": 0.0, "value": 0.0}
+        "opening": summary["opening"],
+        "unit": (master or {}).get("base_units", ""),
+        "rows": summary["rows"],
+        "item_found": bool(master or item_rows),
+        "tally_closing": tally_closing,
+        "reconciled": (
+            tally_closing is None
+            or abs(
+                (tally_closing["quantity"] or 0.0)
+                - summary["closing"]["quantity"]
+            ) < 1e-6
         ),
-        "unit": (opening or (closings[0] if closings else None) or {}).get("base_units", ""),
-        "rows": rows,
-        "item_found": bool(opening or any(closings)),
+    }
+
+
+async def fetch_stock_item_vouchers(
+    stock_item_name: str,
+    from_date: date | None,
+    to_date: date | None,
+    company_name: str | None = None,
+):
+    """
+    Tally's "Stock Item Vouchers" for one item and period: Opening
+    Balance, the vouchers with their Inwards / Outwards, the Bills
+    Pending roll-up and the totals.
+    """
+    item_rows, all_rows = await _load_item_vouchers(
+        stock_item_name, company_name
+    )
+
+    if not from_date or not to_date:
+        default_from, default_to = default_period(item_rows)
+        from_date = from_date or default_from
+        to_date = to_date or default_to
+
+    master = await _load_item_master(
+        stock_item_name, company_name, as_on=to_date
+    )
+
+    ledger = build_voucher_ledger(
+        item_rows,
+        all_rows=all_rows,
+        stock_item_name=stock_item_name,
+        opening_quantity=(master or {}).get("opening_quantity") or 0.0,
+        opening_value=(master or {}).get("opening_value") or 0.0,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return {
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "unit": (master or {}).get("base_units", ""),
+        "item_found": bool(master or item_rows),
+        **ledger,
     }
 
 
@@ -1533,6 +1696,18 @@ async def fetch_godown_item_monthly(
     default_godown = pick_default_godown(masters.get("rows", []))
     target = name_key(godown_name)
 
+    known_godowns = {
+        name_key(g.get("name") or g.get("godown"))
+        for g in masters.get("rows", [])
+    }
+
+    def row_godown(value):
+        """Godown of a voucher line; anything that is not a real godown
+        master (blank, Not Applicable, a batch label ...) sits in the
+        company's default location, as in Tally."""
+        key = name_key(resolve_godown(value, default_godown))
+        return key if key in known_godowns else name_key(default_godown)
+
     response = await client.send_xml(
         build_stock_summary_request(
             company_name=company_name,
@@ -1557,11 +1732,11 @@ async def fetch_godown_item_monthly(
     ]
 
     touched = {
-        name_key(resolve_godown(a.get("godown"), default_godown))
+        row_godown(a.get("godown"))
         for a in openings
         if a.get("quantity")
     } | {
-        name_key(resolve_godown(r.get("godown"), default_godown))
+        row_godown(r.get("godown"))
         for r in stock_rows
     }
 
@@ -1590,75 +1765,36 @@ async def fetch_godown_item_monthly(
         }
 
     def in_godown(row):
-        return name_key(resolve_godown(row.get("godown"), default_godown)) == target
+        return row_godown(row.get("godown")) == target
 
-    start = base["from"]
-    running = sum(
+    # Same engine as the Stock Item Monthly Summary, fed only with this
+    # godown's openings and vouchers, so Bills Pending, returns and the
+    # average-cost closing behave exactly as they do for the item.
+    opening_quantity = sum(
         a["quantity"] for a in openings
-        if name_key(resolve_godown(a.get("godown"), default_godown)) == target
+        if row_godown(a.get("godown")) == target
     )
-
-    for r in stock_rows:
-        if in_godown(r) and (r.get("date") or "") < start:
-            effect = movement_effect(r)
-            running += effect["quantity"] if effect["side"] == "in" else -effect["quantity"]
-
+    item_opening = base["opening"]
     opening_rate = (
-        base["opening"]["value"] / base["opening"]["quantity"]
-        if base["opening"]["quantity"]
+        item_opening["value"] / item_opening["quantity"]
+        if item_opening["quantity"]
         else 0.0
     )
 
-    rows = []
-
-    for month in base["rows"]:
-        inward_q = inward_v = outward_q = outward_v = 0.0
-
-        for r in stock_rows:
-            if not in_godown(r) or not (month["from"] <= (r.get("date") or "") <= month["to"]):
-                continue
-
-            effect = movement_effect(r)
-
-            if effect["side"] == "in":
-                inward_q += effect["quantity"]
-                inward_v += effect["value"]
-            else:
-                outward_q += effect["quantity"]
-                outward_v += effect["value"]
-
-        running += inward_q - outward_q
-
-        rate = (
-            month["closing_value"] / month["closing_quantity"]
-            if month["closing_quantity"]
-            else 0.0
-        )
-
-        rows.append(
-            {
-                **month,
-                "inward_quantity": inward_q,
-                "inward_value": inward_v,
-                "outward_quantity": outward_q,
-                "outward_value": outward_v,
-                "pending_bills_quantity": 0.0,
-                "closing_quantity": running,
-                "closing_value": running * rate,
-            }
-        )
-
-    opening_quantity = running - sum(r["inward_quantity"] - r["outward_quantity"] for r in rows)
+    summary = build_monthly_summary(
+        [r for r in history.get("rows", []) if in_godown(r)],
+        opening_quantity=opening_quantity,
+        opening_value=opening_quantity * opening_rate,
+        from_date=date.fromisoformat(base["from"]),
+        to_date=date.fromisoformat(base["to"]),
+    )
 
     return {
         **base,
         "godown": godown_name,
         "approximate": True,
-        "opening": {
-            "quantity": opening_quantity,
-            "value": opening_quantity * opening_rate,
-        },
-        "rows": rows,
+        "opening": summary["opening"],
+        "rows": summary["rows"],
     }
 
 
