@@ -66,7 +66,13 @@ def _decode_token(token: str) -> dict:
     Verify and decode an incoming JWT access token.
     """
 
-    settings = get_auth_settings()
+    try:
+        settings = get_auth_settings()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication configuration error.",
+        ) from exc
 
     try:
         return jwt.decode(
@@ -114,6 +120,11 @@ async def get_current_user(
     access_token = request.cookies.get(
         settings.access_token_cookie_name
     )
+
+    if not access_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            access_token = auth_header[7:].strip()
 
     if not access_token:
         raise HTTPException(

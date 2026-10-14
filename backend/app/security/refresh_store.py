@@ -1,10 +1,13 @@
 import hashlib
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.security.db import get_connection
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,9 +36,49 @@ def generate_refresh_token() -> str:
     return secrets.token_urlsafe(64)
 
 
+def cleanup_expired_sessions(retention_days: int = 7) -> int:
+    """
+    Prune expired and revoked refresh sessions from MySQL.
+
+    Deletes:
+    1. Sessions where expires_at has passed (< UTC_TIMESTAMP()).
+    2. Revoked sessions that were revoked more than retention_days ago.
+
+    Returns the count of purged session rows.
+    """
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            DELETE FROM refresh_sessions
+            WHERE expires_at < UTC_TIMESTAMP()
+               OR (
+                   revoked_at IS NOT NULL
+                   AND revoked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY)
+               )
+            """,
+            (retention_days,),
+        )
+
+        deleted_count = cursor.rowcount
+        connection.commit()
+        return deleted_count
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
 def initialize_refresh_store() -> None:
     """
-    Create the refresh_sessions table when it does not exist.
+    Create the refresh_sessions table when it does not exist,
+    and prune expired sessions.
     """
 
     connection = get_connection()
@@ -70,6 +113,13 @@ def initialize_refresh_store() -> None:
     finally:
         cursor.close()
         connection.close()
+
+    try:
+        purged = cleanup_expired_sessions(retention_days=7)
+        if purged > 0:
+            logger.info("Purged %d expired/revoked refresh sessions on startup.", purged)
+    except Exception as exc:
+        logger.warning("Failed to prune expired refresh sessions during startup: %s", exc)
 
 
 def create_refresh_session(
@@ -221,6 +271,47 @@ def revoke_refresh_session(
         connection.close()
 
 
+def revoke_all_user_sessions(user_id: str) -> int:
+    """
+    Revoke all active refresh sessions for a specific user.
+
+    Used when:
+    - User account is deactivated or suspended
+    - Password is changed or reset
+    - Token replay/reuse is detected
+    - User triggers 'Log out from all devices'
+    """
+    clean_user_id = user_id.strip() if user_id else ""
+    if not clean_user_id:
+        return 0
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE refresh_sessions
+            SET revoked_at = UTC_TIMESTAMP()
+            WHERE user_id = %s
+              AND revoked_at IS NULL
+            """,
+            (clean_user_id,),
+        )
+
+        revoked_count = cursor.rowcount
+        connection.commit()
+        return revoked_count
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
 def rotate_refresh_session(
     *,
     old_token: str,
@@ -275,7 +366,23 @@ def rotate_refresh_session(
             return None
 
         if row["revoked_at"] is not None:
-            connection.rollback()
+            # Token reuse detected! Invalidate all active sessions for this compromised user (OAuth 2.1 RFC 6819)
+            user_id = row["user_id"]
+            cursor.execute(
+                """
+                UPDATE refresh_sessions
+                SET revoked_at = UTC_TIMESTAMP()
+                WHERE user_id = %s
+                  AND revoked_at IS NULL
+                """,
+                (user_id,),
+            )
+            connection.commit()
+            logger.warning(
+                "Security Alert: Replay of revoked refresh token detected for user_id=%s. "
+                "Revoked all active sessions for this account.",
+                user_id,
+            )
             return None
 
         old_expires_at = row["expires_at"]
