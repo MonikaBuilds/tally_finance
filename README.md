@@ -49,6 +49,24 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 ---
 
+## Tech Stack
+
+| Layer | Technologies & Libraries | Purpose |
+| :--- | :--- | :--- |
+| **Backend Framework** | **Python 3.11+**, **FastAPI**, **Uvicorn** | High-performance asynchronous REST API backend |
+| **Accounting Integration** | **Tally Prime**, **Tally XML / TDL Interface** | Real-time source of truth via local HTTP/XML gateway (port 9000) |
+| **Database & Persistence** | **MySQL 8.0+**, `mysql-connector-python` | Multi-tenant organizations, users, RBAC roles, permissions, and sessions |
+| **Caching & Acceleration** | **Redis 6+**, `redis-py` | Stale-While-Revalidate (SWR) caching layer with background warming daemon |
+| **Artificial Intelligence** | **Google Gemini** (`google-genai`), OpenRouter (fallback) | Deterministic intent classification and read-only tool selection |
+| **Security & Auth** | **JWT**, **PBKDF2-HMAC-SHA256**, SameSite Cookies, CSRF | Zero-trust authentication with 310,000 hash iterations & HttpOnly cookies |
+| **Configuration & Validation**| **Pydantic v2**, `pydantic-settings`, `python-dotenv` | Type-safe settings, request/response validation, and environment loading |
+| **HTTP Client** | `httpx` (async client pool) | Non-blocking HTTP communication with Tally Prime |
+| **Frontend Framework** | **React 19**, **Vite** | Modern, reactive single-page dashboard application |
+| **Routing & UI** | **React Router 7**, **Lucide Icons** | Client-side routing, drill-down navigation, and responsive financial UI |
+| **Testing & Quality** | **Pytest**, `pytest-asyncio`, `pytest-mock` | Comprehensive backend test coverage (parsers, builders, RBAC, calculations) |
+
+---
+
 ## Core Capabilities
 
 ### 1. Executive Financial Intelligence
@@ -404,9 +422,3 @@ tally-financial-intelligence/
 
 #### 4. "No records found on Godown Vouchers"
 * **Solution**: Ensure that your date filter aligns with the financial year of transactions recorded in Tally Prime (e.g. `2025-04-01` to `2026-03-31`).
-
----
-
-## License
-
-Proprietary — All rights reserved by Infintrix.
