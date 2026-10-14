@@ -46,29 +46,6 @@ flowchart LR
     Deliver --> UI["📈 Interactive UI Views\n(Statements • Godown Vouchers • AI Chat)"]
 ```
 
-### Architecture Hierarchy Breakdown
-
-| Tier | Component | Responsibilities & Architectural Guarantees |
-| :--- | :--- | :--- |
-| **Tier 1: Presentation** | **React 19 SPA** | Single-page application providing real-time financial dashboards, audited statements, godown/stock voucher drill-downs, and natural-language AI chat. Secured via HttpOnly cookies and SameSite CSRF tokens. |
-| **Tier 2: Gateway & Security** | **FastAPI + MySQL 8** | Enforces zero-trust multi-tenancy, JWT session validation, role-based permission bitmasks (`superadmin`, `admin`, `user`), and PBKDF2-HMAC-SHA256 password hashing. |
-| **Tier 3: Core Intelligence** | **SWR Caching & Gemini AI** | Routes requests between cached financial pipelines and the deterministic AI assistant. AI is restricted to 13 read-only tools with zero hallucination. Cache delivers fresh data in `<1ms` and revalidates stale records asynchronously. |
-| **Tier 4: ERP Gateway** | **Tally Prime (Port 9000)** | Direct integration with Tally Prime's native C++ accounting core over HTTP/XML without intermediary ODBC bridges or lossy approximations. |
-| **Tier 5: Precision Parsing** | **Native XML Parser** | Ingests raw TDL XML responses and calculates exact closing decimals, voucher ledger movements, and stock batches matching Tally desktop reports to 100% precision. |
-
-
-
-### Architectural Highlights & Resilience Pillars
-
-| Pillar | Engineering Design | Guarantee |
-| :--- | :--- | :--- |
-| **Zero-Trust Security** | Dual-cookie architecture (`access_token` + rotating `refresh_token`), SameSite protection, CSRF token validation, and PBKDF2-HMAC-SHA256 (310k iterations). | Sessions are resistant to XSS, CSRF, and replay attacks across tenant boundaries. |
-| **High-Throughput Caching** | Multi-tier **Stale-While-Revalidate (SWR)** caching in Redis with proactive background pre-warming. | Sub-millisecond latency for heavy inventory matrices and drill-down reports. |
-| **High Availability & Fail-Open** | If Redis or the AI service encounters downtime, the circuit automatically **fails open**. | Zero downtime: requests bypass failed tiers and pull directly from Tally Prime without 500 errors. |
-| **Zero Hallucination AI** | Gemini only performs **intent detection and parameter extraction**. Accounting figures are fetched directly from Tally XML. | The LLM never computes, estimates, or invents financial numbers. |
-| **Direct ERP Native Integration** | Communicates with Tally Prime's C++ accounting engine over raw XML/TDL protocol (`<ID>Item Monthly Summary</ID>`, `<ID>Godown Vouchers</ID>`). | 100% precision matching Tally Prime desktop reports to the exact decimal without lossy Python approximations. |
-
----
 
 ## Tech Stack
 
