@@ -13,89 +13,84 @@ Instead of navigating complex multi-level menus in desktop Tally, leadership and
 
 ---
 
-## Industrial-Grade Architecture Overview
+## Architecture Overview & End-to-End Request Flow
 
 ```mermaid
 flowchart TD
     %% ==========================================
-    %% PRESENTATION TIER
+    %% CLIENT & TRANSPORT INGESTION
     %% ==========================================
-    subgraph ClientTier["1. PRESENTATION TIER (CLIENT)"]
-        UI["🖥️ React 19 Single Page Application\n(Dashboard, Statements, Godown & Stock Vouchers, AI Chat)"]
-        Context["🔐 Secure Browser Context\n(HttpOnly Access/Refresh Cookies & CSRF Header Handshake)"]
-        UI --- Context
-    end
-
-    %% ==========================================
-    %% API & SECURITY GATEWAY
-    %% ==========================================
-    subgraph GatewayTier["2. API & SECURITY GATEWAY (FASTAPI)"]
-        CORS["🌐 CORS & CSRF Defense Middleware"]
-        AuthGuard["🛡️ Multi-Tenant RBAC Guard\n(JWT Claims, Organization Scope, Permission Bitmasks)"]
-        Router["⚡ Asynchronous REST Router Engine\n(/api/v1/dashboard, /reports, /chat, /admin)"]
-        
-        CORS --> AuthGuard --> Router
-    end
-
-    %% ==========================================
-    %% BUSINESS LOGIC & ENGINES
-    %% ==========================================
-    subgraph EngineTier["3. CORE INTELLIGENCE & PROCESSING ENGINES"]
-        subgraph ChatPipeline["Deterministic AI Assistant Pipeline"]
-            PolicyFilter["🛑 Regex Policy Filter\n(Blocks Mutating/Write Requests)"]
-            Gemini["🤖 Google Gemini Intent Classifier\n(Maps Natural Language to 13 Read-Only Tools)"]
-            Executor["⚙️ Tool Dispatcher & Safe Formatter\n(Injects Tally Ground Truth)"]
-            
-            PolicyFilter --> Gemini --> Executor
-        end
-
-        subgraph FinancialPipeline["Financial & Inventory Engine"]
-            TDLBuilder["📄 Dynamic TDL XML Request Generator\n(Collection Filters, Scoped Godowns & Dates)"]
-            Parser["📊 High-Precision XML Report Parser\n(P&L, Balance Sheet, Native Godown Vouchers)"]
-        end
-    end
-
-    %% ==========================================
-    %% RESILIENCE & CACHING TIER
-    %% ==========================================
-    subgraph CacheTier["4. RESILIENCE & CACHING TIER (REDIS SWR)"]
-        CacheMgr["🚀 Multi-Tier SWR Cache Manager"]
-        Fresh["⚡ Fresh Cache Hit (<300s)\nInstant Sub-millisecond Response"]
-        Stale["⏳ Stale Cache Hit (<24h)\nInstant Response + Async Revalidation"]
-        FailOpen["🛡️ Fail-Open Circuit\n(Automatic Direct Tally Bypass if Redis Offline)"]
-        BgRefresher["🔄 Background Cache Refresher Daemon\n(Periodic High-Traffic Pre-Warming)"]
-
-        CacheMgr --> Fresh
-        CacheMgr --> Stale
-        CacheMgr --> FailOpen
-        BgRefresher -.->|"Pre-warms"| CacheMgr
-    end
-
-    %% ==========================================
-    %% ENTERPRISE PERSISTENCE & ERP
-    %% ==========================================
-    subgraph PersistenceTier["5. DATA PERSISTENCE & ERP BACKEND"]
-        MySQL[("🗄️ MySQL 8 Database\n(Organizations, Users, Roles, Permissions, Refresh Tokens)")]
-        Tally[("🏢 Tally Prime ERP Gateway\n(Native XML/TDL Engine on Port 9000)")]
-        GeminiCloud["☁️ Google AI Studio Cloud\n(Gemini 2.5 Flash API)"]
-    end
-
-    %% ==========================================
-    %% CROSS-TIER CONNECTORS
-    %% ==========================================
-    UI ==>|"HTTPS / JSON REST"| CORS
-    Router --> ChatPipeline
-    Router --> FinancialPipeline
+    User(["👤 Enterprise User / CFO / Auditor"]) -->|"1. User Action or AI Query"| UI["🖥️ React 19 Client SPA\n(Dashboard • Godown Drilldown • AI Chat)"]
     
-    AuthGuard <===>|"Session & RBAC Lookup"| MySQL
-    Gemini <===>|"Intent & Entity Detection"| GeminiCloud
-    Executor --> TDLBuilder
-    
-    FinancialPipeline <===>|"SWR Protocol"| CacheMgr
-    CacheMgr ===>|"Live XML Query (Port 9000)"| Tally
-    FailOpen ===>|"Direct Failover Query"| Tally
-    Parser <== Tally
+    UI -->|"2. HTTPS + HttpOnly JWT + CSRF Header"| Gateway["🛡️ FastAPI Security Gateway\n(CORS Defense • CSRF Check • Rate Limiter)"]
+
+    Gateway <-->|"3. RBAC & Org Scope Lookup"| MySQL[("🗄️ MySQL 8 Database\n(Users, Roles, Permissions, Sessions)")]
+
+    Gateway -->|"4. Authenticated Request"| Router{"5. Route Classifier"}
+
+    %% ==========================================
+    %% BRANCH A: FINANCIAL & INVENTORY FLOW
+    %% ==========================================
+    Router -->|"Reports / Metrics / Godown Vouchers"| SWR{"6. Redis SWR Cache Check\n(Key: Org + Route + Query Hash)"}
+
+    SWR -->|"Hit (Age &lt; 300s)"| FreshReturn["⚡ Fresh Cache Hit\n(&lt; 1ms Latency JSON Return)"]
+    FreshReturn -->|"Deliver Cached Data"| UI
+
+    SWR -->|"Hit (300s &lt; Age &lt; 24h)"| StaleReturn["⏳ Stale Cache Hit\n(Serve Instantly + Trigger Async Revalidation)"]
+    StaleReturn -->|"Immediate Delivery"| UI
+    StaleReturn -.->|"Background Refresh"| TDLGen
+
+    SWR -->|"Miss or Redis Offline\n(Fail-Open Circuit)"| TDLGen["7. Dynamic TDL XML Generator\n(Scoped Date, Godown & Ledger Envelopes)"]
+
+    TDLGen -->|"8. Direct HTTP XML Request (Port 9000)"| Tally[("🏢 Tally Prime ERP Core\n(Native C++ Engine • Port 9000)")]
+
+    Tally -->|"9. Raw TDL XML Envelope"| Parser["10. High-Precision XML Parser\n• Direct Tally Extraction (Zero Loss)\n• Exact Closing Decimals & Voucher Ledgers"]
+
+    Parser -->|"11. Write-Through Update"| RedisStore[("🚀 Redis Cache\n(SWR TTL Stored)")]
+    Parser -->|"12. Formatted JSON Response"| UI
+
+    %% ==========================================
+    %% BRANCH B: DETERMINISTIC AI ASSISTANT FLOW
+    %% ==========================================
+    Router -->|"Natural Language Chat Prompt"| SafetyGuard["6. Deterministic Safety Interceptor\n(Regex Filter Rejects All Mutating/Write Queries)"]
+
+    SafetyGuard -->|"7. Clean Query Prompt"| GeminiAI["🤖 Google Gemini 2.5 Flash\n• Intent Detection & Parameter Extraction\n• Constrained to 13 Read-Only Financial Tools\n• (Never Calculates or Hallucinates Numbers)"]
+
+    GeminiAI -->|"8. Tool Execution Payload\n(Selected Function + Extracted Parameters)"| Dispatcher["9. Financial Tool Dispatcher\n(Invokes Scoped Ledger & Report Pipelines)"]
+
+    Dispatcher -->|"10. Query Live Ground Truth"| Tally
+
+    Dispatcher -->|"11. Deterministic Formatter\n(Injects Audited Tally Figures)"| UI
+
+    %% ==========================================
+    %% VISUAL STYLING
+    %% ==========================================
+    classDef clientClass fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0369a1;
+    classDef gatewayClass fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e;
+    classDef tallyClass fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b;
+    classDef cacheClass fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8;
+    classDef aiClass fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#065f46;
+    classDef dbClass fill:#f1f5f9,stroke:#475569,stroke-width:2px,color:#334155;
+
+    class User,UI clientClass;
+    class Gateway,Router,TDLGen,Parser,Dispatcher,SafetyGuard gatewayClass;
+    class Tally tallyClass;
+    class SWR,FreshReturn,StaleReturn,RedisStore cacheClass;
+    class GeminiAI aiClass;
+    class MySQL dbClass;
 ```
+
+### Request Execution & Data Flow Lifecycle
+
+| Stage | Component | Operations & Guarantees |
+| :--- | :--- | :--- |
+| **1. Client Ingestion** | **React 19 SPA** | Dispatches authenticated requests with HttpOnly session cookies and CSRF tokens in request headers. |
+| **2. Security & Gateway** | **FastAPI Gateway** | Validates JWT token, extracts tenant organization scope, and checks role permissions against MySQL 8. |
+| **3. Caching & SWR** | **Redis SWR Engine** | Evaluates cache key `org:{org_id}:{endpoint}:{query_hash}`. Fresh hits (`<300s`) return in `<1ms`. Stale hits (`<24h`) return immediately while triggering async background revalidation. |
+| **4. Fail-Open ERP Gateway** | **Dynamic TDL Generator** | If cache misses or Redis is offline, dynamic XML TDL envelopes are built and dispatched directly to Tally Prime on port 9000. |
+| **5. High-Precision Parsing** | **Native XML Parser** | Parses Tally Prime's raw C++ XML responses, extracting exact decimal balances for ledgers, godowns, and vouchers without synthetic Python approximations. |
+| **6. Deterministic AI Guard** | **Gemini + Safety Interceptor** | Intercepts chat queries, enforces read-only access (regex blocks write/update), maps prompt to 1 of 13 tools, and pulls ground-truth figures directly from Tally Prime. |
+
 
 ### Architectural Highlights & Resilience Pillars
 
