@@ -16,11 +16,13 @@ from app.security.auth import (
 )
 from app.security.config import get_auth_settings
 from app.security.csrf import generate_csrf_token
+from app.security.passwords import verify_password
 from app.security.permissions import get_user_access
 from app.security.user_store import (
     authenticate_user,
     get_user_by_id,
     get_user_companies,
+    update_user_password,
 )
 from app.security.refresh_store import (
     create_refresh_session,
@@ -56,6 +58,17 @@ class CurrentUserResponse(BaseModel):
     companies: list[str]
     roles: list[str]
     permissions: list[str]
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(
+        min_length=1,
+        max_length=256,
+    )
+    new_password: str = Field(
+        min_length=8,
+        max_length=256,
+    )
 
 
 @router.post(
@@ -334,3 +347,98 @@ def logout(
         secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,
     )
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_200_OK,
+)
+def change_password(
+    request: ChangePasswordRequest,
+    response: Response,
+    current_user: UserContext = Depends(get_current_user),
+):
+    """
+    Allow an authenticated user to change their own password.
+
+    Verifies the current password, updates the password hash, revokes
+    all prior refresh sessions across all devices, and issues a fresh
+    access token and refresh session for the current client.
+    """
+    user = get_user_by_id(current_user.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is unavailable.",
+        )
+
+    if not verify_password(request.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    try:
+        update_user_password(
+            user_id=current_user.user_id,
+            new_password=request.new_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    # Issue fresh tokens for the current session
+    companies = get_user_companies(user.user_id)
+    settings = get_auth_settings()
+    new_access_token = create_access_token(
+        user_id=user.user_id,
+        companies=companies,
+    )
+    new_refresh_token = generate_refresh_token()
+    csrf_token = generate_csrf_token()
+
+    refresh_expires_at = (
+        datetime.now(timezone.utc)
+        + timedelta(days=settings.refresh_token_expire_days)
+    )
+
+    create_refresh_session(
+        user_id=user.user_id,
+        token=new_refresh_token,
+        expires_at=refresh_expires_at,
+    )
+
+    response.set_cookie(
+        key=settings.access_token_cookie_name,
+        value=new_access_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path=settings.cookie_path,
+    )
+
+    response.set_cookie(
+        key=settings.refresh_token_cookie_name,
+        value=new_refresh_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path=settings.refresh_cookie_path,
+    )
+
+    response.set_cookie(
+        key=settings.csrf_cookie_name,
+        value=csrf_token,
+        httponly=False,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path=settings.cookie_path,
+    )
+
+    return {
+        "success": True,
+        "message": "Password changed successfully.",
+    }
+

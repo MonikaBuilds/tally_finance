@@ -16,7 +16,10 @@ from app.security.organization_store import (
     initialize_organization_store,
 )
 
-from app.security.user_store import initialize_user_store
+from app.security.user_store import (
+    initialize_user_store,
+    bootstrap_initial_admin,
+)
 from app.tally.client import TallyClient
 from app.security.csrf import (
     csrf_protection_middleware,
@@ -29,6 +32,9 @@ from app.cache import (
 )
 
 
+from app.security.permissions import initialize_rbac_store
+
+
 configure_logging()
 auth_settings = get_auth_settings()
 
@@ -37,6 +43,8 @@ async def lifespan(app: FastAPI):
     # Create authentication tables in dependency order.
     initialize_organization_store()
     initialize_user_store()
+    initialize_rbac_store()
+    bootstrap_initial_admin()
     initialize_refresh_store()
 
     # Start shared HTTP client for Tally connections.

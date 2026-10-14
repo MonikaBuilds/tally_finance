@@ -4,7 +4,22 @@ import app.api.chat as chat_api
 from app.main import app
 
 
+import pytest
+from app.security.auth import UserContext, get_current_user
+
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def override_chat_user(monkeypatch):
+    test_user = UserContext(
+        user_id="user-001",
+        allowed_companies=("ABC Pvt Ltd", "*"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: test_user
+    monkeypatch.setattr("app.api.chat.get_user_organization_id", lambda uid: "e7747b1f-36c9-4ea1-85d9-965f5c55d679")
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_write_request_is_blocked():
@@ -56,7 +71,8 @@ def test_chat_api_returns_expected_structure(
 ):
     async def fake_process_chat_message(
         message,
-        company_name=None
+        company_name=None,
+        **kwargs
     ):
         return {
             "success": True,
@@ -103,7 +119,8 @@ def test_tally_failure_is_returned_safely(
 ):
     async def fake_process_chat_message(
         message,
-        company_name=None
+        company_name=None,
+        **kwargs
     ):
         return {
             "success": False,

@@ -1,28 +1,33 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.security.auth import UserContext
 from app.security.permissions import (
     assign_permission_to_user,
     assign_role_to_user,
+    can_manage_role,
     get_all_permissions,
     get_all_roles,
     get_user_access,
+    is_admin,
+    is_superadmin,
     remove_permission_from_user,
+    remove_role_from_user,
     require_admin,
     role_exists,
-    can_manage_role,
-    is_superadmin,
-    is_admin,
     user_has_permission,
 )
 
 from app.security.user_store import (
     create_user,
+    delete_user,
     get_all_users,
+    get_user_by_id,
     get_user_companies,
     get_user_organization_id,
     set_user_active_status,
+    set_user_companies,
+    update_user_password,
     user_belongs_to_organization,
 )
 
@@ -245,6 +250,7 @@ class AdminUserResponse(BaseModel):
     is_active: bool
     roles: list[str]
     permissions: list[str]
+    companies: list[str] = []
 
 
 class AssignPermissionRequest(BaseModel):
@@ -256,6 +262,7 @@ class UpdateUserStatusRequest(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
+    user_id: str | None = None
     username: str
     password: str
     companies: list[str]
@@ -361,6 +368,10 @@ def list_users(
             ):
                 continue
 
+        user_companies = list(
+            get_user_companies(user["user_id"])
+        )
+
         result.append(
             AdminUserResponse(
                 user_id=user["user_id"],
@@ -368,6 +379,7 @@ def list_users(
                 is_active=user["is_active"],
                 roles=roles,
                 permissions=access["permissions"],
+                companies=user_companies,
             )
         )
 
@@ -423,6 +435,7 @@ def create_admin_user(
 
     try:
         user_id = create_user(
+            user_id=request.user_id,
             username=request.username,
             password=request.password,
             companies=companies,
@@ -439,6 +452,10 @@ def create_admin_user(
                 status_code=500,
                 detail="Unable to assign role to user.",
             )
+
+        if request.role_name in ("admin", "superadmin"):
+            for perm in ("financial", "inventory", "banking", "tax"):
+                assign_permission_to_user(user_id, perm)
 
     except ValueError as exc:
         raise HTTPException(
@@ -588,3 +605,200 @@ def update_user_status(
         "user_id": user_id,
         "is_active": request.is_active,
     }
+
+
+class UpdateUserCompaniesRequest(BaseModel):
+    companies: list[str]
+
+
+@router.put(
+    "/users/{user_id}/companies",
+)
+def update_user_companies(
+    user_id: str,
+    request: UpdateUserCompaniesRequest,
+    current_user: UserContext = Depends(require_admin),
+):
+    """
+    Update company access for an existing manageable user.
+
+    The authenticated manager may only assign companies that exist
+    within their own allowed company access scope.
+    """
+    ensure_can_manage_user(
+        current_user=current_user,
+        target_user_id=user_id,
+    )
+
+    validated_companies = ensure_can_assign_companies(
+        current_user=current_user,
+        companies=request.companies,
+    )
+
+    try:
+        updated_companies = set_user_companies(
+            user_id=user_id,
+            companies=validated_companies,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "success": True,
+        "message": "User company access updated successfully.",
+        "user_id": user_id,
+        "companies": list(updated_companies),
+    }
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role_name: str
+
+
+@router.put(
+    "/users/{user_id}/role",
+)
+def update_user_role(
+    user_id: str,
+    request: UpdateUserRoleRequest,
+    current_user: UserContext = Depends(require_admin),
+):
+    """
+    Update or change the role for an existing manageable user.
+
+    Superadmin may assign 'admin' or 'user' roles.
+    Admin may only manage 'user' accounts and cannot promote to 'admin'.
+    """
+    ensure_can_manage_user(
+        current_user=current_user,
+        target_user_id=user_id,
+    )
+
+    if not role_exists(request.role_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid role.",
+        )
+
+    if not can_manage_role(
+        current_user.user_id,
+        request.role_name,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to assign this role.",
+        )
+
+    target_access = get_user_access(user_id)
+    existing_roles = target_access.get("roles", [])
+
+    for existing_role in existing_roles:
+        remove_role_from_user(user_id, existing_role)
+
+    assigned = assign_role_to_user(user_id, request.role_name)
+    if not assigned:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to assign role to user.",
+        )
+
+    from app.security.refresh_store import revoke_all_user_sessions
+    revoke_all_user_sessions(user_id)
+
+    return {
+        "success": True,
+        "message": "User role updated successfully.",
+        "user_id": user_id,
+        "role_name": request.role_name,
+    }
+
+
+class ResetUserPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+@router.post(
+    "/users/{user_id}/reset-password",
+)
+def reset_user_password(
+    user_id: str,
+    request: ResetUserPasswordRequest,
+    current_user: UserContext = Depends(require_admin),
+):
+    """
+    Reset a user's password.
+
+    Superadmin may reset Admin and User passwords.
+    Admin may reset User passwords only.
+    Revokes all active sessions for the target user immediately.
+    """
+    ensure_can_manage_user(
+        current_user=current_user,
+        target_user_id=user_id,
+    )
+
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    try:
+        update_user_password(
+            user_id=user_id,
+            new_password=request.new_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "success": True,
+        "message": f"Password reset successfully for user {user.username}.",
+        "user_id": user_id,
+    }
+
+
+@router.delete(
+    "/users/{user_id}",
+)
+def delete_admin_user(
+    user_id: str,
+    current_user: UserContext = Depends(require_admin),
+):
+    """
+    Permanently delete a user account and associated assignments.
+
+    Superadmin may delete Admin and User accounts.
+    Admin may delete User accounts only.
+    A manager cannot delete their own account.
+    Revokes all active refresh sessions prior to deletion.
+    """
+    ensure_can_manage_user(
+        current_user=current_user,
+        target_user_id=user_id,
+    )
+
+    from app.security.refresh_store import revoke_all_user_sessions
+    revoke_all_user_sessions(user_id)
+
+    deleted = delete_user(user_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    return {
+        "success": True,
+        "message": "User deleted successfully.",
+        "user_id": user_id,
+    }
+
+
