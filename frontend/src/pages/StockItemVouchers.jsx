@@ -212,6 +212,8 @@ function StockItemVouchers() {
                   voucher_type: row.voucher_type,
                   voucher_number: row.voucher_number,
                   date: row.date,
+                  item: itemName,
+                  godown: godownName,
                 })}`)
               }}
             />

@@ -1139,6 +1139,56 @@ async def fetch_inventory_voucher_detail(
             voucher_number=voucher_number,
         )
 
+    return await _attach_ledger_balances(result, company_name)
+
+
+async def _attach_ledger_balances(result: dict, company_name: str | None) -> dict:
+    """
+    Add Tally's "Current balance" to the party and the other ledgers of
+    the voucher, as on the voucher date. The voucher is still returned
+    (without balances) if Tally cannot answer.
+    """
+    voucher = result.get("voucher")
+
+    if not voucher:
+        return result
+
+    names = [e["ledger"] for e in voucher.get("ledger_entries", [])]
+
+    if voucher.get("party"):
+        names.append(voucher["party"])
+
+    if not names:
+        return result
+
+    try:
+        from app.tally.xml_builders.inventory import build_ledger_balances_request
+        from app.tally.parsers.inventory import parse_ledger_balances
+        from app.tally.parsers.inventory_summary import normalize_master_name
+
+        as_on = (
+            date.fromisoformat(voucher["date"]) if voucher.get("date") else None
+        )
+
+        balances = parse_ledger_balances(
+            await client.send_xml(
+                build_ledger_balances_request(
+                    names, as_on=as_on, company_name=company_name
+                )
+            )
+        )
+    except Exception as e:
+        _log.warning("Could not fetch ledger balances for voucher: %r", e)
+        return result
+
+    def balance_of(name):
+        return balances.get(normalize_master_name(name or "").casefold())
+
+    for entry in voucher.get("ledger_entries", []):
+        entry["balance"] = balance_of(entry["ledger"])
+
+    voucher["party_balance"] = balance_of(voucher.get("party"))
+
     return result
 
 # ============================================================
@@ -1385,7 +1435,27 @@ async def fetch_sales_bills_pending(
     summary.sort(key=lambda r: (r.get("date") or "", r.get("tracking_number") or ""))
     details.sort(key=lambda r: (r.get("date") or "", r.get("voucher_number") or ""))
 
-    return {"success": True, "rows": summary, "details": details, "count": len(summary)}
+    # Tally prints the unit after each quantity ("5 NOS @"): it is the
+    # stock item's own unit. The bills still list without it if the
+    # item master cannot be read.
+    unit = ""
+
+    if stock_item_name:
+        try:
+            master = await _load_item_master(
+                stock_item_name, company_name, as_on=to_date
+            )
+            unit = (master or {}).get("base_units") or ""
+        except Exception as e:
+            _log.warning("Could not read the unit of %r: %r", stock_item_name, e)
+
+    return {
+        "success": True,
+        "rows": summary,
+        "details": details,
+        "count": len(summary),
+        "unit": unit,
+    }
 
 
 # ============================================================
@@ -1722,16 +1792,32 @@ async def fetch_stock_item_vouchers(
 
                 v_type = (v.get("voucher_type") or "").strip().casefold()
 
-                for idx, r in enumerate(item_rows):
-                    if (
-                        idx not in used_indices
-                        and r.get("date") == v.get("date")
-                        and (r.get("voucher_type") or "").strip().casefold() == v_type
-                    ):
-                        v["voucher_number"] = r.get("voucher_number", "")
-                        v["guid"] = r.get("guid", "")
-                        used_indices.add(idx)
-                        break
+                candidates = [
+                    idx for idx, r in enumerate(item_rows)
+                    if idx not in used_indices
+                    and r.get("date") == v.get("date")
+                    and (r.get("voucher_type") or "").strip().casefold() == v_type
+                ]
+
+                # Several vouchers of one type on one day: take the one
+                # whose quantity is the line's, so the line opens its
+                # own voucher.
+                line_quantity = abs(
+                    v.get("inward_quantity") or v.get("outward_quantity") or 0.0
+                )
+                match = next(
+                    (
+                        idx for idx in candidates
+                        if abs(item_rows[idx].get("quantity") or 0.0) == line_quantity
+                    ),
+                    candidates[0] if candidates else None,
+                )
+
+                if match is not None:
+                    r = item_rows[match]
+                    v["voucher_number"] = r.get("voucher_number", "")
+                    v["guid"] = r.get("guid", "")
+                    used_indices.add(match)
 
             opening_q = (master or {}).get("opening_quantity") or 0.0
             opening_v = (master or {}).get("opening_value") or 0.0

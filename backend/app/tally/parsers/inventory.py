@@ -32,6 +32,7 @@ from app.tally.parsers.common import (
 )
 
 from app.tally.parsers.inventory_summary import (
+    NOT_APPLICABLE,
     normalize_master_name,
     resolve_godown,
 )
@@ -1082,6 +1083,236 @@ def _collect_leaf_fields(node, prefix=""):
     return fields
 
 
+# Tally's own voucher-level fields that the Inventory Voucher screens
+# print (delivery / dispatch details). Each is shown only when Tally
+# returned a value for it.
+_VOUCHER_DETAIL_FIELDS = (
+    ("BASICORDERREF", "Order No(s)"),
+    ("BASICSHIPDOCUMENTNO", "Dispatch Doc No."),
+    ("BASICSHIPPEDBY", "Dispatched through"),
+    ("BASICFINALDESTINATION", "Destination"),
+    ("BASICDUEDATEOFPYMT", "Terms of Payment"),
+)
+
+# The Tally list an entry came from says which side of the voucher it
+# is on (stock coming in / going out).
+_ENTRY_LIST_SIDE = {
+    "INVENTORYENTRIESIN.LIST": "in",
+    "INVENTORYENTRIESOUT.LIST": "out",
+}
+
+# Voucher types that book against a purchase / sales ledger. Matching
+# is by name fragment because companies create their own voucher types
+# under these names (same approach as the Bills Pending logic).
+_PURCHASE_LEDGER_TYPES = ("receipt note", "rejections out", "purchase")
+_SALES_LEDGER_TYPES = ("delivery note", "rejections in", "sales")
+
+
+def _yes(text) -> bool:
+    return str(text or "").strip().casefold() == "yes"
+
+
+def _split_rate(text: str) -> tuple[str, str]:
+    """\"10000.00/NOS\" -> (\"10000.00\", \"NOS\"). Unit is \"\" when absent."""
+    rate, _, unit = (text or "").partition("/")
+    return rate.strip(), unit.strip()
+
+
+def _quantity_unit(text: str) -> str:
+    """\"12 NOS\" -> \"NOS\" (what follows the number)."""
+    parts = (text or "").strip().split(None, 1)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _entry_side(tag: str, deemed, amount):
+    """
+    "in" / "out" / None for one inventory entry: the Tally list it came
+    from, else ISDEEMEDPOSITIVE (Yes = stock coming in), else the sign
+    of the amount (debit = stock in is negative in Tally's XML).
+    """
+    base = tag.split("}", 1)[-1]
+
+    if base in _ENTRY_LIST_SIDE:
+        return _ENTRY_LIST_SIDE[base]
+
+    if deemed:
+        return "in" if deemed == "yes" else "out" if deemed == "no" else None
+
+    if amount:
+        return "in" if amount < 0 else "out"
+
+    return None
+
+
+def _tracking(text: str) -> str:
+    """Tally's \"Not Applicable\" tracking number means there is none."""
+    text = (text or "").strip()
+    return "" if text.casefold() == NOT_APPLICABLE.casefold() else text
+
+
+def _field_label(tag: str) -> str:
+    """DESTINATIONGODOWNNAME -> \"Destination Godown\" (Tally's own wording)."""
+    base = tag.upper()
+    base = base[:-4] if base.endswith("NAME") else base
+
+    return re.sub(r"(?<=[A-Z])(GODOWN)", r" \1", base).title()
+
+
+def _batch_allocations(entry) -> list[dict]:
+    """Every godown / batch allocation of an entry, as Tally lists them."""
+    allocations = []
+
+    for node in entry.findall(".//BATCHALLOCATIONS.LIST"):
+        allocations.append(
+            {
+                "godown": normalize_master_name(
+                    _first_text(node, "GODOWNNAME", "GODOWN")
+                ),
+                "batch": _first_text(node, "BATCHNAME", "BATCH"),
+                "quantity": _first_text(node, "ACTUALQTY", "BILLEDQTY"),
+                "rate": _first_text(node, "RATE"),
+                "amount": _first_text(node, "AMOUNT"),
+                "tracking_number": _tracking(_first_text(node, "TRACKINGNUMBER")),
+                # Any other godown Tally names on the allocation
+                # (e.g. the destination godown of a Material Out).
+                "godown_fields": {
+                    key: value
+                    for key, value in _collect_leaf_fields(node).items()
+                    if "GODOWN" in key.upper()
+                    and key.upper() not in ("GODOWNNAME", "GODOWN")
+                },
+            }
+        )
+
+    return allocations
+
+
+def _inventory_entry(node) -> dict:
+    """One inventory entry as the Inventory Voucher screen prints it."""
+    allocations = _batch_allocations(node)
+    first = allocations[0] if allocations else {}
+
+    quantity_text = _first_text(node, "ACTUALQTY") or _first_text(node, "BILLEDQTY")
+    rate_text, rate_unit = _split_rate(_first_text(node, "RATE"))
+    amount_text = _first_text(node, "AMOUNT")
+
+    amount = _optional_number(amount_text)
+    quantity = _optional_number(quantity_text)
+    rate = _optional_number(rate_text)
+
+    # Tally leaves AMOUNT empty on entries it values itself (e.g. the
+    # consumed side of a Stock Journal) and prints quantity x rate.
+    amount_value = abs(amount) if amount else None
+
+    if amount_value is None and quantity is not None and rate is not None:
+        amount_value = abs(quantity) * abs(rate)
+
+    deemed = _text(node, "ISDEEMEDPOSITIVE").strip().casefold()
+    side = _entry_side(node.tag, deemed, amount)
+
+    return {
+        "stock_item": _first_text(node, "STOCKITEMNAME", "STOCKITEM"),
+        "godown": _first_text(node, "GODOWNNAME", "GODOWN") or first.get("godown", ""),
+        "batch": _first_text(node, "BATCHNAME", "BATCH") or first.get("batch", ""),
+        "actual_quantity": _first_text(node, "ACTUALQTY"),
+        "billed_quantity": _first_text(node, "BILLEDQTY"),
+        "rate": _first_text(node, "RATE"),
+        "amount": amount_text,
+        "tracking_number": _tracking(_first_text(node, "TRACKINGNUMBER"))
+        or first.get("tracking_number", ""),
+        "order_due_date": _first_text(node, "ORDERDUEDATE", "DUEDATE"),
+        # Derived, display-ready values.
+        "side": side,
+        "unit": rate_unit or _quantity_unit(quantity_text),
+        "rate_value": rate,
+        "quantity_value": abs(quantity) if quantity is not None else None,
+        "amount_value": amount_value,
+        "allocations": allocations,
+        "fields": _collect_leaf_fields(node),
+        "_source": {node.tag},
+    }
+
+
+_MERGE_FIELDS = (
+    "godown", "batch", "actual_quantity", "billed_quantity", "rate",
+    "amount", "tracking_number", "order_due_date", "unit",
+    "rate_value", "quantity_value", "amount_value",
+)
+
+
+def _merge_inventory_entries(nodes) -> list[dict]:
+    """
+    Tally can hand the same entry back under more than one list (the
+    voucher's ALLINVENTORYENTRIES and its IN / OUT lists), one copy
+    richer than the other. Entries of the same item, quantity and side
+    that come from DIFFERENT lists are one entry: merged, keeping every
+    value Tally gave. Two entries from the same list are never merged,
+    so a voucher that really lists an item twice keeps both lines.
+    """
+    entries = [_inventory_entry(node) for node in nodes]
+
+    for position, entry in enumerate(entries):
+        entry["_position"] = position
+
+    merged: list[dict] = []
+
+    def key(entry):
+        return (
+            (entry["stock_item"] or "").casefold(),
+            entry["quantity_value"],
+        )
+
+    # Entries with a known side first, so one with no side information
+    # is matched against them rather than the other way round.
+    for entry in sorted(entries, key=lambda e: e["side"] is None):
+        target = next(
+            (
+                m for m in merged
+                if key(m) == key(entry)
+                and (m["side"] == entry["side"] or entry["side"] is None)
+                and not (m["_source"] & entry["_source"])
+            ),
+            None,
+        )
+
+        if target is None:
+            merged.append(entry)
+            continue
+
+        target["_source"] |= entry["_source"]
+        target["_position"] = min(target["_position"], entry["_position"])
+
+        for field in _MERGE_FIELDS:
+            if target.get(field) in (None, "") and entry.get(field) not in (None, ""):
+                target[field] = entry[field]
+
+        if not target["allocations"]:
+            target["allocations"] = entry["allocations"]
+
+        target["fields"] = {**entry["fields"], **target["fields"]}
+
+    # Keep Tally's own order (the position of each entry's first copy).
+    merged.sort(key=lambda e: e["_position"])
+
+    for entry in merged:
+        entry.pop("_source", None)
+        entry.pop("_position", None)
+
+    return merged
+
+
+def _entries_total(entries: list[dict]) -> dict:
+    """Quantity (one unit only) and amount of a group of entries."""
+    units = {e["unit"] for e in entries if e["quantity_value"] is not None}
+    quantities = [e["quantity_value"] for e in entries if e["quantity_value"] is not None]
+
+    return {
+        "quantity": sum(quantities) if quantities and len(units) <= 1 else None,
+        "unit": next(iter(units)) if len(units) == 1 else "",
+        "amount": sum(e["amount_value"] or 0.0 for e in entries),
+    }
+
+
 def parse_inventory_voucher_detail(
     xml_text: str,
     voucher_type: str | None = None,
@@ -1091,6 +1322,12 @@ def parse_inventory_voucher_detail(
     """
     Parse one Tally inventory voucher, preserving the inventory fields
     returned by Tally. No inventory values are hardcoded.
+
+    Besides the raw entries, the result carries what the Inventory
+    Voucher Alteration screen prints: which side each entry is on
+    (Source / Destination of a Stock Journal), the party and the
+    purchase / sales ledger, delivery details, totals and the
+    cancelled / optional flags as real booleans.
     """
 
     root = parse_xml(xml_text)
@@ -1110,7 +1347,7 @@ def parse_inventory_voucher_detail(
         if voucher_date and current_date and current_date != voucher_date:
             continue
 
-        entries = []
+        party = _first_text(voucher, "PARTYLEDGERNAME", "PARTYNAME")
 
         # Accounting side of the voucher (e.g. the sales / purchase
         # ledger of an order). Read straight from the Tally response.
@@ -1141,61 +1378,109 @@ def parse_inventory_voucher_detail(
                         "ledger": ledger_name,
                         "amount": _text(ledger, "AMOUNT"),
                         "is_party": (
-                            _text(ledger, "ISPARTYLEDGER").casefold() == "yes"
+                            _yes(_text(ledger, "ISPARTYLEDGER"))
+                            or (
+                                bool(party)
+                                and ledger_name.casefold()
+                                == normalize_master_name(party).casefold()
+                            )
                         ),
                     }
                 )
 
         voucher_fields = _collect_leaf_fields(voucher)
 
-        # Godown named on the voucher itself (Material In / Out show a
-        # Source / Destination Godown). Whatever Tally calls it, any
-        # voucher-level GODOWN field is passed through.
+        merged_entries = _merge_inventory_entries(_inventory_entry_nodes(voucher))
+
+        # Tally also sends entries that name no stock item - the empty
+        # side of a Material Out / In, which only records its godown.
+        # They are not inventory lines.
+        entries = [e for e in merged_entries if e["stock_item"]]
+        placeholders = [e for e in merged_entries if not e["stock_item"]]
+
+        sides = {e["side"] for e in entries}
+        is_transfer = "in" in sides and "out" in sides
+
+        for entry in entries:
+            entry["role"] = (
+                None if not is_transfer
+                else "destination" if entry["side"] == "in" else "source"
+            )
+
+        # Godowns the voucher screen prints in its header (Material Out:
+        # Destination Godown). Labels follow Tally's own field names.
+        godown_values: dict[str, list[str]] = {}
+
+        def add_godown(label: str, value: str):
+            value = normalize_master_name(value)
+
+            if value and value not in godown_values.setdefault(label, []):
+                godown_values[label].append(value)
+
+        for key, value in voucher_fields.items():
+            if "GODOWN" in key.upper() and "." not in key:
+                add_godown(_field_label(key), value)
+
+        for entry in placeholders:
+            if entry["godown"]:
+                add_godown(
+                    "Destination Godown" if entry["side"] == "in" else "Source Godown",
+                    entry["godown"],
+                )
+
+        if not is_transfer:
+            for entry in entries:
+                for allocation in entry["allocations"]:
+                    for key, value in allocation.get("godown_fields", {}).items():
+                        add_godown(_field_label(key.split(".")[-1]), value)
+
         voucher_godowns = {
-            key: normalize_master_name(value)
-            for key, value in voucher_fields.items()
-            if "GODOWN" in key.upper() and "." not in key
+            label: ", ".join(values) for label, values in godown_values.items()
         }
 
-        for entry in _inventory_entry_nodes(voucher):
-            entry_fields = _collect_leaf_fields(entry)
+        # Party's mailing name and address, when the voucher carries
+        # them (Tally then prints Ledger Account / Name and Address).
+        address_lines = []
 
-            entries.append(
-                {
-                    "stock_item": _first_text(
-                        entry, "STOCKITEMNAME", "STOCKITEM"
-                    ),
-                    "godown": _first_text(
-                        entry, "GODOWNNAME", "GODOWN"
-                    ) or _first_text(
-                        entry.find(".//BATCHALLOCATIONS.LIST"),
-                        "GODOWNNAME",
-                        "GODOWN",
-                    ),
-                    "batch": _first_text(
-                        entry, "BATCHNAME", "BATCH"
-                    ) or _first_text(
-                        entry.find(".//BATCHALLOCATIONS.LIST"),
-                        "BATCHNAME",
-                        "BATCH",
-                    ),
-                    "actual_quantity": _first_text(
-                        entry, "ACTUALQTY"
-                    ),
-                    "billed_quantity": _first_text(
-                        entry, "BILLEDQTY"
-                    ),
-                    "rate": _first_text(entry, "RATE"),
-                    "amount": _first_text(entry, "AMOUNT"),
-                    "tracking_number": _first_text(
-                        entry, "TRACKINGNUMBER"
-                    ),
-                    "order_due_date": _first_text(
-                        entry, "ORDERDUEDATE", "DUEDATE"
-                    ),
-                    "fields": entry_fields,
-                }
-            )
+        for tag in ("ADDRESS", "BASICBUYERADDRESS"):
+            address_lines = [
+                (line.text or "").strip()
+                for line in voucher.findall(f"./{tag}.LIST/{tag}")
+                if (line.text or "").strip()
+            ]
+
+            if address_lines:
+                break
+
+        party_details = (
+            {
+                "name": _first_text(voucher, "PARTYMAILINGNAME", "BASICBUYERNAME")
+                or party,
+                "address": address_lines,
+            }
+            if address_lines
+            else None
+        )
+
+        type_key = current_type.strip().casefold()
+
+        ledger_label = (
+            "Purchase" if any(t in type_key for t in _PURCHASE_LEDGER_TYPES)
+            else "Sales" if any(t in type_key for t in _SALES_LEDGER_TYPES)
+            else ""
+        )
+
+        totals = {"all": _entries_total(entries)}
+
+        if is_transfer:
+            totals["source"] = _entries_total([e for e in entries if e["role"] == "source"])
+            totals["destination"] = _entries_total([e for e in entries if e["role"] == "destination"])
+
+        details = [
+            {"label": label, "value": voucher_fields[tag]}
+            for tag, label in _VOUCHER_DETAIL_FIELDS
+            if voucher_fields.get(tag)
+        ]
 
         return {
             "success": True,
@@ -1208,18 +1493,21 @@ def parse_inventory_voucher_detail(
                 "reference_date": format_tally_date(
                     _text(voucher, "REFERENCEDATE")
                 ),
-                "party": _first_text(
-                    voucher, "PARTYLEDGERNAME", "PARTYNAME"
-                ),
+                "party": party,
                 "narration": _text(voucher, "NARRATION"),
-                "is_deleted": _text(voucher, "ISDELETED"),
-                "is_cancelled": _text(voucher, "ISCANCELLED"),
+                "is_deleted": _yes(_text(voucher, "ISDELETED")),
+                "is_cancelled": _yes(_text(voucher, "ISCANCELLED")),
+                "is_optional": _yes(_text(voucher, "ISOPTIONAL")),
                 "inventory_entries": entries,
                 "inventory_entry_count": len(entries),
                 "ledger_entries": ledger_entries,
                 "voucher_godowns": voucher_godowns,
-                "is_order": current_type.strip().casefold()
-                in ("sales order", "purchase order"),
+                "party_details": party_details,
+                "is_order": type_key in ("sales order", "purchase order"),
+                "is_transfer": is_transfer,
+                "ledger_label": ledger_label,
+                "details": details,
+                "totals": totals,
                 "fields": voucher_fields,
             },
         }
@@ -1228,6 +1516,48 @@ def parse_inventory_voucher_detail(
         "success": True,
         "voucher": None,
     }
+
+
+def parse_ledger_balances(xml_text: str) -> dict:
+    """
+    Closing balance of each ledger in a Tally Ledger collection:
+    {name (casefolded): {"amount": float, "side": "Dr" | "Cr"}}.
+
+    Tally's XML carries a debit balance as a negative number and a
+    credit balance as a positive one; a balance that already carries a
+    Dr / Cr suffix is taken as printed. Ledgers with no balance field
+    are left out rather than reported as zero.
+    """
+    root = parse_xml(xml_text)
+    balances = {}
+
+    for ledger in root.findall(".//LEDGER"):
+        name = (ledger.get("NAME") or ledger.findtext("NAME") or "").strip()
+        raw = (ledger.findtext("CLOSINGBALANCE") or "").strip()
+
+        if not name or not raw:
+            continue
+
+        upper = raw.replace(",", "").replace(" ", "").upper()
+        digits = upper[:-2] if upper.endswith(("DR", "CR")) else upper
+        number = _optional_number(digits)
+
+        if number is None:
+            continue
+
+        if upper.endswith("DR"):
+            side = "Dr"
+        elif upper.endswith("CR"):
+            side = "Cr"
+        else:
+            side = "Dr" if number < 0 else "Cr"
+
+        balances[normalize_master_name(name).casefold()] = {
+            "amount": abs(number),
+            "side": side,
+        }
+
+    return balances
 
 
 # ============================================================
