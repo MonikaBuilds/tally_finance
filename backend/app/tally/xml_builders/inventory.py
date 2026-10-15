@@ -678,7 +678,19 @@ def build_inventory_voucher_detail_request(
                             NARRATION,
                             ISDELETED,
                             ISCANCELLED,
+                            ISOPTIONAL,
+                            BASICORDERREF,
+                            BASICSHIPDOCUMENTNO,
+                            BASICSHIPPEDBY,
+                            BASICFINALDESTINATION,
+                            BASICDUEDATEOFPYMT,
+                            PARTYMAILINGNAME,
+                            ADDRESS,
+                            BASICBUYERNAME,
+                            BASICBUYERADDRESS,
                             ALLINVENTORYENTRIES.*,
+                            INVENTORYENTRIESIN.*,
+                            INVENTORYENTRIESOUT.*,
                             ALLLEDGERENTRIES.*
                         </FETCH>
                     </COLLECTION>
@@ -687,6 +699,61 @@ def build_inventory_voucher_detail_request(
                             NAME="InventoryVoucherDetailFilter">
                         $VoucherTypeName = "{safe_type}" AND
                         $VoucherNumber = "{safe_number}"
+                    </SYSTEM>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+
+
+def build_ledger_balances_request(
+    ledger_names: list[str],
+    as_on: date | None = None,
+    company_name: str | None = None,
+) -> str:
+    """
+    Closing balance of the named ledgers as on a date - the "Current
+    balance" Tally prints under the party / purchase / sales ledger of a
+    voucher. Only the to-date is sent: Tally stops answering master
+    collections when a from-date is sent with them (see
+    _load_item_master).
+    """
+    company_xml = build_company_variable(company_name)
+    to_date_xml = _date_variable("SVTODATE", as_on)
+
+    names = [n for n in dict.fromkeys(ledger_names or []) if n]
+    formula = " OR ".join(f'$Name = "{escape(name)}"' for name in names) or '$Name = ""'
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Voucher Ledger Balances</ID>
+    </HEADER>
+
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                {company_xml}
+                {to_date_xml}
+            </STATICVARIABLES>
+
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Voucher Ledger Balances">
+                        <TYPE>Ledger</TYPE>
+                        <FILTER>VoucherLedgerBalanceFilter</FILTER>
+                        <NATIVEMETHOD>Name, ClosingBalance</NATIVEMETHOD>
+                    </COLLECTION>
+
+                    <SYSTEM TYPE="Formulae"
+                            NAME="VoucherLedgerBalanceFilter">
+                        {formula}
                     </SYSTEM>
                 </TDLMESSAGE>
             </TDL>
