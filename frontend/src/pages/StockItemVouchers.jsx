@@ -9,7 +9,7 @@ import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
-import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
+import { formatSignedAmount, formatSignedQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 /*
  * Stock Item Monthly Summary -> (click a month) -> Stock Item
@@ -45,7 +45,7 @@ function StockItemVouchers() {
   const { data: response, loading, error } = useFetch(path)
 
   const unit = response?.unit
-  const qty = (value) => formatQuantityWithUnit(value, unit)
+  const qty = (value) => formatSignedQuantityWithUnit(value, unit)
 
   const opening = response?.opening
   const totals = response?.totals
@@ -117,19 +117,32 @@ function StockItemVouchers() {
         return r.particulars
       },
     },
-    { key: 'voucher_type', label: 'Vch Type', render: (r) => (r.kind === 'voucher' ? r.voucher_type : '') },
     {
-      key: 'voucher_number',
-      label: 'Vch No.',
-      render: (r) => (r.kind === 'voucher' ? r.voucher_number : r.kind === 'pending_child' ? r.tracking_number : ''),
+      key: 'voucher_type',
+      label: 'Vch Type',
+      // Tally prints a Bills Pending note's tracking number and
+      // quantity right after the party, not in the value columns.
+      render: (r) =>
+        r.kind === 'voucher' ? (
+          r.voucher_type
+        ) : r.kind === 'pending_child' ? (
+          <em>
+            {[r.tracking_number, hasValue(r.quantity) ? qty(r.quantity) : '']
+              .filter(Boolean)
+              .join('\u00A0\u00A0\u00A0\u00A0')}
+          </em>
+        ) : (
+          ''
+        ),
     },
+    { key: 'voucher_number', label: 'Vch No.', render: (r) => (r.kind === 'voucher' ? r.voucher_number : '') },
     { key: 'inward_quantity', label: 'Inwards Qty', align: 'right', render: (r) => quantityCell(r, 'inward_quantity') },
     { key: 'inward_value', label: 'Inwards Value', align: 'right', render: (r) => valueCell(r, 'inward_value') },
     {
       key: 'outward_quantity',
       label: 'Outwards Qty',
       align: 'right',
-      render: (r) => (r.kind === 'pending_child' ? qty(r.quantity) : quantityCell(r, 'outward_quantity')),
+      render: (r) => quantityCell(r, 'outward_quantity'),
     },
     { key: 'outward_value', label: 'Outwards Value', align: 'right', render: (r) => valueCell(r, 'outward_value') },
     { key: 'closing_quantity', label: 'Closing Qty', align: 'right', render: (r) => quantityCell(r, 'closing_quantity') },

@@ -679,6 +679,8 @@ def build_inventory_voucher_detail_request(
                             ISDELETED,
                             ISCANCELLED,
                             ISOPTIONAL,
+                            ISINVOICE,
+                            VCHENTRYMODE,
                             BASICORDERREF,
                             BASICSHIPDOCUMENTNO,
                             BASICSHIPPEDBY,

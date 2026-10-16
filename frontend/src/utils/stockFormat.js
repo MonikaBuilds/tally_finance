@@ -39,6 +39,17 @@ export function formatQuantityWithUnit(quantity, unit) {
   return `${QUANTITY_FORMAT.format(Number(quantity))}${unit ? ` ${unit}` : ''}`
 }
 
+// Same as formatQuantityWithUnit, with a negative quantity printed the
+// way Tally prints it - "(-)7 NOS".
+export function formatSignedQuantityWithUnit(quantity, unit) {
+  if (quantity === undefined || quantity === null) return '-'
+
+  const number = Number(quantity)
+  const text = `${QUANTITY_FORMAT.format(Math.abs(number))}${unit ? ` ${unit}` : ''}`
+
+  return number < 0 ? `(-)${text}` : text
+}
+
 // Builds "?a=1&b=2" from an object, dropping empty values.
 export function toQuery(params) {
   const query = new URLSearchParams(

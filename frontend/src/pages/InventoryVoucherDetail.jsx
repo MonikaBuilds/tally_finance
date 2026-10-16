@@ -86,10 +86,10 @@ function ItemCell({ entry }) {
               {allocation.quantity ? ` — ${trimmed(allocation.quantity)}` : ''}
             </span>
           ))
-        : (entry.godown || entry.batch) && (
-            <span className="voucher-item-sub">
-              {[entry.godown, entry.batch].filter(Boolean).join(' · ')}
-            </span>
+        : batchText(entry) && (
+            // One godown / the default batch is not printed by Tally;
+            // a real batch name is.
+            <span className="voucher-item-sub">{batchText(entry)}</span>
           )}
 
       {entry.tracking_number && (
@@ -97,6 +97,42 @@ function ItemCell({ entry }) {
       )}
     </div>
   )
+}
+
+// Physical Stock vouchers record counted quantities only: Tally prints
+// Batch/Lot No., Mfg Dt., Expiry Date, Quantity and Amount - no rate.
+const isPhysicalStock = (voucherType) =>
+  trimmed(voucherType).toLowerCase().includes('physical stock')
+
+// "Primary Batch" is Tally's name for "no batch".
+const batchText = (entry) =>
+  /^primary batch$/i.test(trimmed(entry.batch)) ? '' : trimmed(entry.batch)
+
+function physicalColumns() {
+  return [
+    {
+      key: 'stock_item',
+      label: 'Name of Item',
+      render: (entry) => (
+        <div className="voucher-item"><strong>{entry.stock_item}</strong></div>
+      ),
+    },
+    { key: 'batch', label: 'Batch/Lot No.', align: 'right', render: batchText },
+    { key: 'mfg_date', label: 'Mfg Dt.', align: 'right', render: (entry) => trimmed(entry.mfg_date) },
+    { key: 'expiry_date', label: 'Expiry Date', align: 'right', render: (entry) => trimmed(entry.expiry_date) },
+    {
+      key: 'quantity',
+      label: 'Quantity',
+      align: 'right',
+      render: (entry) => trimmed(entry.actual_quantity) || trimmed(entry.billed_quantity),
+    },
+    {
+      key: 'amount',
+      label: 'Amount',
+      align: 'right',
+      render: (entry) => (entry.amount_value ? entryAmount(entry) : ''),
+    },
+  ]
 }
 
 function entryColumns(entries, isOrder) {
@@ -130,7 +166,7 @@ function entryColumns(entries, isOrder) {
     { key: 'unit', label: 'per', render: (entry) => entry.unit || '' }
   )
 
-  if (isOrder) {
+  if (isOrder && entries.some((entry) => trimmed(entry.order_due_date))) {
     columns.push({ key: 'order_due_date', label: 'Due on', render: (entry) => entry.order_due_date || '' })
   }
 
@@ -139,30 +175,44 @@ function entryColumns(entries, isOrder) {
   return columns
 }
 
-function TotalLine({ total }) {
+function TotalLine({ total, hideZeroAmount = false }) {
   if (!total) return null
 
   return (
     <div className="voucher-total">
       <span>Total</span>
       <span>{total.quantity !== null && total.quantity !== undefined ? formatQuantityWithUnit(total.quantity, total.unit) : ''}</span>
-      <strong>{formatAmount(total.amount)}</strong>
+      <strong>{total.amount || !hideZeroAmount ? formatAmount(total.amount) : ''}</strong>
     </div>
   )
 }
 
-function Field({ label, value, note }) {
+function Field({ label, value, note, aside }) {
   if (!value) return null
 
   return (
-    <div className="voucher-field">
+    <div className={aside ? 'voucher-field voucher-field-with-aside' : 'voucher-field'}>
       <span className="voucher-field-label">{label}</span>
       <div>
         <strong>{value}</strong>
         {note && <span className="voucher-field-note">Current balance: {note}</span>}
       </div>
+      {aside && <div className="voucher-field-aside">{aside}</div>}
     </div>
   )
+}
+
+// Material In / Material Out print only the party and the godown on the
+// other side of the movement (no reference). Tally names the godown
+// field after the voucher type and prints "Not Applicable" when the
+// voucher names none.
+const materialMovement = (voucherType) => {
+  const key = trimmed(voucherType).toLowerCase()
+
+  if (key.includes('material in')) return 'Source Godown'
+  if (key.includes('material out')) return 'Destination Godown'
+
+  return ''
 }
 
 function InventoryVoucherDetail() {
@@ -173,10 +223,6 @@ function InventoryVoucherDetail() {
   const voucherType = params.get('voucher_type') || ''
   const voucherNumber = params.get('voucher_number') || ''
   const voucherDate = params.get('date') || ''
-
-  // The stock item / godown whose vouchers the user came from.
-  const contextItem = params.get('item') || ''
-  const contextGodown = params.get('godown') || ''
 
   const query = {
     voucher_type: voucherType,
@@ -192,7 +238,12 @@ function InventoryVoucherDetail() {
   const voucher = response?.voucher || null
 
   const entries = voucher?.inventory_entries || []
-  const columns = voucher ? entryColumns(entries, voucher.is_order) : []
+  const physical = voucher ? isPhysicalStock(voucher.voucher_type) : false
+  const columns = voucher
+    ? physical
+      ? physicalColumns()
+      : entryColumns(entries, voucher.is_order)
+    : []
 
   // The party is printed on its own line; the other ledgers of the
   // voucher (the purchase / sales ledger) follow it.
@@ -202,12 +253,25 @@ function InventoryVoucherDetail() {
   // A voucher that carries the party's mailing details prints them in
   // a Ledger Account / Name and Address block instead of the plain
   // "Party A/c name" line.
-  const partyDetails = voucher?.party_details || null
+  // Tally prints this block for vouchers entered in invoice mode (e.g.
+  // Rejections Out); the others show the plain "Party A/c name" line
+  // with its balance.
+  const partyDetails = voucher?.is_invoice ? voucher?.party_details || null : null
+  const movementLabel = voucher ? materialMovement(voucher.voucher_type) : ''
+  // Tally asks this on Material Out (the voucher types that move goods
+  // out under GST).
+  const showGstEway = voucher
+    ? /material out/.test(trimmed(voucher.voucher_type).toLowerCase())
+    : false
+  const voucherGodowns = voucher?.voucher_godowns || {}
+  const typeKey = trimmed(voucher?.voucher_type).toLowerCase()
   const addressTitle =
     voucher?.ledger_label === 'Purchase'
       ? "Supplier's Name and Address"
       : voucher?.ledger_label === 'Sales'
-        ? "Buyer's Name and Address"
+        ? /rejections in|delivery note/.test(typeKey)
+          ? "Customer's Name and Address"
+          : "Buyer's Name and Address"
         : 'Name and Address'
 
   return (
@@ -254,26 +318,43 @@ function InventoryVoucherDetail() {
             </div>
 
             <div className="voucher-fields">
-              <Field label="Stock Item" value={contextItem} />
-              <Field label="Godown" value={contextGodown} />
-
-              <Field
-                label={voucher.is_order ? 'Order No.' : 'Reference No.'}
-                value={voucher.reference}
-              />
-              <Field label="Reference Date" value={voucher.reference_date && formatDate(voucher.reference_date)} />
+              {!movementLabel && !voucher.is_order && !partyDetails && (
+                <Field
+                  label="Reference No"
+                  value={voucher.reference}
+                  aside={
+                    voucher.reference_date
+                      ? <>Date <strong>{formatDate(voucher.reference_date)}</strong></>
+                      : null
+                  }
+                />
+              )}
 
               {!partyDetails && (
                 <Field
                   label="Party A/c name"
                   value={voucher.party}
                   note={balanceText(voucher.party_balance)}
+                  aside={
+                    voucher.is_order && voucher.reference
+                      ? <>Order no. <strong>{voucher.reference}</strong></>
+                      : null
+                  }
                 />
               )}
 
-              {Object.entries(voucher.voucher_godowns || {}).map(([name, value]) => (
-                <Field key={name} label={name} value={value} />
-              ))}
+              {Object.entries(voucherGodowns)
+                .filter(([name]) => name !== movementLabel)
+                .map(([name, value]) => (
+                  <Field key={name} label={name} value={value} />
+                ))}
+
+              {movementLabel && (
+                <Field
+                  label={movementLabel}
+                  value={voucherGodowns[movementLabel] || 'Not Applicable'}
+                />
+              )}
 
               {ledgers.map((entry) => (
                 <Field
@@ -284,7 +365,7 @@ function InventoryVoucherDetail() {
                 />
               ))}
 
-              {(voucher.details || []).map((detail) => (
+              {(voucher.is_order ? [] : voucher.details || []).map((detail) => (
                 <Field key={detail.label} label={detail.label} value={detail.value} />
               ))}
             </div>
@@ -330,20 +411,46 @@ function InventoryVoucherDetail() {
               </>
             ) : (
               <>
+                {physical && (
+                  <p className="voucher-heading">Physical Stock Verification</p>
+                )}
                 <DataTable columns={columns} rows={entries} />
-                <TotalLine total={voucher.totals?.all} />
+                <TotalLine total={voucher.totals?.all} hideZeroAmount={physical} />
               </>
             )}
 
-            {voucher.narration && (
-              <p className="card-note voucher-narration">
-                <strong>Narration:</strong> {voucher.narration}
-              </p>
+            {showGstEway && (
+              <div className="voucher-fields">
+                <Field label="Provide GST/e-Way Bill details" value={voucher.gst_eway_details} />
+              </div>
             )}
+
+            <p className="card-note voucher-narration">
+              <strong>Narration:</strong> {voucher.narration}
+            </p>
 
             <div className="table-footer">
               <span>Inventory Entries: {voucher.inventory_entry_count ?? 0}</span>
             </div>
+
+            {params.get('debug') === '1' && (
+              <pre className="card-note" style={{ whiteSpace: 'pre-wrap' }}>
+                {JSON.stringify(
+                  {
+                    is_invoice: voucher.is_invoice,
+                    party: voucher.party,
+                    has_party_details: Boolean(voucher.party_details),
+                    fields: Object.fromEntries(
+                      Object.entries(voucher.fields || {}).filter(
+                        ([key]) => !/^(ALLINVENTORY|INVENTORYENTRIES|ALLLEDGER|LEDGERENTRIES)/i.test(key)
+                      )
+                    ),
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+            )}
           </div>
         )}
       </Card>

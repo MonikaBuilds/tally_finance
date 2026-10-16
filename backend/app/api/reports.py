@@ -2148,7 +2148,7 @@ async def get_inventory_voucher_detail_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="inventory_voucher_v3",
+            report_name="inventory_voucher_v4",
             company_name=company_name,
             current_user=current_user,
             params={

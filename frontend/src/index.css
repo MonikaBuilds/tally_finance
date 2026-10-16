@@ -2310,6 +2310,20 @@ textarea {
   align-items: baseline;
 }
 
+.voucher-field-with-aside {
+  grid-template-columns: minmax(130px, 200px) minmax(0, 1fr) auto;
+}
+
+.voucher-field-aside {
+  margin-right: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.voucher-field-aside strong {
+  margin-left: 8px;
+}
+
 .voucher-field-label {
   color: var(--text-muted);
   font-size: 13px;
@@ -2387,7 +2401,8 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .voucher-field {
+  .voucher-field,
+  .voucher-field-with-aside {
     grid-template-columns: minmax(0, 1fr);
   }
 }
