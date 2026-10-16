@@ -155,33 +155,7 @@ First, install the following software on the Windows Server:
 
 ---
 
-### Step 2: Configure Tally Prime (Enable Port 9000)
-1. Open **Tally Prime** on the server.
-2. Press **`F1` (Help)** $\to$ **Settings** $\to$ **Connectivity** $\to$ **Client/Server configuration**.
-3. Set:
-   * **TallyPrime acts as**: `Both` (or `Server`)
-   * **Port**: `9000`
-4. Press `Enter` to accept and save. Restart Tally Prime.
-5. **Open your company in Tally Prime** (e.g. `ABC Pvt Ltd`).  
-   *(Keep Tally running with the company open so data can be fetched).*
-
----
-
-### Step 3: Setup & Verify Redis (Memurai)
-1. Download and run the **Memurai** installer from [memurai.com](https://www.memurai.com/).
-2. Accept the default port `6379`. It will start running as a Windows Service automatically.
-3. Open PowerShell / Command Prompt and verify:
-   ```powershell
-   memurai-cli ping
-   ```
-   *Expected output:*
-   ```
-   PONG
-   ```
-
----
-
-### Step 4: Create MySQL Database
+### Step 2: Create MySQL Database
 1. Open the MySQL Command Line Client (or run in terminal):
    ```sql
    CREATE DATABASE tally_financial_intelligence CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -190,7 +164,7 @@ First, install the following software on the Windows Server:
 
 ---
 
-### Step 5: Backend Setup (.env & Running)
+### Step 3: Backend Setup (.env & Running)
 
 1. Open PowerShell / Terminal and navigate to the `backend` folder:
    ```powershell
@@ -255,7 +229,7 @@ First, install the following software on the Windows Server:
 
 ---
 
-### Step 6: Frontend Setup (.env & Running)
+### Step 4: Frontend Setup (.env & Running)
 
 1. Open a **second terminal** and navigate to the `frontend` folder:
    ```powershell
@@ -283,7 +257,7 @@ First, install the following software on the Windows Server:
 
 ---
 
-### Step 7: Login to Application
+### Step 5: Login to Application
 Open your browser and navigate to:
 ```
 http://localhost:5173
