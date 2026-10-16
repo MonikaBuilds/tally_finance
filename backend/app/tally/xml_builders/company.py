@@ -32,7 +32,8 @@ def build_company_request() -> str:
                         <FETCH>
                             NAME,
                             GUID,
-                            BOOKSFROM
+                            BOOKSFROM,
+                            STARTINGFROM
                         </FETCH>
                     </COLLECTION>
 

@@ -1106,6 +1106,7 @@ _ENTRY_LIST_SIDE = {
 # under these names (same approach as the Bills Pending logic).
 _PURCHASE_LEDGER_TYPES = ("receipt note", "rejections out", "purchase")
 _SALES_LEDGER_TYPES = ("delivery note", "rejections in", "sales")
+_PARTY_BLOCK_TYPES = ("rejections in", "rejections out")
 
 
 def _yes(text) -> bool:
@@ -1169,6 +1170,8 @@ def _batch_allocations(entry) -> list[dict]:
                     _first_text(node, "GODOWNNAME", "GODOWN")
                 ),
                 "batch": _first_text(node, "BATCHNAME", "BATCH"),
+                "mfg_date": _first_text(node, "MFDON", "MFGDATE", "MANUFACTUREDON"),
+                "expiry_date": _first_text(node, "EXPIRYPERIOD", "EXPIRYDATE"),
                 "quantity": _first_text(node, "ACTUALQTY", "BILLEDQTY"),
                 "rate": _first_text(node, "RATE"),
                 "amount": _first_text(node, "AMOUNT"),
@@ -1214,6 +1217,8 @@ def _inventory_entry(node) -> dict:
         "stock_item": _first_text(node, "STOCKITEMNAME", "STOCKITEM"),
         "godown": _first_text(node, "GODOWNNAME", "GODOWN") or first.get("godown", ""),
         "batch": _first_text(node, "BATCHNAME", "BATCH") or first.get("batch", ""),
+        "mfg_date": first.get("mfg_date", ""),
+        "expiry_date": first.get("expiry_date", ""),
         "actual_quantity": _first_text(node, "ACTUALQTY"),
         "billed_quantity": _first_text(node, "BILLEDQTY"),
         "rate": _first_text(node, "RATE"),
@@ -1504,7 +1509,27 @@ def parse_inventory_voucher_detail(
                 "voucher_godowns": voucher_godowns,
                 "party_details": party_details,
                 "is_order": type_key in ("sales order", "purchase order"),
+                # Entered in invoice mode: Tally then prints the
+                # Ledger Account / Name and Address panels instead of
+                # the "Party A/c name" line.
+                "is_invoice": (
+                    _yes(_text(voucher, "ISINVOICE"))
+                    or "invoice" in _text(voucher, "VCHENTRYMODE").casefold()
+                    # Rejections vouchers print the party block in Tally
+                    # whenever the voucher carries the party's address.
+                    or (bool(party_details) and type_key in _PARTY_BLOCK_TYPES)
+                ),
                 "is_transfer": is_transfer,
+                # "Provide GST/e-Way Bill details": Yes only when the
+                # voucher carries e-Way Bill details.
+                "gst_eway_details": (
+                    "Yes"
+                    if any(
+                        value and "EWAY" in key.upper()
+                        for key, value in voucher_fields.items()
+                    )
+                    else "No"
+                ),
                 "ledger_label": ledger_label,
                 "details": details,
                 "totals": totals,

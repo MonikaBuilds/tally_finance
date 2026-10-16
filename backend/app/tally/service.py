@@ -108,7 +108,7 @@ async def fetch_companies_result(
         raise ValueError("org_id is required for cached company data")
 
     cache_key = build_cache_key(
-        report_name="companies",
+        report_name="companies_v2",
         company_name=None,
         org_id=str(org_id),
     )
@@ -1939,15 +1939,11 @@ async def fetch_stock_item_vouchers(
                     )
                     v["closing_value"] = previous.get("closing_value")
 
-            # Tally prints no value on a Bills Pending line, so it adds
-            # nothing to the value totals either (the quantity does).
+            # Tally prints no value on a Bills Pending line, but its totals
+            # do include it (the returns booked against the delivery
+            # notes make it negative).
             def _sum(key):
-                is_value = key.endswith("_value")
-
-                return sum(
-                    0.0 if (is_value and v.get("kind") == "pending") else (v.get(key) or 0.0)
-                    for v in filtered_vouchers
-                )
+                return sum(v.get(key) or 0.0 for v in filtered_vouchers)
 
             # Tally's totals count the opening balance as Inwards.
             last_closing = next(
