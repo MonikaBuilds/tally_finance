@@ -1,91 +1,122 @@
 # Tally Financial Intelligence (TFI)
 
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
-[![React 19](https://img.shields.io/badge/Frontend-React%2019-61DAFB.svg?style=flat&logo=react)](https://react.dev/)
-[![Tally Prime](https://img.shields.io/badge/Data%20Source-Tally%20Prime-E0232E.svg?style=flat)](https://tallysolutions.com/)
-[![MySQL 8](https://img.shields.io/badge/Database-MySQL%208-4479A1.svg?style=flat&logo=mysql)](https://www.mysql.com/)
-[![Redis](https://img.shields.io/badge/Caching-Redis%20SWR-DC382D.svg?style=flat&logo=redis)](https://redis.io/)
-[![Google Gemini](https://img.shields.io/badge/AI-Google%20Gemini-4285F4.svg?style=flat&logo=google)](https://ai.google.dev/)
+A web dashboard, reporting suite and AI assistant for **Tally Prime**. TFI reads live data from Tally and presents it as dashboards, drill-down reports and a natural-language chat assistant, so teams can see financial and inventory positions in real-time without opening Tally desktop menus.
 
-An enterprise-grade financial intelligence engine, real-time dashboard, and deterministic AI assistant that connects directly to **Tally Prime** via its native XML/HTTP interface.
-
-Instead of navigating complex multi-level menus in desktop Tally, leadership and operational teams get instant access to live financial metrics, drill-down inventory tracking across godowns, audited financial statements, and a natural-language AI assistant backed by real accounting records.
+TFI is **strictly read-only**: it never writes or mutates anything in Tally.
 
 ---
 
-## Architecture Overview & End-to-End Request Flow
+## Table of Contents
 
-```mermaid
-flowchart LR
-    %% Ingestion
-    Client["🖥️ React 19 Client SPA\n(Dashboard • Reports • AI Chat)"]
-    Gateway["🛡️ FastAPI Gateway\n(CORS • CSRF • RBAC)"]
-    MySQL[("🗄️ MySQL 8 Database\n(Users • Roles • Scope)")]
-    Router{"Route\nClassifier"}
+1. [What TFI Does](#1-what-tfi-does)
+2. [How It Works](#2-how-it-works)
+3. [Tech Stack](#3-tech-stack)
+4. [Software Required](#4-software-required)
+5. [Getting Started (Step-by-Step)](#5-getting-started-step-by-step)
+6. [Environment Variables](#6-environment-variables)
+7. [Default Login (Super Admin)](#7-default-login-super-admin)
+8. [Users, Roles and Permissions](#8-users-roles-and-permissions)
+9. [API Reference](#9-api-reference)
+10. [AI Assistant](#10-ai-assistant)
+11. [Caching Architecture](#11-caching-architecture)
+12. [Running the Tests](#12-running-the-tests)
+13. [Project Structure](#13-project-structure)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Security Notes](#15-security-notes)
 
-    Client -->|"HTTPS + JWT + CSRF"| Gateway
-    Gateway <-->|"Session & RBAC"| MySQL
-    Gateway -->|"Dispatch"| Router
+---
 
-    %% Branch A: Financial & Inventory Reports
-    Router -->|"Reports / Inventory"| SWR{"Redis SWR\nCache"}
-    SWR -->|"Fresh Hit (<300s)"| Deliver["⚡ Response Delivery\n(Instant Cached / Audited JSON)"]
-    SWR -->|"Miss / Revalidate"| TDL["📄 Dynamic TDL\nXML Generator"]
-    TDL -->|"HTTP POST (Port 9000)"| Tally[("🏢 Tally Prime ERP\n(Native C++ Core)")]
-    Tally -->|"Raw TDL XML"| Parser["📊 High-Precision\nXML Parser"]
-    Parser -->|"Write-through & Deliver"| Deliver
+## 1. What TFI Does
 
-    %% Branch B: Deterministic AI Assistant
-    Router -->|"Natural Language"| Guard["🛑 Safety Interceptor\n(Regex Write Blocker)"]
-    Guard -->|"Read-only"| Gemini["🤖 Google Gemini 2.5\n(13 Read-Only Tools)"]
-    Gemini -->|"Tool Payload"| Tools["⚙️ Tool Dispatcher\nEngine"]
-    Tools -->|"Live Ground Truth"| Tally
-    Tools -->|"Audited Figures"| Deliver
+**Executive Financial Dashboard**
+- Headline metrics: gross revenue, operating expenses, net profit, total receivables, total payables, cash & bank balances.
+- Income vs. expense trends by month, overdue bill ageing buckets, top outstanding party rankings.
 
-    %% Final Presentation
-    Deliver --> UI["📈 Interactive UI Views\n(Statements • Godown Vouchers • AI Chat)"]
+**Financial Statements & Ledgers**
+- Profit & Loss, Balance Sheet, and Trial Balance with drill-down from groups to ledgers and individual vouchers.
+- Ledger reports with 12-month summaries and complete voucher allocations.
+- Receivables and Payables (bill-wise with ageing: 0–30, 31–60, 61–90, 90+ days) and pending sales/purchase invoices.
+
+**Inventory & Godown Intelligence**
+- Stock Summary by group, category, and godown location.
+- Native Godown Monthly Summary (12-month matrix fetched directly from Tally's native `<ID>Item Monthly Summary</ID>` report, not synthetic approximations).
+- Stock item vouchers with exact opening balance, inward/outward movements, running balances, and period totals.
+- Stock valuation, movement analysis, and negative stock tracking.
+
+**Report Exports**
+- Download reports as **PDF** or formatted **Excel (.xlsx)** files with a single click.
+
+**Deterministic AI Assistant (Chat)**
+- Ask financial questions in plain English (e.g. *"What is our total receivable balance?"* or *"Compare this month's revenue with last month"*).
+- Zero hallucination guarantee: Gemini identifies the user's intent and parameters, then fetches real ground-truth numbers directly from Tally XML. The AI never invents financial figures.
+
+**Multi-Tenant Access Control**
+- Complete company scoping: users only see transactions for Tally companies assigned to them.
+- Granular RBAC (`superadmin`, `admin`, `user`) with bitmask permissions (`financial`, `inventory`, `banking`, `tax`).
+
+**Resilient SWR Caching**
+- Multi-tier Stale-While-Revalidate caching via Redis/Memurai delivers sub-millisecond report loads.
+- Automatic fail-open circuit: if Redis is stopped or unreachable, the system queries Tally directly without failing.
+
+---
+
+## 2. How It Works
+
+```
+Browser (React 19 SPA)
+      │  HTTPS/HTTP + HttpOnly JWT + CSRF Header Handshake
+      ▼
+FastAPI Backend Gateway  ◄──►  MySQL 8.0  (Users, roles, permissions, sessions)
+      │
+      ├───► Redis / Memurai   (SWR cache of Tally responses, optional)
+      │
+      ├───► Tally Prime       (XML/TDL over HTTP, port 9000, source of truth)
+      │
+      └───► Google Gemini     (Deterministic tool selection for AI chat)
 ```
 
+1. The user logs in via the React SPA. The backend sets secure `access_token` and `refresh_token` cookies.
+2. When a report is requested, the backend checks the Redis SWR cache. If fresh, it returns in `<1ms`.
+3. On a cache miss, the backend generates a dynamic TDL XML request, sends it to Tally Prime's HTTP server (port 9000), parses the response with exact decimal precision, and caches the result.
+4. For chat queries, a safety interceptor regex blocks any mutating requests. Gemini selects the appropriate read-only tool, queries live Tally data, and deterministic formatters return the response.
 
-## Tech Stack
-
-| Layer | Technologies & Libraries | Purpose |
-| :--- | :--- | :--- |
-| **Backend Framework** | **Python 3.13.5**, **FastAPI**, **Uvicorn** | High-performance asynchronous REST API backend |
-| **Accounting Integration** | **Tally Prime**, **Tally XML / TDL Interface** | Real-time source of truth via local HTTP/XML gateway (port 9000) |
-| **Database & Persistence** | **MySQL 8.0.41**, `mysql-connector-python` | Multi-tenant organizations, users, RBAC roles, permissions, and sessions |
-| **Caching & Acceleration** | **Redis-py 8.1.0**| Stale-While-Revalidate (SWR) caching layer with background warming daemon |
-| **Artificial Intelligence** | **Google Gemini** (`google-genai`), OpenRouter (fallback) | Deterministic intent classification and read-only tool selection |
-| **Security & Auth** | **JWT**, **PBKDF2-HMAC-SHA256**, SameSite Cookies, CSRF | Zero-trust authentication with 310,000 hash iterations & HttpOnly cookies |
-| **Frontend Framework** | **React 19**, **Vite** | Modern, reactive single-page dashboard application |
-| **Routing & UI** | **React Router 7**, **Lucide Icons** | Client-side routing, drill-down navigation, and responsive financial UI |
-| **Testing & Quality** | **Pytest**, `pytest-asyncio`, `pytest-mock` | Comprehensive backend test coverage (parsers, builders, RBAC, calculations) |
+MySQL stores **only** system management data (users, organizations, roles, permissions, refresh tokens). All accounting data remains safely in Tally.
 
 ---
 
-## Core Capabilities
+## 3. Tech Stack
 
-### 1. Executive Financial Intelligence
-* **Live Financial Dashboard**: Executive summary covering gross revenue, operating expenses, net profit, total receivables, total payables, and pending purchase/sales bills.
-* **Profit & Loss**: Date-filtered statement mapping trading accounts, direct expenses, gross profit, indirect overheads, and net profit.
-* **Balance Sheet**: Dual-sided balance sheet (Sources of Funds vs. Application of Funds) reflecting live ledger positions.
-* **Trial Balance**: Complete debit/credit trial balance with drill-down support to child groups and ledgers.
-* **Cash & Bank Position**: Live liquid balances broken down across verified banking ledgers and physical cash accounts.
+| Layer | Technologies | Purpose |
+| :--- | :--- | :--- |
+| **Backend** | Python 3.13, FastAPI, Uvicorn, Pydantic | High-performance asynchronous REST API backend |
+| **Frontend** | React 19, Vite, React Router 7, Lucide Icons | Modern, responsive client dashboard & reports |
+| **Data Source** | Tally Prime (XML / TDL interface on port 9000) | Live system of record for all accounting and stock data |
+| **Database** | MySQL 8.0 (`mysql-connector-python`) | Multi-tenant user authentication, RBAC, and sessions |
+| **Caching** | Redis / Memurai (`redis-py`) | Stale-While-Revalidate (SWR) cache layer |
+| **AI Engine** | Google Gemini 2.5 (`google-genai`), OpenRouter fallback | Natural-language intent detection and read-only tool invocation |
+| **Security** | PBKDF2-HMAC-SHA256 (310k iterations), JWT, CSRF | Zero-trust authentication with HttpOnly cookies |
+| **Export** | `openpyxl` (Excel), `reportlab` (PDF) | Report generation and spreadsheet download |
+| **Testing** | Pytest, `pytest-asyncio`, Node test runner | Automated test coverage for parsers and endpoints |
 
-### 2. Working Capital & Outstanding Analysis
-* **Bills Receivable & Payable**: Complete itemized bill tracking with reference numbers, overdue aging buckets (0–30, 31–60, 61–90, 90+ days), and credit period tracking.
-* **Party Ledger Outstanding**: Scoped views per customer or vendor with bill allocation histories.
+---
 
-### 3. Inventory & Godown Intelligence (Native TDL Engine)
-* **Stock Summary**: Group-by-group stock hierarchy directly matching Tally Prime valuations.
-* **Godown Summary**: Multi-godown tracking (e.g. *Main Location*, regional godowns) reporting actual closing quantities, rates, and values.
-* **Godown Monthly Summary**: Native 12-month inward, outward, and closing quantity/value matrix fetched directly from Tally's native `<ID>Item Monthly Summary</ID>` report (not synthesized Python calculations).
-* **Stock Item & Godown Vouchers**: Exact replication of Tally Prime's voucher register showing:
-  * Opening balance
-  * Inward & Outward quantities/values per voucher (Stock Journals, Material In/Out, Receipt/Delivery Notes, Rejections, Invoices)
-  * Running closing balance
-  * Period totals
+## 4. Software Required
 
+Install these prerequisites before starting:
+
+| Software | Version | Purpose | Notes |
+| :--- | :--- | :--- | :--- |
+| **Python** | 3.13 | Backend API | **Crucial**: Check **"Add Python to PATH"** and select **"Install for all users"** during install. |
+| **Node.js & npm** | 18+ or 20 LTS | Frontend build & dev server | Needed to install npm packages and run Vite. |
+| **MySQL** | 8.0+ | Database | Install MySQL Server as a Windows Service. Remember your root password. |
+| **Redis / Memurai** | 6.0+ | Fast Caching | On Windows, download the Windows-native installer from [memurai.com](https://www.memurai.com/). (Optional but recommended). |
+| **Tally Prime** | Any release | Source of Truth | Running on the server with HTTP/XML server enabled on port 9000. |
+| **VS Code & Git** | Latest | Code & Editing | Standard installations. |
+| **Gemini API Key** | n/a | AI Chatbot | Free key from [Google AI Studio](https://aistudio.google.com/). *(Optional: chat assistant only)*. |
+
+### Enable the XML Server in Tally Prime
+
+<<<<<<< HEAD
 ### 4. Deterministic AI Financial Assistant
 * **Zero Hallucination Guarantee**: Gemini is strictly constrained to **intent classification and tool selection** across 13 read-only financial tools.
 * **Strict Read-Only Enforcement**: A deterministic regex policy interceptor blocks any write/update/delete requests before the LLM is ever contacted.
@@ -165,282 +196,411 @@ First, install the following software on the Windows Server:
 ---
 
 ### Step 3: Backend Setup (.env & Running)
+=======
+1. Open **Tally Prime**.
+2. Press **`F1` (Help) > Settings > Connectivity > Client/Server configuration** and set:
+   * **TallyPrime acts as**: `Both` (or `Server`)
+   * **Port**: `9000`
+3. Accept settings and restart Tally Prime.
+4. **Open your target company in Tally Prime** (e.g. `ABC Pvt Ltd`). Tally only answers queries for companies that are currently loaded and open.
 
-1. Open PowerShell / Terminal and navigate to the `backend` folder:
-   ```powershell
-   cd tally_finance\backend
+---
+
+## 5. Getting Started (Step-by-Step)
+
+Follow these steps to run the application on your Tally Server machine or local development computer.
+
+### Step 1: Clone the Repository
+
+Open PowerShell / Terminal:
+```bash
+git clone https://github.com/infintrix/tally-financial-intelligence.git tally_finance
+cd tally_finance
+```
+
+---
+
+### Step 2: Create the MySQL Database
+
+Open MySQL Command Line Client (or run in terminal):
+```sql
+CREATE DATABASE tally_financial_intelligence CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+> [!NOTE]
+> You **only** need to create this one empty database! You do **not** need to create tables or run manual SQL migration scripts. When the backend starts for the first time, it **automatically creates all tables** (`organizations`, `users`, `roles`, `permissions`, etc.) and bootstraps the default admin account.
+
+*(Optional: If you prefer creating a dedicated user instead of using `root`):*
+```sql
+CREATE USER 'tfi_app'@'localhost' IDENTIFIED BY 'YourStrongPassword123!';
+GRANT ALL PRIVILEGES ON tally_financial_intelligence.* TO 'tfi_app'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+---
+
+### Step 3: Setup Redis (Memurai on Windows / Docker)
+>>>>>>> 457097d (updated readme file and created .env.example file)
+
+* **Windows (Recommended for Tally Server)**:
+  1. Download and run the **Memurai** installer from [memurai.com](https://www.memurai.com/).
+  2. Accept default port `6379`. It automatically starts as a Windows Service.
+  3. Verify in PowerShell:
+     ```powershell
+     memurai-cli ping
+     # Expected response: PONG
+     ```
+* **Docker (For Linux/Mac or Local Dev)**:
+  ```bash
+  docker run -d --name tally-redis -p 6379:6379 redis:alpine
+  ```
+* **No Redis?** You can skip this step! Just set `REDIS_CACHE_ENABLED=false` in `backend/.env`. TFI is designed to fail open and will query Tally directly.
+
+---
+
+### Step 4: Set Up & Run the Backend
+
+1. Navigate to the `backend` directory:
+   ```bash
+   cd backend
    ```
 
 2. Create and activate a Python virtual environment:
    ```powershell
    python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
-   *(If PowerShell gives a script execution error, run `Set-ExecutionPolicy -Scope Process Bypass` and activate again).*
 
-3. Install backend dependencies from `requirements.txt`:
-   ```powershell
+   # On Windows PowerShell (run this if execution policy blocks scripts):
+   Set-ExecutionPolicy -Scope Process Bypass
+   .venv\Scripts\Activate.ps1
+
+   # On macOS / Linux:
+   source .venv/bin/activate
+   ```
+
+3. Install backend dependencies:
+   ```bash
    pip install -r requirements.txt
    ```
 
-4. Create the `.env` file from the example:
-   ```powershell
+4. Create the `.env` configuration file from the template:
+   ```bash
+   # Windows PowerShell:
    copy .env.example .env
+
+   # macOS / Linux:
+   cp .env.example .env
    ```
 
-5. Open `.env` (using Notepad or VS Code) and update these required values:
-   ```env
-   # Database Configuration
-   DB_HOST=localhost
-   DB_PORT=3306
-   DB_NAME=tally_financial_intelligence
-   DB_USER=root
-   DB_PASSWORD=your_mysql_password_here
+5. Open `backend/.env` in Notepad or VS Code and set your values:
+   * **`DB_PASSWORD`**: Your MySQL password.
+   * **`DB_USER`**: Your MySQL user (`root` or `tfi_app`).
+   * **`TALLY_HOST`**: `127.0.0.1` (or your Tally server IP).
+   * **`TALLY_PORT`**: `9000`.
+   * **`INITIAL_ADMIN_COMPANY`**: Set this to **exactly match your open Tally company name** (e.g. `ABC Pvt Ltd`).
+   * **`CHAT_JWT_SECRET`**: Generate a secure 64-char key by running:
+     ```powershell
+     python -c "import secrets; print(secrets.token_urlsafe(64))"
+     ```
+     and paste it into `CHAT_JWT_SECRET=`.
+   * **`CORS_ALLOWED_ORIGINS`**: If accessing from other computers on your network, add your server IP:
+     ```env
+     CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://<SERVER-IP>:5173
+     ```
+   * **`GEMINI_API_KEY`**: Paste your Google Gemini API key here (if using AI chat).
 
-   # Tally Connectivity
-   TALLY_HOST=127.0.0.1
-   TALLY_PORT=9000
-
-   # Redis Configuration
-   REDIS_URL=redis://127.0.0.1:6379/0
-   REDIS_CACHE_ENABLED=true
-
-   # Google Gemini API Key (for AI chatbot)
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
-
-   # Authentication Secret
-   CHAT_JWT_SECRET=your_jwt_secret_key_here
-
-   # Allowed frontend origins (allow localhost and the server's IP address)
-   CORS_ALLOWED_ORIGINS=http://localhost:5173,http://<SERVER-IP>:5173
-   ```
-   > 🔑 **Tip**: To generate a secure random `CHAT_JWT_SECRET`, run:
-   > ```powershell
-   > python -c "import secrets; print(secrets.token_urlsafe(64))"
-   > ```
-
-6. **Run the Backend server**:
-   ```powershell
+6. Start the Backend API:
+   ```bash
    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
-   *Backend is now running on `http://localhost:8000` (or `http://<SERVER-IP>:8000`).*  
-   *Verify by opening Swagger API docs in your browser: `http://localhost:8000/docs`.*
+   > 💡 `--host 0.0.0.0` ensures the backend accepts requests both locally and from client PCs on your office network.
+
+   * Test in browser: Open `http://localhost:8000/docs` to see the live Swagger API documentation!
 
 ---
 
+<<<<<<< HEAD
 ### Step 4: Frontend Setup (.env & Running)
+=======
+### Step 5: Set Up & Run the Frontend
+>>>>>>> 457097d (updated readme file and created .env.example file)
 
-1. Open a **second terminal** and navigate to the `frontend` folder:
-   ```powershell
-   cd tally_finance\frontend
+1. Open a **second terminal** and navigate to `frontend`:
+   ```bash
+   cd frontend
    ```
 
-2. Create/edit `frontend\.env` and set your backend API URL:
-   ```env
-   VITE_API_BASE_URL=http://<SERVER-IP>:8000/api/v1
-   VITE_CSRF_COOKIE_NAME=csrf_token
-   VITE_CSRF_HEADER_NAME=X-CSRF-Token
-   ```
-   *(If running and testing on the server itself, you can use `http://localhost:8000/api/v1`)*
+2. Create `frontend/.env` (a template `frontend/.env.example` is provided):
+   ```bash
+   # Windows PowerShell:
+   copy .env.example .env
 
-3. Install frontend node modules:
-   ```powershell
+   # macOS / Linux:
+   cp .env.example .env
+   ```
+   * Ensure `frontend/.env` contains:
+     ```env
+     VITE_API_BASE_URL=http://localhost:8000/api/v1
+     VITE_CSRF_COOKIE_NAME=csrf_token
+     VITE_CSRF_HEADER_NAME=X-CSRF-Token
+     ```
+     *(Note: If users will access from other PCs on the network, replace `localhost` with your server IP, e.g. `VITE_API_BASE_URL=http://192.168.1.50:8000/api/v1`)*.
+
+3. Install frontend dependencies:
+   ```bash
    npm install
    ```
 
-4. **Run the Frontend**:
-   ```powershell
+4. Start the frontend dev server:
+   ```bash
    npm run dev
    ```
-   *Frontend is now running on `http://localhost:5173` (or `http://<SERVER-IP>:5173`).*
+   *The frontend is now running on `http://localhost:5173` (or `http://<SERVER-IP>:5173`)*.
 
 ---
 
+<<<<<<< HEAD
 ### Step 5: Login to Application
 Open your browser and navigate to:
 ```
 http://localhost:5173
 ```
 *(Or from any user PC on the same network: `http://<SERVER-IP>:5173`)*
+=======
+### Step 6: Log In and Explore
+>>>>>>> 457097d (updated readme file and created .env.example file)
 
-* **Username**: `admin`
-* **Password**: `Admin@2026!`
-* Select your open **Company** from the dropdown and start exploring!
-
----
-
-## Local Development Quickstart (For Personal Laptop/PC)
-
-If you are developing locally on your personal machine with Docker:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/infintrix/tally-financial-intelligence.git
-cd tally-financial-intelligence
-
-# 2. Start local Redis
-docker run -d --name tally-redis -p 6379:6379 redis:alpine
-
-# 3. Backend Setup
-cd backend
-python -m venv .venv
-# Activate venv: .venv\Scripts\Activate.ps1 (Windows) or source .venv/bin/activate (Linux/Mac)
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your MySQL password and Gemini key
-python -m uvicorn app.main:app --reload
-
-# 4. Frontend Setup
-cd ../frontend
-npm install
-npm run dev
-# Open http://localhost:5173 in browser
-```
+1. Open your browser and go to `http://localhost:5173` (or `http://<SERVER-IP>:5173`).
+2. Log in with the default Super Admin credentials:
+   * **Username**: `admin`
+   * **Password**: `Admin@2026!`
+3. Select your active Tally company from the top dropdown.
+4. Your live dashboard, P&L, Balance Sheet, Godown Monthly Summary, and AI Chat are now running!
 
 ---
 
-## Environment Variables Reference
+### Step 7 (Optional): Production Build for Frontend
 
-| Variable | Default Value | Description |
-| :--- | :--- | :--- |
-| **`TALLY_HOST`** | `127.0.0.1` | IP address of Tally Prime XML interface |
-| **`TALLY_PORT`** | `9000` | Port configured in Tally Prime Client/Server settings |
-| **`TALLY_VERSION`** | `prime` | Tally edition (`prime` or `erp9`) |
-| **`DB_HOST`** | `localhost` | MySQL host address |
-| **`DB_PORT`** | `3306` | MySQL port |
-| **`DB_NAME`** | `tally_financial_intelligence` | MySQL database name |
-| **`DB_USER`** | `root` | MySQL database username |
-| **`DB_PASSWORD`** | — | MySQL database password |
-| **`REDIS_URL`** | `redis://127.0.0.1:6379/0` | Redis / Memurai connection URL |
-| **`REDIS_CACHE_ENABLED`**| `true` | Enables/disables caching (`false` = direct Tally query) |
-| **`REDIS_CACHE_DEFAULT_FRESH_TTL`** | `300` | Fresh cache window in seconds (5 minutes) |
-| **`REDIS_CACHE_STALE_RETENTION_TTL`** | `86400` | Stale cache retention in seconds (24 hours) |
-| **`CHAT_AUTH_ENABLED`** | `true` | Enforces authentication check |
-| **`CHAT_JWT_SECRET`** | — | Cryptographic secret for signing JWT access tokens |
-| **`GEMINI_API_KEY`** | — | Google AI Studio Gemini API key for AI assistant |
-| **`INITIAL_ADMIN_USERNAME`**| `admin` | Auto-bootstrapped admin username on initial start |
-| **`INITIAL_ADMIN_PASSWORD`**| `Admin@2026!` | Auto-bootstrapped admin password on initial start |
-| **`INITIAL_ADMIN_COMPANY`** | `ABC Pvt Ltd` | Auto-bootstrapped company name |
-
-
----
-
-## User & Role Management
-
-### Creating Additional Users
-Once logged in as an Administrator, new users can be created via:
-
-1. **Admin REST API** (`POST /api/v1/admin/users`):
-   ```json
-   {
-     "username": "accountant",
-     "password": "SecurePassword2026!",
-     "companies": ["ABC Pvt Ltd"],
-     "role_name": "user"
-   }
-   ```
-2. **Python Interactive CLI**:
-   ```python
-   from app.security.user_store import create_user
-   from app.security.permissions import assign_role_to_user
-
-   user_id = create_user(
-       username="accountant",
-       password="SecurePassword2026!",
-       companies=["ABC Pvt Ltd"],
-       organization_id="e7747b1f-36c9-4ea1-85d9-965f5c55d679"
-   )
-   assign_role_to_user(user_id, "user")
-   ```
-
-> [!WARNING]
-> Do **not** manually insert plain text passwords directly into MySQL Workbench. Passwords must be encoded with the system's PBKDF2 hasher (`hash_password()`), otherwise authentication will reject login attempts.
-
----
-
-## Running the Automated Test Suite
-
-The test suite validates XML request builders, report parsers, financial calculations, Redis cache fallbacks, RBAC policies, and live Tally endpoints:
-
-```bash
-cd backend
-
-# Run the complete test suite
-pytest
-
-# Run core inventory and live Tally report tests
-pytest tests/test_godown_monthly_direct_tally.py tests/test_parser.py tests/test_xml_builder.py
-```
-
-To verify the frontend build:
+To compile the frontend into an optimized static distribution:
 ```bash
 cd frontend
 npm run build
 ```
+The output will be in `frontend/dist`. You can serve it using any web server (e.g. `npx serve dist -s -l 5173` or Microsoft IIS).
 
 ---
 
-## Project Structure
+## 6. Environment Variables
+
+### 6.1 Backend (`backend/.env`)
+
+A reference template is available in `backend/.env.example`.
+
+**Tally Configuration**
+
+| Variable | Example | Description |
+| :--- | :--- | :--- |
+| `TALLY_HOST` | `127.0.0.1` | IP address or hostname of machine running Tally Prime |
+| `TALLY_PORT` | `9000` | Port configured in Tally Prime Client/Server settings |
+| `TALLY_VERSION` | `prime` | Tally edition (`prime` or `erp9`) |
+| `TALLY_UNAVAILABLE_COOLDOWN_SECONDS` | `30` | Seconds to wait before re-probing after Tally is unavailable |
+
+**Database (MySQL)**
+
+| Variable | Example | Description |
+| :--- | :--- | :--- |
+| `DB_HOST` | `localhost` | MySQL host address |
+| `DB_PORT` | `3306` | MySQL port |
+| `DB_NAME` | `tally_financial_intelligence` | MySQL database name |
+| `DB_USER` | `root` or `tfi_app` | MySQL username |
+| `DB_PASSWORD` | `<your-password>` | MySQL password |
+
+**Authentication & Security**
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CHAT_AUTH_ENABLED` | `true` | Enforces authentication check |
+| `CHAT_JWT_SECRET` | none (**required**) | 64+ char cryptographic secret for signing JWT access tokens |
+| `CHAT_JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `CHAT_JWT_EXPIRE_MINUTES` | `60` | Access token lifespan |
+| `AUTH_COOKIE_SECURE` | `false` | Set `true` when serving over HTTPS |
+| `AUTH_COOKIE_SAMESITE` | `lax` | Browser cookie policy (`lax`, `strict`, `none`) |
+| `AUTH_CSRF_COOKIE_NAME` | `csrf_token` | CSRF cookie name (must match frontend) |
+| `AUTH_CSRF_HEADER_NAME` | `X-CSRF-Token` | CSRF header name (must match frontend) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated list of origins allowed to call the API |
+
+**Initial Super Admin (Created on First Start)**
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `INITIAL_ADMIN_USERNAME` | `admin` | Initial superadmin username |
+| `INITIAL_ADMIN_PASSWORD` | `Admin@2026!` | Initial superadmin password |
+| `INITIAL_ADMIN_COMPANY` | `ABC Pvt Ltd` | **Must exactly match** your active open Tally company name |
+
+**AI Assistant (Optional)**
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `GEMINI_API_KEY` | none | Google Gemini API key from AI Studio |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model name |
+| `OPENROUTER_API_KEY` | none | Optional fallback API provider key |
+
+**Redis Cache (Optional)**
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `REDIS_CACHE_ENABLED` | `true` | Enables/disables caching (`false` fails open to Tally) |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis / Memurai connection URL |
+| `REDIS_CACHE_DEFAULT_FRESH_TTL` | `300` | Fresh cache window in seconds (5 minutes) |
+| `REDIS_CACHE_STALE_RETENTION_TTL` | `86400` | Stale cache retention in seconds (24 hours) |
+
+### 6.2 Frontend (`frontend/.env`)
+
+| Variable | Example | Description |
+| :--- | :--- | :--- |
+| `VITE_API_BASE_URL` | `http://localhost:8000/api/v1` | Base URL of backend API including `/api/v1` |
+| `VITE_CSRF_COOKIE_NAME` | `csrf_token` | Must equal backend `AUTH_CSRF_COOKIE_NAME` |
+| `VITE_CSRF_HEADER_NAME` | `X-CSRF-Token` | Must equal backend `AUTH_CSRF_HEADER_NAME` |
+
+---
+
+## 7. Default Login (Super Admin)
+
+When the backend starts against a clean database for the first time, it automatically creates the Super Admin account:
+
+* **Username**: `admin`
+* **Password**: `Admin@2026!`
+* **Roles**: `superadmin` and `admin` with all permissions (`financial`, `inventory`, `banking`, `tax`).
+
+> [!IMPORTANT]
+> The initial admin is created **only once when the users table is completely empty**. Once any user exists, the bootstrapper permanently skips. Always change the default admin password upon first login!
+
+---
+
+## 8. Users, Roles and Permissions
+
+**Roles Hierarchy**
+* `superadmin`: Full platform control, including creating and managing other admins.
+* `admin`: Manages users and permissions within their organization.
+* `user`: Accesses reports, dashboard, and AI chat according to assigned permissions.
+
+**Granular Permissions**
+* `financial`: Profit & Loss, Balance Sheet, Trial Balance, Receivables, Payables, Ledgers.
+* `inventory`: Stock Summary, Godowns, Monthly Item Summary, Stock Vouchers.
+* `banking`: Cash and bank ledger positions and accounts.
+* `tax`: Tax ledgers, TDS, and GST summaries.
+
+**Company Access**
+Users can only query Tally companies assigned to them. Any attempt to query unassigned companies is rejected with HTTP 403.
+
+---
+
+## 9. API Reference
+
+Interactive Swagger documentation is available live at `http://localhost:8000/docs`.
+
+### Key Endpoints
+* **Authentication**: `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/change-password`
+* **Administration**: `GET /api/v1/admin/users`, `POST /api/v1/admin/users`, `DELETE /api/v1/admin/users/{id}`, `PUT /api/v1/admin/users/{id}/companies`
+* **Tally Diagnostics**: `GET /api/v1/tally/status`, `GET /api/v1/tally/companies`
+* **Dashboard**: `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/monthly`
+* **AI Chat**: `POST /api/v1/chat`
+* **Reports**:
+  * P&L: `GET /api/v1/reports/profit-loss`, `GET /api/v1/reports/profit-loss/export/{file_format}`
+  * Balance Sheet: `GET /api/v1/reports/balance-sheet`, `GET /api/v1/reports/balance-sheet/export/{file_format}`
+  * Trial Balance: `GET /api/v1/reports/trial-balance`
+  * Ledgers & Vouchers: `GET /api/v1/reports/ledgers`, `GET /api/v1/reports/ledger`, `GET /api/v1/reports/voucher`
+  * Receivables & Payables: `GET /api/v1/reports/receivables`, `GET /api/v1/reports/payables`
+  * Inventory: `GET /api/v1/reports/stock-summary`, `GET /api/v1/reports/godown-summary`, `GET /api/v1/reports/stock-item-monthly`, `GET /api/v1/reports/stock-item-vouchers`
+
+---
+
+## 10. AI Assistant
+
+The deterministic AI assistant processes questions in 4 stages:
+1. **Safety Interceptor**: Blocks any request attempting write, update, or delete commands.
+2. **Deterministic Rules**: Matches common questions locally for instant zero-cost responses.
+3. **Gemini Tool Selection**: Maps complex natural-language queries to one of over 70 read-only financial tools.
+4. **Live ERP Ground Truth**: Fetches audited accounting data directly from Tally Prime XML and passes it through deterministic formatters. The LLM never computes or invents numbers.
+
+---
+
+## 11. Caching Architecture
+
+* **Fresh Response (< 300s)**: Cached JSON is delivered instantaneously in `< 1ms`.
+* **Stale Response (< 24 hours)**: If Tally Prime is busy or briefly closed, TFI serves cached data seamlessly marked with `is_stale: true` while triggering an asynchronous background revalidation.
+* **Fail-Open Circuit**: If Redis/Memurai is stopped, requests bypass the cache and query Tally Prime directly without crashing or throwing 500 errors.
+* **Bypass Cache**: Add `force_refresh=true` to any report API call to bypass the cache.
+
+---
+
+## 12. Running the Tests
+
+Backend automated test suite (run from `backend/` with venv active):
+```bash
+pytest
+```
+*Run inventory and native Tally parser tests:*
+```bash
+pytest tests/test_godown_monthly_direct_tally.py tests/test_parser.py tests/test_xml_builder.py
+```
+
+Frontend unit tests (run from `frontend/`):
+```bash
+npm test
+npm run lint
+```
+
+---
+
+## 13. Project Structure
 
 ```
-tally-financial-intelligence/
+tally_finance/
 ├── backend/
 │   ├── app/
-│   │   ├── api/                   # REST API routes (auth, admin, reports, dashboard, chat)
-│   │   ├── cache/                 # Redis client, SWR manager, background cache refresher
-│   │   ├── chatbot/               # Gemini intent classification, tool registry, safety policy
-│   │   ├── core/                  # Configuration, logging, exception handlers
-│   │   ├── financial/             # Business intelligence & financial calculation engines
-│   │   ├── security/              # PBKDF2 hashing, JWT/cookie handling, RBAC, user store
-│   │   ├── tally/                 # Native Tally XML client, TDL request builders, XML parsers
-│   │   └── main.py                # FastAPI lifecycle, startup hooks, table initializations
-│   ├── tests/                     # 300+ automated test cases
-│   ├── requirements.txt           # Python backend dependencies
-│   └── .env.example               # Reference environment variables
-│
-├── frontend/
-│   ├── src/
-│   │   ├── api/                   # Fetch client with cookie/CSRF interceptors
-│   │   ├── components/            # Data tables, KPI cards, visual charts, navbar
-│   │   ├── hooks/                 # Async data fetching and company year hooks
-│   │   ├── pages/                 # Financial reports, Godown summary, Vouchers, AI chat
-│   │   └── utils/                 # Currency, quantity, and date formatting utilities
-│   ├── package.json               # Frontend dependencies (React 19, Lucide, Tailwind)
-│   └── vite.config.js             # Vite development server configuration
-│
-└── README.md                      # Comprehensive developer guide
+│   │   ├── main.py            # FastAPI lifecycle, startup hooks, table initializations
+│   │   ├── api/               # REST API endpoints (auth, admin, reports, dashboard, chat)
+│   │   ├── tally/             # Native Tally XML client, TDL request builders, XML parsers
+│   │   ├── chatbot/           # Gemini intent router, tool registry, safety policy
+│   │   ├── security/          # PBKDF2 hashing, JWT/cookie handling, RBAC, user store
+│   │   ├── cache/             # Redis client, SWR manager, background cache refresher
+│   │   ├── export/            # PDF and Excel report generators
+│   │   ├── financial/         # Business intelligence & calculations
+│   │   └── core/              # Configuration, logging, exception handlers
+│   ├── tests/                 # Automated test suite
+│   ├── requirements.txt       # Python dependencies
+│   └── .env.example           # Reference backend environment variables
+└── frontend/
+    ├── src/
+    │   ├── pages/             # Report views (Dashboard, P&L, Godown, Vouchers, Chat)
+    │   ├── components/        # Reusable UI components (Tables, KPI cards, Navbar)
+    │   ├── api/client.js      # Fetch client with cookie/CSRF interceptors
+    │   ├── hooks/             # Data fetching and company year hooks
+    │   └── App.jsx            # Routing and authentication guards
+    ├── package.json           # Frontend dependencies (React 19, Lucide, Vite)
+    └── .env.example           # Reference frontend environment variables
 ```
 
 ---
 
-## Troubleshooting Matrix & Production FAQ
+## 14. Troubleshooting
 
-### 1. Server Deployment Troubleshooting Matrix
-
-| Symptom | Probable Cause | Verified Resolution |
+| Problem | Probable Cause | Verified Resolution |
 | :--- | :--- | :--- |
-| **Backend exits immediately: `'Required environment variable ... not configured'`** | A mandatory key is missing in `backend\.env`. | Review `backend\.env` against `.env.example`. Ensure keys like `CHAT_JWT_SECRET`, `DB_NAME`, and `DB_PASSWORD` are populated without quotes or spaces around `=`. |
-| **MySQL access denied / unknown database** | Database not created or invalid `DB_USER`/`DB_PASSWORD`. | Confirm database was created with `CREATE DATABASE tally_financial_intelligence;` and that `tfi_app` has privileges granted (`GRANT ALL PRIVILEGES ON tally_financial_intelligence.* TO 'tfi_app'@'localhost';`). |
-| **Dashboard empty or `'Tally unavailable'`** | Tally Prime is closed, company is not loaded, or XML server is disabled. | 1. Open Tally Prime on the server.<br>2. Load the target company (name must match `INITIAL_ADMIN_COMPANY` exactly).<br>3. Verify `F1` $\to$ Settings $\to$ Connectivity is set to `Both`/`Server` on port `9000`.<br>4. Run `Test-NetConnection 127.0.0.1 -Port 9000` in PowerShell. |
-| **Redis warnings in backend console logs** | Memurai service is stopped or wrong `REDIS_*` credentials. | Run `Get-Service Memurai` in PowerShell. If stopped, run `Start-Service Memurai`. Note: TFI fails open gracefully and continues working directly against Tally Prime. |
-| **Blank page on browser page refresh** | Web server lacks Single-Page Application (SPA) routing fallback. | When serving via `serve`, you **must include the `-s` flag**: `npx serve dist -s -l 5173`. In IIS, install URL Rewrite and add an inbound rule redirecting all non-file requests to `/index.html`. |
-| **Login succeeds, but subsequent requests fail with 401 / 403** | 1. CORS origin mismatch.<br>2. `AUTH_COOKIE_SECURE=true` over plain HTTP.<br>3. Frontend compiled with wrong API URL. | 1. Ensure `CORS_ALLOWED_ORIGINS` in `backend\.env` exactly matches the URL in the browser (e.g. `http://192.168.1.50:5173`).<br>2. For plain HTTP on internal LANs, set `AUTH_COOKIE_SECURE=false`.<br>3. Verify `VITE_API_BASE_URL` in `frontend\.env` and recompile with `npm run build`. |
-| **AI Financial Assistant / Chatbot fails** | Invalid Gemini API key, model name mismatch, or blocked outbound internet. | 1. Verify `GEMINI_API_KEY` in `backend\.env`.<br>2. Set `GEMINI_MODEL=gemini-2.5-flash` or `gemini-1.5-flash`.<br>3. Ensure the Windows Server firewall allows outbound HTTPS on port `443`. |
-| **Desktop Tally users report sluggishness** | High concurrent reporting queries bypassing cache. | 1. Ensure Redis is enabled (`REDIS_CACHE_ENABLED=true`) so repeat queries serve in `<1ms`.<br>2. Avoid running full historical ledger extractions during peak accounting entry hours. |
+| **Backend exits: `'Required environment variable ... is not configured'`** | Missing mandatory key in `backend/.env`. | Ensure `CHAT_JWT_SECRET`, `DB_NAME`, and `DB_PASSWORD` are filled in `backend/.env` without spaces around `=`. |
+| **MySQL `'Access denied'` or `'Unknown database'`** | Database not created or wrong credentials. | Run `CREATE DATABASE tally_financial_intelligence;` in MySQL, and confirm `DB_USER` & `DB_PASSWORD` in `.env` match your MySQL credentials. |
+| **Dashboard empty or `'Tally unavailable'`** | Tally Prime is closed, company is not open, or XML server is off. | 1. Open Tally Prime on the server.<br>2. Load your company (name must match `INITIAL_ADMIN_COMPANY` exactly).<br>3. Confirm `F1 > Settings > Connectivity` is set to `Both` on Port `9000`. |
+| **Frontend displays: `VITE_API_BASE_URL is not configured`** | Missing `frontend/.env`. | Copy `frontend/.env.example` to `frontend/.env` and restart Vite (`npm run dev`). |
+| **Login succeeds, but subsequent requests fail with 401/403** | CORS mismatch or cookie secure issue. | 1. Ensure `CORS_ALLOWED_ORIGINS` in `backend/.env` matches your browser URL.<br>2. For plain HTTP on internal LANs, verify `AUTH_COOKIE_SECURE=false`. |
+| **Script execution error in PowerShell (`Activate.ps1`)** | Windows execution policy restriction. | Run `Set-ExecutionPolicy -Scope Process Bypass` in PowerShell, then activate `.venv\Scripts\Activate.ps1` again. |
+| **Redis connection warning in logs** | Redis/Memurai is not running. | Memurai is optional. TFI fails open automatically. To enable caching, start the Memurai service (`Start-Service Memurai`). |
+| **AI Assistant / Chatbot fails** | Missing or invalid Gemini API key. | Ensure `GEMINI_API_KEY` is set in `backend/.env` and the server can access outbound internet. |
 
 ---
 
-### 2. Operational & Developer FAQs
+## 15. Security Notes
 
-#### Q1: "Application startup failed: Table doesn't exist or foreign key constraint error"
-* **Solution**: Ensure your MySQL server is running and the database specified in `DB_NAME` exists. If upgrading an existing development database with schema changes, run `DROP DATABASE tally_financial_intelligence; CREATE DATABASE tally_financial_intelligence;` once so the lifespan manager can initialize clean schemas.
-
-#### Q2: "No records found on Godown Monthly Summary or Stock Vouchers"
-* **Solution**: Ensure your report date filter matches the active financial year of transactions recorded in Tally Prime (e.g., `2025-04-01` to `2026-03-31`). If the selected godown has no transaction movements in that date window, Tally returns empty collections.
-
-#### Q3: "Can TFI run if Redis/Memurai is not installed?"
-* **Solution**: Yes. TFI features a resilient **fail-open** architecture. If Redis is unavailable or disabled (`REDIS_CACHE_ENABLED=false`), the platform routes all requests directly to Tally Prime's native XML engine without throwing 500 errors.
-
-#### Q4: "Do I need to leave Tally Prime running all the time?"
-* **Solution**: Yes. Tally Prime is a desktop software application that answers HTTP requests only while it is open and active on the server. If the server is restarted, an administrator must log in and launch Tally Prime with the company opened.
+* **Secret Hygiene**: Keep `.env` files private. Generate unique random strings for `CHAT_JWT_SECRET`.
+* **Change Default Passwords**: Immediately rotate the `admin` / `Admin@2026!` password upon initial login.
+* **Port Isolation**: Keep ports `9000` (Tally Prime), `3306` (MySQL), and `6379` (Redis) bound strictly to `127.0.0.1`. Never expose them to the public internet.
+* **Database Backups**: Schedule regular backups of MySQL (`mysqldump`). All users, permissions, and organizations reside in MySQL.
