@@ -116,88 +116,7 @@ Install these prerequisites before starting:
 
 ### Enable the XML Server in Tally Prime
 
-<<<<<<< HEAD
-### 4. Deterministic AI Financial Assistant
-* **Zero Hallucination Guarantee**: Gemini is strictly constrained to **intent classification and tool selection** across 13 read-only financial tools.
-* **Strict Read-Only Enforcement**: A deterministic regex policy interceptor blocks any write/update/delete requests before the LLM is ever contacted.
-* **Deterministic Numbers**: Financial values and voucher totals are fetched directly from Tally's XML engine and passed to a deterministic formatter. The LLM never invents numbers.
-
-### 5. Multi-Tenant Role-Based Access Control (RBAC)
-* **Organizations**: Multi-tenant database schema (`organizations`) allowing complete data isolation.
-* **Role Hierarchy**: Structured `superadmin` > `admin` > `user` hierarchy.
-* **Granular Permissions**: Scoped permission keys (`financial`, `inventory`, `banking`, `tax`).
-* **Enterprise Security**:
-  * Passwords hashed with **PBKDF2-HMAC-SHA256** (310,000 iterations + 16-byte cryptographically secure salt).
-  * HttpOnly, SameSite cookies for JWT access tokens and sliding refresh tokens.
-  * CSRF token generation and header validation.
-
----
-
-## Redis Caching Architecture
-
-Tally Prime evaluates complex TDL collection queries synchronously on a single thread. For mid-sized to large databases, running raw TDL reports on every user click can cause latency spikes. 
-
-TFI implements a production-grade **Stale-While-Revalidate (SWR)** caching architecture via Redis:
-
-```
-Request Received
-       │
-       ▼
-Check Redis Cache
-       │
-       ├─► [Cache HIT - FRESH] ────────────► Return instantly (sub-millisecond)
-       │
-       ├─► [Cache HIT - STALE] ────────────► Return stale data immediately
-       │                                     └─► Spawn background revalidation task
-       │
-       └─► [Cache MISS / EXPIRED] ─────────► Query Tally Prime XML Gateway
-                                             └─► Store in Redis & Return
-```
-
-### Key Redis Caching Principles:
-1. **Multi-Tier TTLs**:
-   * **Fresh TTL** (`REDIS_CACHE_DEFAULT_FRESH_TTL`, default: 300s): Data within this window is served instantaneously.
-   * **Stale Retention TTL** (`REDIS_CACHE_STALE_RETENTION_TTL`, default: 86400s / 24 hours): If Tally is busy or offline, the platform serves cached data seamlessly with an `is_stale: true` flag rather than failing.
-2. **Asynchronous Background Refresher**:
-   * A background worker (`start_background_refresher`) periodically pre-warms key executive reports (Dashboard, P&L, Stock Summary) so users rarely hit an empty cache.
-3. **Fail-Open Resilience**:
-   * If Redis is unavailable or unconfigured, the cache layer automatically **fails open**, routing requests directly to Tally Prime without crashing or throwing 500 errors.
-
----
-
-## How to Setup & Run on Tally Server (Step-by-Step)
-
-Follow these straightforward steps to install, configure, and run Tally Financial Intelligence on the Windows Server where Tally Prime is running.
-
----
-
-### Step 1: Install Required Software
-First, install the following software on the Windows Server:
-
-1. **Python 3.13** ([python.org](https://www.python.org/))  
-   > ⚠️ **Important**: During installation, tick the checkbox **"Add Python to PATH"** and select **"Install for all users"**.
-2. **Node.js (18+ LTS)** ([nodejs.org](https://nodejs.org/))  
-   *(Required to install packages and run the frontend)*
-3. **MySQL 8.0 Server** ([mysql.com](https://dev.mysql.com/downloads/installer/))  
-   *Install MySQL Server as a Windows Service and remember the root password you set.*
-4. **Redis (Memurai for Windows)** ([memurai.com](https://www.memurai.com/))  
-   *Windows-native Redis. Download and run the installer; it automatically installs and runs as a Windows Service.*
-5. **Visual Studio Code** ([code.visualstudio.com](https://code.visualstudio.com/)) & **Git** ([git-scm.com](https://git-scm.com/))
-
----
-
-### Step 2: Create MySQL Database
-1. Open the MySQL Command Line Client (or run in terminal):
-   ```sql
-   CREATE DATABASE tally_financial_intelligence CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-   ```
-   > 💡 **Note**: You **only** need to create this one empty database. You do **not** need to create any tables or run SQL migration scripts! When you start the backend, it **automatically creates all tables** (`organizations`, `users`, `roles`, `permissions`, etc.) and the initial admin user.
-
----
-
-### Step 3: Backend Setup (.env & Running)
-=======
-1. Open **Tally Prime**.
+1. Open **Tally Prime** on the server.
 2. Press **`F1` (Help) > Settings > Connectivity > Client/Server configuration** and set:
    * **TallyPrime acts as**: `Both` (or `Server`)
    * **Port**: `9000`
@@ -208,11 +127,11 @@ First, install the following software on the Windows Server:
 
 ## 5. Getting Started (Step-by-Step)
 
-Follow these steps to run the application on your Tally Server machine or local development computer.
+Follow these steps to run the application on your Tally Server machine or local development computer. Commands are provided for **PowerShell**, **Command Prompt (CMD)**, and **Git Bash / macOS / Linux**.
 
 ### Step 1: Clone the Repository
 
-Open PowerShell / Terminal:
+Open your preferred terminal (**PowerShell**, **CMD**, or **Git Bash**):
 ```bash
 git clone https://github.com/infintrix/tally-financial-intelligence.git tally_finance
 cd tally_finance
@@ -240,13 +159,12 @@ FLUSH PRIVILEGES;
 ---
 
 ### Step 3: Setup Redis (Memurai on Windows / Docker)
->>>>>>> 457097d (updated readme file and created .env.example file)
 
 * **Windows (Recommended for Tally Server)**:
   1. Download and run the **Memurai** installer from [memurai.com](https://www.memurai.com/).
   2. Accept default port `6379`. It automatically starts as a Windows Service.
-  3. Verify in PowerShell:
-     ```powershell
+  3. Verify in your terminal (PowerShell, CMD, or Git Bash):
+     ```bash
      memurai-cli ping
      # Expected response: PONG
      ```
@@ -265,50 +183,69 @@ FLUSH PRIVILEGES;
    cd backend
    ```
 
-2. Create and activate a Python virtual environment:
-   ```powershell
+2. Create a Python virtual environment:
+   ```bash
    python -m venv .venv
-
-   # On Windows PowerShell (run this if execution policy blocks scripts):
-   Set-ExecutionPolicy -Scope Process Bypass
-   .venv\Scripts\Activate.ps1
-
-   # On macOS / Linux:
-   source .venv/bin/activate
    ```
 
-3. Install backend dependencies:
+3. Activate the virtual environment:
+   * **PowerShell**:
+     ```powershell
+     Set-ExecutionPolicy -Scope Process Bypass
+     .venv\Scripts\Activate.ps1
+     ```
+   * **Command Prompt (CMD)**:
+     ```cmd
+     .venv\Scripts\activate.bat
+     ```
+   * **Git Bash / macOS / Linux**:
+     ```bash
+     source .venv/Scripts/activate    # Git Bash on Windows
+     # or: source .venv/bin/activate  # macOS / Linux
+     ```
+
+4. Install backend dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Create the `.env` configuration file from the template:
-   ```bash
-   # Windows PowerShell:
-   copy .env.example .env
+5. Create the `.env` configuration file from the template:
+   * **PowerShell**:
+     ```powershell
+     Copy-Item .env.example .env
+     ```
+   * **Command Prompt (CMD)**:
+     ```cmd
+     copy .env.example .env
+     ```
+   * **Git Bash / macOS / Linux**:
+     ```bash
+     cp .env.example .env
+     ```
 
-   # macOS / Linux:
-   cp .env.example .env
-   ```
-
-5. Open `backend/.env` in Notepad or VS Code and set your values:
+6. Open `backend/.env` in Notepad or VS Code and set your values:
    * **`DB_PASSWORD`**: Your MySQL password.
    * **`DB_USER`**: Your MySQL user (`root` or `tfi_app`).
    * **`TALLY_HOST`**: `127.0.0.1` (or your Tally server IP).
    * **`TALLY_PORT`**: `9000`.
    * **`INITIAL_ADMIN_COMPANY`**: Set this to **exactly match your open Tally company name** (e.g. `ABC Pvt Ltd`).
    * **`CHAT_JWT_SECRET`**: Generate a secure 64-char key by running:
-     ```powershell
-     python -c "import secrets; print(secrets.token_urlsafe(64))"
-     ```
-     and paste it into `CHAT_JWT_SECRET=`.
+     * **PowerShell / CMD**:
+       ```cmd
+       python -c "import secrets; print(secrets.token_urlsafe(64))"
+       ```
+     * **Git Bash / macOS / Linux**:
+       ```bash
+       python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+       ```
+     and paste the output into `CHAT_JWT_SECRET=`.
    * **`CORS_ALLOWED_ORIGINS`**: If accessing from other computers on your network, add your server IP:
      ```env
      CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://<SERVER-IP>:5173
      ```
    * **`GEMINI_API_KEY`**: Paste your Google Gemini API key here (if using AI chat).
 
-6. Start the Backend API:
+7. Start the Backend API (works in PowerShell, CMD, and Git Bash):
    ```bash
    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
@@ -318,25 +255,27 @@ FLUSH PRIVILEGES;
 
 ---
 
-<<<<<<< HEAD
-### Step 4: Frontend Setup (.env & Running)
-=======
 ### Step 5: Set Up & Run the Frontend
->>>>>>> 457097d (updated readme file and created .env.example file)
 
 1. Open a **second terminal** and navigate to `frontend`:
    ```bash
    cd frontend
    ```
 
-2. Create `frontend/.env` (a template `frontend/.env.example` is provided):
-   ```bash
-   # Windows PowerShell:
-   copy .env.example .env
+2. Create `frontend/.env` from the template:
+   * **PowerShell**:
+     ```powershell
+     Copy-Item .env.example .env
+     ```
+   * **Command Prompt (CMD)**:
+     ```cmd
+     copy .env.example .env
+     ```
+   * **Git Bash / macOS / Linux**:
+     ```bash
+     cp .env.example .env
+     ```
 
-   # macOS / Linux:
-   cp .env.example .env
-   ```
    * Ensure `frontend/.env` contains:
      ```env
      VITE_API_BASE_URL=http://localhost:8000/api/v1
@@ -358,16 +297,7 @@ FLUSH PRIVILEGES;
 
 ---
 
-<<<<<<< HEAD
-### Step 5: Login to Application
-Open your browser and navigate to:
-```
-http://localhost:5173
-```
-*(Or from any user PC on the same network: `http://<SERVER-IP>:5173`)*
-=======
 ### Step 6: Log In and Explore
->>>>>>> 457097d (updated readme file and created .env.example file)
 
 1. Open your browser and go to `http://localhost:5173` (or `http://<SERVER-IP>:5173`).
 2. Log in with the default Super Admin credentials:
