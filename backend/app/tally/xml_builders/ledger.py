@@ -316,7 +316,13 @@ def build_voucher_detail_request(
                             NARRATION,
                             ISDELETED,
                             ISCANCELLED,
-                            ALLLEDGERENTRIES.*
+                            ISINVOICE,
+                            PERSISTEDVIEW,
+                            BASICBUYERNAME,
+                            ALLLEDGERENTRIES.*,
+                            LEDGERENTRIES.*,
+                            ALLINVENTORYENTRIES.*,
+                            INVENTORYENTRIES.*
                         </FETCH>
 
                         <FILTER>VoucherDetailFilter</FILTER>
