@@ -1022,7 +1022,71 @@ async def fetch_voucher_detail(
     company_name: str | None = None,
 ):
     """
-    Fetch one accounting voucher with every ledger line inside it.
+    Fetch one accounting voucher with every ledger line inside it,
+    plus each ledger's current (closing) balance from Tally - the
+    "Current balance" / "Cur Bal" figures on Tally's own voucher
+    screen.
+    """
+
+    vouchers = await _fetch_voucher_detail_raw(
+        voucher_type=voucher_type,
+        voucher_number=voucher_number,
+        voucher_date=voucher_date,
+        company_name=company_name,
+    )
+
+    if not vouchers:
+        return vouchers
+
+    try:
+        ledgers = await fetch_ledger_list(
+            company_name=company_name,
+        )
+    except Exception as exc:
+        # The voucher itself is still correct without balances.
+        logging.getLogger(__name__).warning(
+            "Voucher current balances unavailable: %r",
+            exc,
+        )
+        return vouchers
+
+    closing_by_name = {
+        str(ledger.get("name") or "").strip().casefold():
+            ledger.get("closing_balance")
+        for ledger in ledgers
+        if ledger.get("name")
+    }
+
+    for voucher in vouchers:
+        for entry in voucher.get("entries", []):
+            closing = closing_by_name.get(
+                str(entry.get("ledger_name") or "")
+                .strip()
+                .casefold()
+            )
+
+            if closing is None:
+                continue
+
+            # Tally's signed closing balance: negative = debit.
+            entry["current_balance"] = round(abs(closing), 2)
+            entry["current_balance_type"] = (
+                "" if closing == 0
+                else "Dr" if closing < 0
+                else "Cr"
+            )
+
+    return vouchers
+
+
+async def _fetch_voucher_detail_raw(
+    voucher_type: str,
+    voucher_number: str,
+    voucher_date: date | None = None,
+    company_name: str | None = None,
+):
+    """
+    Fetch and parse one accounting voucher (no balances).
     """
 
     request_xml = build_voucher_detail_request(

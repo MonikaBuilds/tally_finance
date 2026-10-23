@@ -1,0 +1,85 @@
+/* Extra styles for the Tally-style voucher page (Voucherdetail.jsx).
+   Builds on the .voucher-* base styles in index.css. */
+
+.voucher-account-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.voucher-curbal {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.voucher-particulars .voucher-grid {
+  display: grid;
+  align-items: start;
+  column-gap: 16px;
+}
+
+.voucher-particulars .voucher-grid--single {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.voucher-particulars .voucher-grid--rate {
+  grid-template-columns: minmax(0, 1fr) 80px auto;
+}
+
+.voucher-particulars .voucher-grid--double {
+  grid-template-columns: minmax(0, 1fr) 140px 140px;
+}
+
+.voucher-particulars .voucher-grid--items {
+  grid-template-columns: minmax(0, 1fr) 100px 110px 60px auto;
+}
+
+.voucher-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.voucher-side {
+  display: inline-block;
+  min-width: 28px;
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.voucher-bills {
+  margin-top: 6px;
+}
+
+.voucher-bill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.voucher-bill-type {
+  min-width: 56px;
+}
+
+.voucher-bill-amount {
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .voucher-particulars .voucher-grid--double {
+    grid-template-columns: minmax(0, 1fr) 96px 96px;
+  }
+
+  .voucher-particulars .voucher-grid--items {
+    grid-template-columns: minmax(0, 1fr) 70px 80px 44px auto;
+  }
+}
