@@ -1094,3 +1094,50 @@ def test_chat_endpoint_e2e_caching_and_force_refresh():
             assert data["success"] is True
             assert data["source"] == "cache"
             assert "₹9,50,000" in data["answer"]
+
+
+@pytest.mark.asyncio
+async def test_redis_unavailable_cooldown_and_fast_failopen():
+    """When Redis encounters an error, it enters cooldown and fails-open instantly without blocking."""
+    import time
+    from app.cache.client import mark_redis_unavailable, get_redis_client, mark_redis_available, set_redis_client_override
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    set_redis_client_override(mock_client)
+    assert await get_redis_client() is mock_client
+
+    # Simulate network drop
+    mark_redis_unavailable(cooldown_seconds=10.0)
+
+    # Next call should return None in < 50ms without attempting socket operations
+    t0 = time.monotonic()
+    client = await get_redis_client()
+    elapsed = time.monotonic() - t0
+
+    assert client is None
+    assert elapsed < 0.05, f"Expected fast fail-open (<50ms), got {elapsed:.4f}s"
+
+    # Cleanup
+    set_redis_client_override(None)
+
+
+@pytest.mark.asyncio
+async def test_connectivity_failures_pruning():
+    """Expired failure records are automatically pruned from memory to avoid leaks."""
+    import time
+    manager = TallyCacheManager()
+    manager._connectivity_failures["expired_key"] = time.monotonic() - 10.0
+    manager._connectivity_failures["active_key"] = time.monotonic() + 100.0
+
+    manager._prune_expired_failures(time.monotonic())
+
+    assert "expired_key" not in manager._connectivity_failures
+    assert "active_key" in manager._connectivity_failures
+
+
+def test_effective_redis_url_customization():
+    """effective_redis_url reflects custom REDIS_HOST and REDIS_PORT when REDIS_URL is default."""
+    from app.cache.config import CacheSettings
+    settings = CacheSettings(REDIS_HOST="192.168.1.50", REDIS_PORT=6380, REDIS_DB=2)
+    assert settings.effective_redis_url == "redis://192.168.1.50:6380/2"

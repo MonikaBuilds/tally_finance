@@ -2,10 +2,8 @@
 Configuration settings for Redis caching and background refresh.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
 from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 
@@ -24,6 +22,7 @@ class CacheSettings(BaseSettings):
     REDIS_CACHE_REFRESH_INTERVAL_SECONDS: int = 600  # 10 minutes background refresh
     REDIS_CONNECT_TIMEOUT: float = 2.0
     REDIS_PROTOCOL: int = 2  # RESP2 for maximum compatibility across Redis versions
+    REDIS_UNAVAILABLE_COOLDOWN_SECONDS: float = 30.0  # Cooldown when Redis is offline
     TALLY_UNAVAILABLE_COOLDOWN_SECONDS: int = 30
     TALLY_CONNECT_TIMEOUT: float = 2.5
 
@@ -42,6 +41,18 @@ class CacheSettings(BaseSettings):
         env_file=(".env", str(_BACKEND_ENV)),
         extra="ignore",
     )
+
+    @property
+    def effective_redis_url(self) -> str:
+        """
+        Return the effective Redis connection URL.
+        If custom host/port/db were specified and differ from default while REDIS_URL
+        is default, construct the URL using those parameters.
+        """
+        if self.REDIS_HOST != "127.0.0.1" or self.REDIS_PORT != 6379 or self.REDIS_DB != 0:
+            if self.REDIS_URL == "redis://127.0.0.1:6379/0":
+                return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return self.REDIS_URL
 
     def get_fresh_ttl(self, report_name: str) -> int:
         """Return the specific fresh TTL for a report, or the default fresh TTL."""

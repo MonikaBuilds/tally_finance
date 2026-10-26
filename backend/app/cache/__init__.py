@@ -7,6 +7,8 @@ from app.cache.client import (
     get_redis_client,
     init_redis_client,
     is_redis_available,
+    mark_redis_available,
+    mark_redis_unavailable,
     set_redis_client_override,
 )
 from app.cache.config import CacheSettings, cache_settings
@@ -39,6 +41,8 @@ __all__ = [
     "init_redis_client",
     "is_redis_available",
     "is_tally_connectivity_error",
+    "mark_redis_available",
+    "mark_redis_unavailable",
     "set_redis_client_override",
     "start_background_refresher",
     "stop_background_refresher",
