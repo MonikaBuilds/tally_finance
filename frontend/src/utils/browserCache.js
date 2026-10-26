@@ -105,6 +105,7 @@ export function normalizePathForCacheKey(path) {
     params.delete('refresh')
     params.delete('force_refresh')
     params.delete('_')
+    params.sort()
 
     const cleanQuery = params.toString()
     return cleanQuery ? `${pathname}?${cleanQuery}` : pathname

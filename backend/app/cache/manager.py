@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable, Generic, Optional, TypeVar
 
 from redis.exceptions import RedisError
 
-from app.cache.client import get_redis_client
+from app.cache.client import get_redis_client, mark_redis_unavailable
 from app.cache.config import cache_settings
 from app.cache.errors import (
     is_tally_connectivity_error,
@@ -87,6 +87,12 @@ class TallyCacheManager:
         # Avoid repeating a known-failing Tally request for a stale key.
         self._connectivity_failures: dict[str, float] = {}
 
+    def _prune_expired_failures(self, now_monotonic: float) -> None:
+        """Remove expired cooldown entries to prevent unbounded memory growth."""
+        expired = [k for k, v in self._connectivity_failures.items() if v <= now_monotonic]
+        for k in expired:
+            self._connectivity_failures.pop(k, None)
+
     async def _get_lock(self, key: str) -> asyncio.Lock:
         """Get or create an asyncio.Lock for a specific cache key."""
         async with self._locks_mutex:
@@ -127,6 +133,7 @@ class TallyCacheManager:
                 return data, CacheState.STALE, cached_at
 
         except RedisError as redis_err:
+            mark_redis_unavailable()
             logger.warning("Redis read error for key %s: %s", key, redis_err)
             return None, CacheState.MISS, None
         except Exception as parse_err:
@@ -171,6 +178,7 @@ class TallyCacheManager:
             await redis.set(key, payload, ex=retention_seconds)
             return True
         except RedisError as redis_err:
+            mark_redis_unavailable()
             logger.warning("Redis write error for key %s: %s", key, redis_err)
             return False
         except Exception as exc:
@@ -245,6 +253,8 @@ class TallyCacheManager:
                         cached_at = retained_at
 
                 now_monotonic = time.monotonic()
+                self._prune_expired_failures(now_monotonic)
+
                 failure_until = self._connectivity_failures.get(cache_key, 0)
                 if force_refresh:
                     self._connectivity_failures.pop(cache_key, None)
@@ -345,21 +355,30 @@ class TallyCacheManager:
             await redis.delete(cache_key)
             return True
         except RedisError as exc:
+            mark_redis_unavailable()
             logger.warning("Error deleting cache key %s: %s", cache_key, exc)
             return False
 
     async def invalidate_prefix(self, prefix: str) -> int:
-        """Invalidate all keys matching a prefix pattern."""
+        """
+        Invalidate all keys matching a prefix pattern.
+        Uses non-blocking SCAN iteration instead of blocking KEYS command.
+        """
         redis = await get_redis_client()
         if redis is None:
             return 0
         try:
             pattern = f"{prefix}*"
-            keys = await redis.keys(pattern)
-            if keys:
-                return await redis.delete(*keys)
+            matched_keys = []
+            # Scan iteratively to avoid blocking Redis with KEYS
+            async for k in redis.scan_iter(match=pattern, count=100):
+                matched_keys.append(k)
+
+            if matched_keys:
+                return await redis.delete(*matched_keys)
             return 0
         except RedisError as exc:
+            mark_redis_unavailable()
             logger.warning("Error invalidating prefix %s: %s", prefix, exc)
             return 0
 
