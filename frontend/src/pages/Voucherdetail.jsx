@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 
@@ -38,7 +38,7 @@ function formatPlain(value) {
   return numberFormatter.format(Number(value) || 0)
 }
 
-// "2025-04-02" -> "Wednesday" (Tally prints the weekday under the date).
+// "2025-04-02" -> "Wednesday"
 function weekdayOf(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (!match) return ''
@@ -68,7 +68,7 @@ function balanceText(entry) {
   return `${formatMoney(entry.current_balance)} ${entry.current_balance_type || ''}`.trim()
 }
 
-// Tally's own captions for the invoice reference, per voucher family.
+// Tally's field captions for the invoice reference, per voucher family.
 function referenceLabel(voucher) {
   if (!voucher?.is_invoice) return 'Reference'
 
@@ -79,6 +79,7 @@ function referenceLabel(voucher) {
   return 'Reference No.'
 }
 
+// Bill-wise lines under a ledger: "Agst Ref  FIN/01/202526  ₹10,00,000 Dr"
 function BillAllocations({ allocations }) {
   if (!Array.isArray(allocations) || allocations.length === 0) return null
 
@@ -98,9 +99,9 @@ function BillAllocations({ allocations }) {
 }
 
 /*
- * The full accounting voucher behind one Ledger row - what Tally
- * shows on its "Accounting Voucher Alteration" screen. The layout
- * follows the voucher itself (not the ledger you drilled in from):
+ * The full accounting voucher behind one Ledger row. It carries the
+ * same fields Tally's "Accounting Voucher Alteration" screen has, in
+ * the app's own card design:
  *
  *   single_entry  Payment / Receipt / Contra -> Account + Particulars
  *   invoice       Sales / Purchase / Credit / Debit Note
@@ -113,6 +114,7 @@ function BillAllocations({ allocations }) {
 function VoucherDetail() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const [refreshCount, setRefreshCount] = useState(0)
 
   const voucherType = searchParams.get('voucher_type') || ''
   const voucherNumber = searchParams.get('voucher_number') || ''
@@ -130,8 +132,11 @@ function VoucherDetail() {
     if (voucherDate) params.set('date', voucherDate)
     if (ledgerName) params.set('ledger_name', ledgerName)
 
+    // "Refresh from Tally" bypasses both the browser and server caches.
+    if (refreshCount > 0) params.set('force_refresh', 'true')
+
     return `/reports/voucher?${params.toString()}`
-  }, [voucherType, voucherNumber, voucherDate, ledgerName])
+  }, [voucherType, voucherNumber, voucherDate, ledgerName, refreshCount])
 
   const { data: response, loading, error } = useFetch(queryPath)
 
@@ -153,8 +158,10 @@ function VoucherDetail() {
 
   const particularEntries = entries.filter((entry) => entry !== topEntry)
 
+  const isInvoice = layout === 'invoice'
+
   const showRateColumn =
-    layout === 'invoice' &&
+    isInvoice &&
     particularEntries.some(
       (entry) => entry.rate !== null && entry.rate !== undefined
     )
@@ -170,7 +177,6 @@ function VoucherDetail() {
     )
   }
 
-  const topLabel = layout === 'invoice' ? 'Party A/c name' : 'Account'
   const weekday = weekdayOf(voucher?.date)
 
   return (
@@ -178,6 +184,18 @@ function VoucherDetail() {
       <PageHeader
         title={voucherType ? `${voucherType} Voucher` : 'Voucher'}
         subtitle="Live data from TallyPrime"
+        actions={
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setRefreshCount((count) => count + 1)}
+            disabled={loading}
+            title="Re-read this voucher from Tally, ignoring saved copies"
+          >
+            <RefreshCw size={16} />
+            Refresh from Tally
+          </button>
+        }
       />
 
       <nav className="breadcrumbs">
@@ -211,18 +229,21 @@ function VoucherDetail() {
                 {weekday ? ` (${weekday})` : ''}
               </strong>
             </div>
+
             {voucher.reference_number && (
               <div className="meta-item">
                 <span>{referenceLabel(voucher)}</span>
                 <strong>{voucher.reference_number}</strong>
               </div>
             )}
+
             {voucher.reference_number && voucher.reference_date && (
               <div className="meta-item">
-                <span>{voucher.is_invoice ? 'Invoice Date' : 'Reference Date'}</span>
+                <span>{isInvoice ? 'Invoice Date' : 'Reference Date'}</span>
                 <strong>{formatDate(voucher.reference_date)}</strong>
               </div>
             )}
+
             {voucher.is_cancelled && (
               <div className="meta-item">
                 <span>Status</span>
@@ -234,18 +255,26 @@ function VoucherDetail() {
           {/* Account (Payment/Receipt/Contra) or Party A/c name (invoices) */}
           {topEntry && layout !== 'double_entry' && (
             <div className="voucher-account-box">
-              <div className="voucher-account-label">{topLabel}</div>
+              <div className="voucher-account-label">
+                {isInvoice ? 'Party A/c name' : 'Account'}
+              </div>
+
               <div className="voucher-account-main">
                 <div className="voucher-account-name">
                   {topEntry.ledger_name}
                 </div>
+
                 {balanceText(topEntry) && (
                   <div className="voucher-curbal">
                     Current balance: {balanceText(topEntry)}
                   </div>
                 )}
-                <BillAllocations allocations={topEntry.bill_allocations} />
+
+                {!isInvoice && (
+                  <BillAllocations allocations={topEntry.bill_allocations} />
+                )}
               </div>
+
               <div className="voucher-account-amount">
                 {formatMoney(entryAmount(topEntry))} {entrySide(topEntry)}
               </div>
@@ -253,7 +282,7 @@ function VoucherDetail() {
           )}
 
           {/* Stock items on an item invoice */}
-          {layout === 'invoice' && items.length > 0 && (
+          {isInvoice && items.length > 0 && (
             <div className="voucher-particulars">
               <div className="voucher-grid voucher-grid--items voucher-particulars-title">
                 <span>Name of Item</span>
@@ -334,13 +363,16 @@ function VoucherDetail() {
                   >
                     <span className="voucher-particular-name">
                       {entry.ledger_name}
-                      {layout === 'single_entry' && balanceText(entry) && (
+                      {!isInvoice && balanceText(entry) && (
                         <span className="voucher-curbal">
                           Cur Bal: {balanceText(entry)}
                         </span>
                       )}
-                      <BillAllocations allocations={entry.bill_allocations} />
+                      {!isInvoice && (
+                        <BillAllocations allocations={entry.bill_allocations} />
+                      )}
                     </span>
+
                     {showRateColumn && (
                       <span className="voucher-num">
                         {entry.rate !== null && entry.rate !== undefined
@@ -348,6 +380,7 @@ function VoucherDetail() {
                           : ''}
                       </span>
                     )}
+
                     <span className="voucher-num voucher-particular-amount">
                       {formatMoney(entryAmount(entry))} {entrySide(entry)}
                     </span>
