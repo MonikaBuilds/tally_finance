@@ -44,3 +44,5 @@ backend/tests/.test_data/
 htmlcov/
 .mypy_ cache/
 .ruff_cache/
+memurai.conf.backup
+redis.windows-service.conf.backup
