@@ -141,13 +141,33 @@ def parse_native_table(raw):
     periods = set()
     for row in table.rows:
         for cell in row:
-            match = re.fullmatch(r'(\d{1,2}-[A-Za-z]{3}-\d{2,4}) to (\d{1,2}-[A-Za-z]{3}-\d{2,4})', cell)
-            if match:
-                periods.add((report_date(match[1]), report_date(match[2])))
-            elif cell.startswith('For '):
-                single = report_date(cell[4:])
+            if not isinstance(cell, str):
+                continue
+            clean_cell = cell.strip()
+            # Match date ranges such as "1-Apr-25 to 31-Mar-26" or "1-Apr-2025 to 31-Mar-2026"
+            range_match = re.search(
+                r'(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+to\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})',
+                clean_cell,
+                re.IGNORECASE,
+            )
+            if range_match:
+                d1 = report_date(range_match.group(1))
+                d2 = report_date(range_match.group(2))
+                if d1 and d2:
+                    periods.add((d1, d2))
+                continue
+
+            # Match single "as on", "for", or "upto" dates for point-in-time reports
+            single_match = re.search(
+                r'(?:for|as\s+on|upto)\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})',
+                clean_cell,
+                re.IGNORECASE,
+            )
+            if single_match:
+                single = report_date(single_match.group(1))
                 if single:
                     periods.add((single, single))
+
     period = next(iter(periods)) if len(periods) == 1 else (None, None)
     return {'rows': table.rows, 'from_date': period[0], 'to_date': period[1]}
 

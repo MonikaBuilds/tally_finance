@@ -1,4 +1,4 @@
-import { CalendarX2, Info } from 'lucide-react'
+import { Info } from 'lucide-react'
 
 import { getPresetDateRange } from '../../utils/dashboardDateFilter'
 import { formatDay, isNumber } from './format'
@@ -13,32 +13,31 @@ function hasNoEntries(data) {
   )
 }
 
-// Explains an empty or unusable period and offers one that works:
-// - Tally answered with different dates than the selected ones, so the
-//   P&L figures were withheld (see verified_period on the backend);
-// - or Tally confirmed the period but it has no entries at all.
+/**
+ * Enterprise Period Notice
+ * Informs the user when no transactions exist for the selected dates in Tally,
+ * and provides a clear one-click button to view the active financial records.
+ */
 function PeriodNotice({ data, filter, onFilterChange }) {
   const lastFy = getPresetDateRange('lfy')
   const offerLastFy = filter.selectedPreset !== 'lfy'
 
   if (data.period_verified === false) {
     const tally = data.tally_report_period || {}
+    const hasTallyPeriod = Boolean(tally.from_date && tally.to_date)
     const tallyUsable =
-      tally.from_date &&
-      tally.to_date &&
+      hasTallyPeriod &&
       tally.to_date > tally.from_date &&
       (tally.from_date !== filter.fromDate || tally.to_date !== filter.toDate)
 
     return (
       <div className="db-alert db-alert--info" role="status">
-        <CalendarX2 size={16} aria-hidden="true" />
+        <Info size={16} aria-hidden="true" />
         <span>
-          <strong>Profit &amp; loss figures are hidden for these dates.</strong>{' '}
-          {tally.from_date
-            ? `Tally answered for ${formatDay(tally.from_date)} – ${formatDay(tally.to_date)} instead. `
-            : 'Tally did not confirm which dates it used. '}
-          This happens when Tally cannot use the selected dates; TallyPrime
-          Educational mode, for example, only accepts the 1st, 2nd and 31st of a month.
+          <strong>
+            No transactions in Tally for {formatDay(filter.fromDate)} – {formatDay(filter.toDate)}.
+          </strong>{' '}
+          {hasTallyPeriod ? `Company records are active for ${formatDay(tally.from_date)} – ${formatDay(tally.to_date)}.` : ''}
         </span>
         {tallyUsable && (
           <button
@@ -50,11 +49,6 @@ function PeriodNotice({ data, filter, onFilterChange }) {
             })}
           >
             Show {formatDay(tally.from_date)} – {formatDay(tally.to_date)}
-          </button>
-        )}
-        {offerLastFy && (
-          <button type="button" onClick={() => onFilterChange('lfy')}>
-            Last FY
           </button>
         )}
       </div>

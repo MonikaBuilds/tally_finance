@@ -164,6 +164,31 @@ async def _fetch_monthly_income_expense_series(
 
         series.append(_series_point(start, end, native_pl, rows, company_name))
 
+    # If all requested months were unverified because Tally reported figures for its
+    # active book period instead, load the monthly trend for that active period.
+    if series and all(point['status'] == 'unverified' for point in series):
+        tally_from = series[0].get('tally_from_date')
+        tally_to = series[0].get('tally_to_date')
+        if (
+            tally_from
+            and tally_to
+            and (tally_from != from_date.isoformat() or tally_to != last_day.isoformat())
+        ):
+            try:
+                active_start = date.fromisoformat(tally_from)
+                active_end = date.fromisoformat(tally_to)
+                active_series = await _fetch_monthly_income_expense_series(
+                    company_name,
+                    active_start,
+                    active_end,
+                    today=active_end,
+                    is_disconnected=is_disconnected,
+                )
+                if active_series and any(p['status'] in ('available', 'no_entries') for p in active_series):
+                    return active_series
+            except Exception:
+                logger.warning('Failed to load fallback monthly trend for active period', exc_info=True)
+
     logger.info(
         'Dashboard monthly series: %d months in %.2fs',
         len(windows),
@@ -358,40 +383,16 @@ async def get_dashboard_monthly(
             },
         )
 
-        is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
+        resp_from = (series[0].get('from_date') if series else None) or start.isoformat()
+        resp_to = (series[-1].get('to_date') if series else None) or end.isoformat()
 
-        async def _fetch_from_tally():
-            is_disconnected = (
-                getattr(request, "is_disconnected", None)
-                if request is not None
-                else None
-            )
-            series = await _fetch_monthly_income_expense_series(
-                company_name,
-                start,
-                end,
-                is_disconnected=is_disconnected,
-            )
-
-            # If all windows ended up 'unavailable', probe Tally connectivity so outage triggers stale cache fallback
-            if series and all(p.get("status") == "unavailable" for p in series):
-                client = TallyClient()
-                if client._circuit_is_open() or cache_manager.is_tally_known_offline():
-                    import httpx
-                    raise httpx.ConnectError("Tally server is offline or unreachable")
-                try:
-                    conn_status = await client.check_connection()
-                    if not conn_status.get("connected", False):
-                        import httpx
-                        raise httpx.ConnectError("Tally server is offline or unreachable")
-                except Exception as probe_exc:
-                    if is_tally_connectivity_error(probe_exc):
-                        raise probe_exc
-
-            return {
+        return {
+            'success': True,
+            'source': 'tally',
+            'data': {
                 'company_name': company_name,
-                'from_date': start.isoformat(),
-                'to_date': end.isoformat(),
+                'from_date': resp_from,
+                'to_date': resp_to,
                 'income_vs_expense': series,
             }
 

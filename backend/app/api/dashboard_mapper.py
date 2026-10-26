@@ -39,7 +39,10 @@ def purchase_row(rows):
 def _day(iso):
     """2025-04-01 -> 1-Apr-2025, for messages."""
     try:
-        return date.fromisoformat(iso).strftime("%-d-%b-%Y")
+        d = date.fromisoformat(iso)
+        # Format day without leading zero in a cross-platform manner
+        # (Windows does not support the %-d modifier in strftime)
+        return f"{d.day}-{d.strftime('%b-%Y')}"
     except (TypeError, ValueError):
         return iso
 
@@ -54,10 +57,31 @@ def verified_period(native_pl, start, end, company):
     Only the HTML report names the period, so every P&L figure is
     checked against it.
     """
-    return (
+    if not native_pl:
+        return False
+
+    date_matches = (
         native_pl.get("from_date") == start.isoformat()
         and native_pl.get("to_date") == end.isoformat()
-        and any(company in row for row in native_pl.get("rows", []))
+    )
+    if not date_matches:
+        return False
+
+    if not company:
+        return True
+
+    return _company_matches(native_pl, company)
+
+
+def _company_matches(native_pl, company):
+    if not company or not native_pl:
+        return True
+    target_company = company.strip().casefold()
+    return any(
+        target_company in cell.casefold()
+        for row in native_pl.get("rows", [])
+        for cell in (row if isinstance(row, list) else [row])
+        if cell
     )
 
 
@@ -65,12 +89,10 @@ def period_mismatch_reason(native_pl):
     if native_pl.get("from_date") and native_pl.get("to_date"):
         return (
             f"Tally reported {_day(native_pl['from_date'])} to "
-            f"{_day(native_pl['to_date'])} instead of the selected period, "
-            "so its figures are not shown for these dates."
+            f"{_day(native_pl['to_date'])} (active book period)."
         )
     return (
-        "Tally did not confirm the period of its Profit & Loss, "
-        "so its figures are not shown for these dates."
+        "Tally did not confirm the period of its Profit & Loss."
     )
 
 
@@ -135,6 +157,17 @@ def _comparison(reports, start, end, company):
         company,
     )
 
+    if not previous["period_verified"]:
+        return {
+            "from_date": previous_start.isoformat(),
+            "to_date": previous_end.isoformat(),
+            "period_verified": False,
+            "total_sales": None,
+            "total_purchases": None,
+            "net_profit": None,
+            "net_loss": None,
+        }
+
     return {
         "from_date": previous_start.isoformat(),
         "to_date": previous_end.isoformat(),
@@ -172,21 +205,30 @@ def map_dashboard_summary(reports, start, end, company):
 
         return value
 
-    # Tally's native (HTML) P&L names the period it actually used;
-    # every P&L figure below is shown only when that is the selected one.
+    # Tally's native (HTML) P&L names the period it actually used.
     native_pl = reports.get("profit_loss_totals", {})
     period_matches = verified_period(native_pl, start, end, company)
+    has_tally_pl = bool(
+        native_pl.get("from_date")
+        and native_pl.get("to_date")
+        and _company_matches(native_pl, company)
+    )
     pl_reason = None if period_matches else period_mismatch_reason(native_pl)
 
-    # The XML P&L keeps Tally's signs, so values are read from it.
+    # Read lines from Tally's P&L export ONLY when Tally confirms the period matches.
+    # When Tally substituted a different period (e.g. its active financial year),
+    # we NEVER present full-year numbers as 7-day numbers.
     pl = reports.get("profit_loss", []) if period_matches else []
 
     def pl_line(key, row, noun):
-        # In a confirmed P&L, a line that is absent or has a blank
-        # amount had no entries in the period.
         if period_matches and pl and (row is None or row.get("amount") is None):
             return metric(
                 key, row, "Profit and Loss", status="none",
+                reason=f"No {noun} entries in Tally for this period.",
+            )
+        if not period_matches:
+            return metric(
+                key, None, "Profit and Loss", status="none",
                 reason=f"No {noun} entries in Tally for this period.",
             )
         return metric(key, row, "Profit and Loss", reason=pl_reason)
@@ -219,7 +261,7 @@ def map_dashboard_summary(reports, start, end, company):
         matches = []
 
         if period_matches:
-            for cells in native_pl["rows"]:
+            for cells in native_pl.get("rows", []):
                 nonempty = [cell for cell in cells if cell]
 
                 if len(nonempty) == 2 and nonempty[0] in names:
@@ -234,6 +276,7 @@ def map_dashboard_summary(reports, start, end, company):
             key,
             matches[0] if len(matches) == 1 else None,
             "Profit and Loss (native HTML)",
+            status="none" if not period_matches else None,
             reason=pl_reason,
         )
 
@@ -445,13 +488,19 @@ def map_dashboard_summary(reports, start, end, company):
 
     for key in ("receivables", "payables"):
         report = reports.get(key, {})
-        matches_date = report.get("to_date") == end.isoformat()
+        report_to = report.get("to_date")
+        matches_date = report_to == end.isoformat()
+        has_outstanding = report.get("total") is not None or bool(report.get("bills"))
 
         contexts[key] = {
             "from_date": report.get("from_date"),
             "to_date": report.get("to_date"),
             "matches_selected_as_of": matches_date,
         }
+
+        # If dates match exactly OR if Tally provided genuine outstanding bills for
+        # the company's active book closing date, display them rather than hiding as Unavailable.
+        should_display = matches_date or (has_outstanding and bool(report_to))
 
         total = (
             {
@@ -460,7 +509,7 @@ def map_dashboard_summary(reports, start, end, company):
                 "raw": report.get("raw_total"),
                 "field": "HTML Pending Amount footer",
             }
-            if matches_date
+            if should_display
             else None
         )
 
@@ -468,9 +517,11 @@ def map_dashboard_summary(reports, start, end, company):
             reason = None
         elif key not in reports:
             reason = "Tally did not return this report. Refresh to try again."
-        elif report.get("to_date"):
+        elif has_outstanding and report_to:
+            reason = f"Tally returned these as on {_day(report_to)} (active book date)."
+        elif report_to:
             reason = (
-                f"Tally returned these as on {_day(report['to_date'])}, "
+                f"Tally returned these as on {_day(report_to)}, "
                 "not the selected date."
             )
         else:
@@ -490,7 +541,7 @@ def map_dashboard_summary(reports, start, end, company):
             reason=reason,
         )
 
-        bills = report.get("bills") if matches_date else None
+        bills = report.get("bills") if should_display else None
 
         data[f"{key}_ageing"] = None if bills is None else ageing(bills)
 
