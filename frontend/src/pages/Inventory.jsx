@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { AlertCircle, PackageSearch } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
@@ -12,6 +12,7 @@ import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatCurrency, formatQuantity, financialYearRange } from '../utils/format'
+import { formatAmount } from '../utils/stockFormat'
 
 // ------------------------------------------------------------------
 // Shared bits
@@ -68,11 +69,33 @@ function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase,
 const REGISTER_COLUMNS = [
   { key: 'month', label: 'Particulars' },
   { key: 'total_vouchers', label: 'Total Vouchers', align: 'right' },
+  {
+    key: 'cancelled_vouchers',
+    label: '(cancelled)',
+    align: 'right',
+    render: (r) => (r.cancelled_vouchers ? r.cancelled_vouchers : ''),
+  },
 ]
 
 function RegisterTab({ registerKey }) {
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const navigate = useNavigate()
+
+  // The period lives in the URL so Back from a month's voucher list
+  // returns to the same period. With no dates the backend picks the
+  // latest financial year that has stock activity.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const fromDate = searchParams.get('from') || ''
+  const toDate = searchParams.get('to') || ''
+
+  const setPeriod = (key, value) => {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set(key, value)
+    else next.delete(key)
+    setSearchParams(next)
+  }
+  const setFromDate = (value) => setPeriod('from', value)
+  const setToDate = (value) => setPeriod('to', value)
+
   const params = {
     from_date: fromDate || undefined,
     to_date: toDate || undefined,
@@ -121,7 +144,22 @@ function RegisterTab({ registerKey }) {
             />
           </div>
 
-          <DataTable columns={REGISTER_COLUMNS} rows={response.report || []} />
+          <p className="table-hint">
+            {response.from} to {response.to}. Click a month to list its vouchers.
+          </p>
+
+          <DataTable
+            columns={REGISTER_COLUMNS}
+            rows={response.report || []}
+            onRowClick={(row) =>
+              navigate(
+                `/reports/registers/${registerKey}/vouchers${toQuery({
+                  from: row.from,
+                  to: row.to,
+                })}`
+              )
+            }
+          />
 
           <div className="table-footer">
             <span>Grand Total: {response.grand_total ?? 0}</span>
@@ -158,10 +196,10 @@ const STOCK_SUMMARY_COLUMNS = [
   { key: 'stock_group', label: 'Stock Group' },
   { key: 'unit', label: 'Unit' },
   { key: 'opening_quantity', label: 'Opening Qty', align: 'right', render: (r) => formatQuantity(r.opening_quantity) },
-  { key: 'opening_value', label: 'Opening Value', align: 'right', render: (r) => formatCurrency(r.opening_value) },
+  { key: 'opening_value', label: 'Opening Value', align: 'right', render: (r) => formatAmount(r.opening_value) },
   { key: 'closing_quantity', label: 'Closing Qty', align: 'right', render: (r) => formatQuantity(r.closing_quantity) },
-  { key: 'closing_rate', label: 'Closing Rate', align: 'right', render: (r) => formatCurrency(r.closing_rate) },
-  { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => formatCurrency(r.closing_value) },
+  { key: 'closing_rate', label: 'Closing Rate', align: 'right', render: (r) => formatAmount(r.closing_rate) },
+  { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => formatAmount(r.closing_value) },
 ]
 
 function StockSummaryTab() {
@@ -179,7 +217,12 @@ function StockSummaryTab() {
     }
   }, [defaultAsOnDate, touched, toDate])
 
-  const params = { to_date: toDate || undefined }
+  // The financial year containing the "as on" date, so Tally computes
+  // opening figures from that year's start rather than its own default.
+  const params = {
+    from_date: toDate ? financialYearRange(0, new Date(toDate)).from : undefined,
+    to_date: toDate || undefined,
+  }
 
   return (
     <>
@@ -217,7 +260,7 @@ function StockSummaryTab() {
           const totalValue = rows.reduce((sum, row) => sum + (Number(row.closing_value) || 0), 0)
           return (
             <div className="table-footer">
-              <span>Total Closing Value: {formatCurrency(totalValue)}</span>
+              <span>Total Closing Value: {formatAmount(totalValue)}</span>
             </div>
           )
         }}
@@ -230,8 +273,11 @@ function StockSummaryTab() {
 // Stock Group Summary
 // ------------------------------------------------------------------
 
+// Tally lists its implicit "Primary" root first, shown as "♦ Primary".
+const masterName = (name, isPrimary) => (isPrimary ? `♦ ${name}` : name)
+
 const STOCK_GROUP_COLUMNS = [
-  { key: 'stock_group', label: 'Stock Group' },
+  { key: 'stock_group', label: 'Stock Group', render: (r) => masterName(r.stock_group, r.is_primary) },
   { key: 'parent', label: 'Parent' },
   { key: 'base_units', label: 'Base Units' },
 ]
@@ -241,7 +287,7 @@ function StockGroupsTab() {
 
   return (
     <>
-      <p className="table-hint">Click a stock group to view the items inside it.</p>
+      <p className="table-hint">Click a stock group to open its Stock Group Summary.</p>
       <ReportBody
         path="/reports/stock-groups"
         columns={STOCK_GROUP_COLUMNS}
@@ -249,7 +295,7 @@ function StockGroupsTab() {
         exportParams={{}}
         filenameBase="stock_group_summary"
         onRowClick={(row) =>
-          navigate(`/reports/stock-group-items?group=${encodeURIComponent(row.stock_group)}`)
+          navigate(`/reports/stock-groups/${encodeURIComponent(row.stock_group)}`)
         }
       />
     </>
@@ -261,19 +307,27 @@ function StockGroupsTab() {
 // ------------------------------------------------------------------
 
 const STOCK_CATEGORY_COLUMNS = [
-  { key: 'stock_category', label: 'Stock Category' },
+  { key: 'stock_category', label: 'Stock Category', render: (r) => masterName(r.stock_category, r.is_primary) },
   { key: 'parent', label: 'Parent' },
 ]
 
 function StockCategoriesTab() {
+  const navigate = useNavigate()
+
   return (
-    <ReportBody
-      path="/reports/stock-categories"
-      columns={STOCK_CATEGORY_COLUMNS}
-      exportBasePath="/reports/stock-categories/export"
-      exportParams={{}}
-      filenameBase="stock_category_summary"
-    />
+    <>
+      <p className="table-hint">Click a stock category to open its Stock Category Summary.</p>
+      <ReportBody
+        path="/reports/stock-categories"
+        columns={STOCK_CATEGORY_COLUMNS}
+        exportBasePath="/reports/stock-categories/export"
+        exportParams={{}}
+        filenameBase="stock_category_summary"
+        onRowClick={(row) =>
+          navigate(`/reports/stock-categories/${encodeURIComponent(row.stock_category)}`)
+        }
+      />
+    </>
   )
 }
 
@@ -282,9 +336,9 @@ function StockCategoriesTab() {
 // ------------------------------------------------------------------
 
 const GODOWN_COLUMNS = [
-  { key: 'godown', label: 'Godown' },
+  { key: 'godown', label: 'Godown', render: (r) => masterName(r.godown, r.is_primary) },
   { key: 'parent', label: 'Parent' },
-  { key: 'is_internal', label: 'Internal', render: (r) => (r.is_internal ? 'Yes' : 'No') },
+  { key: 'is_internal', label: 'Internal', render: (r) => (r.is_primary ? '' : r.is_internal ? 'Yes' : 'No') },
 ]
 
 function GodownsTab() {
@@ -292,15 +346,15 @@ function GodownsTab() {
 
   return (
     <>
-      <p className="table-hint">Click a location to view its Location Summary.</p>
+      <p className="table-hint">Click a godown to open its Godown Summary.</p>
       <ReportBody
         path="/reports/godowns"
         columns={GODOWN_COLUMNS}
         exportBasePath="/reports/godowns/export"
         exportParams={{}}
-        filenameBase="locations"
+        filenameBase="godowns"
         onRowClick={(row) =>
-          navigate(`/reports/location-summary?location=${encodeURIComponent(row.godown)}`)
+          navigate(`/reports/godowns/${encodeURIComponent(row.godown)}`)
         }
       />
     </>
@@ -550,7 +604,7 @@ function DateFilter({ label, value, onChange }) {
 const TABS = [
   // -- Summary --
   { key: 'stock-item', label: 'Stock Item', Component: StockSummaryTab },
-  { key: 'locations', label: 'Locations', Component: GodownsTab },
+  { key: 'godowns', label: 'Godowns', Component: GodownsTab },
   { key: 'stock-group-summary', label: 'Stock Group Summary', Component: StockGroupsTab },
   { key: 'stock-category-summary', label: 'Stock Category Summary', Component: StockCategoriesTab },
 
@@ -569,7 +623,12 @@ const TAB_GROUPS = [
 ]
 
 function Inventory() {
-  const [activeTab, setActiveTab] = useState(TABS[0].key)
+  // The tab lives in the URL (?tab=godowns) so Back from a drill-down
+  // lands on the list the user came from instead of the first tab.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab = TABS.some((tab) => tab.key === requestedTab) ? requestedTab : TABS[0].key
+  const setActiveTab = (key) => setSearchParams({ tab: key })
 
   const ActiveComponent = useMemo(
     () => TABS.find((tab) => tab.key === activeTab)?.Component,

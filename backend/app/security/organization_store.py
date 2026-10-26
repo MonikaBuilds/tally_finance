@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from app.security.user_store import _connect
+from app.security.db import get_connection
 
 
 @dataclass(frozen=True)
@@ -12,9 +12,10 @@ class StoredOrganization:
 
 def initialize_organization_store() -> None:
     """
-    Create the organizations table if it does not exist.
+    Create the organizations table if it does not exist and ensure
+    baseline default organizations exist so foreign key constraints are satisfied.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -25,6 +26,15 @@ def initialize_organization_store() -> None:
                 organization_name VARCHAR(255) NOT NULL UNIQUE,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE
             )
+            """
+        )
+
+        cursor.execute(
+            """
+            INSERT IGNORE INTO organizations (organization_id, organization_name, is_active)
+            VALUES
+                ('e7747b1f-36c9-4ea1-85d9-965f5c55d679', 'Infintrix', 1),
+                ('default', 'Default Organization', 1)
             """
         )
 
@@ -52,7 +62,7 @@ def create_organization(
 
     organization_id = str(uuid.uuid4())
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -95,7 +105,7 @@ def get_organization(
     if not clean_id:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(
         dictionary=True
     )

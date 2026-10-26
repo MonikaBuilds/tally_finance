@@ -12,8 +12,8 @@ import {
 import {
     apiGet,
     apiPost,
-    setAccessToken,
 } from '../api/client'
+import { clearBrowserCache } from '../utils/browserCache'
 import './Login.css'
 
 function Login({ onLogin }) {
@@ -42,18 +42,13 @@ function Login({ onLogin }) {
                 password,
             })
 
-            setAccessToken(response.access_token)
             const currentUser = await apiGet('/auth/me')
+
+            clearBrowserCache()
 
             sessionStorage.setItem(
                 'chat_user',
-                JSON.stringify({
-                    user_id: response.user_id,
-                    username: response.username,
-                    companies: currentUser.companies,
-                    roles: currentUser.roles,
-                    permissions: currentUser.permissions,
-                }),
+                JSON.stringify(currentUser),
             )
 
             if (
@@ -70,7 +65,7 @@ function Login({ onLogin }) {
                 )
             }
 
-            onLogin?.(response)
+            onLogin?.()
         } catch (err) {
             setError(
                 err?.message ||

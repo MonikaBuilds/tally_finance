@@ -6,10 +6,16 @@ import time
 import httpx
 
 from app.core.config import settings
+from app.cache.config import cache_settings
+from app.cache.errors import (
+    is_tally_connectivity_error,
+    is_tally_unreachable_error,
+)
 
 
 class TallyClient:
     _shared_client: httpx.AsyncClient | None = None
+    _unavailable_until = 0.0
 
     # TallyPrime's built-in HTTP-XML server processes one request at a
     # time. Firing several report calls close together (e.g. the
@@ -19,6 +25,35 @@ class TallyClient:
     # up and working. This lock serializes our own outgoing requests
     # so they queue politely on our side instead.
     _lock = asyncio.Lock()
+
+    @classmethod
+    def _mark_unavailable(cls) -> None:
+        cooldown = max(0, cache_settings.TALLY_UNAVAILABLE_COOLDOWN_SECONDS)
+        cls._unavailable_until = max(
+            cls._unavailable_until,
+            time.monotonic() + cooldown,
+        )
+        try:
+            from app.cache.manager import cache_manager
+            cache_manager.mark_tally_offline(cooldown)
+        except Exception:
+            pass
+
+    @classmethod
+    def _mark_available(cls) -> None:
+        cls._unavailable_until = 0.0
+        try:
+            from app.cache.manager import cache_manager
+            cache_manager.mark_tally_online()
+        except Exception:
+            pass
+
+    @classmethod
+    def _circuit_is_open(cls) -> bool:
+        if cls._unavailable_until <= time.monotonic():
+            cls._unavailable_until = 0.0
+            return False
+        return True
 
     def __init__(self):
         self.base_url = settings.tally_url
@@ -35,8 +70,15 @@ class TallyClient:
         if cls._shared_client is not None:
             return
 
+        conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
         cls._shared_client = httpx.AsyncClient(
-            timeout=30.0,
+            timeout=httpx.Timeout(
+                timeout=30.0,
+                connect=conn_timeout,
+                read=30.0,
+                write=10.0,
+                pool=5.0,
+            ),
             limits=httpx.Limits(
                 max_connections=20,
                 max_keepalive_connections=10,
@@ -87,11 +129,25 @@ class TallyClient:
         raise RuntimeError(message)
 
     async def check_connection(self) -> dict:
+        # TallyPrime handles one request at a time. If one of our own
+        # report requests is currently in flight, Tally is obviously up
+        # and just busy, so do not ping it (the ping would queue behind
+        # the report, time out and wrongly show "disconnected").
+        if self._lock.locked() and not self._circuit_is_open():
+            return {
+                "connected": True,
+                "status_code": None,
+                "url": self.base_url,
+                "busy": True,
+            }
+
         try:
+            conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
+            req_timeout = httpx.Timeout(timeout=3.0, connect=conn_timeout)
             if self._shared_client is not None:
                 response = await self._shared_client.get(
                     self.base_url,
-                    timeout=8.0,
+                    timeout=req_timeout,
                 )
 
             else:
@@ -99,11 +155,13 @@ class TallyClient:
                 # standalone usage working even when the
                 # FastAPI lifespan has not started.
                 async with httpx.AsyncClient(
-                    timeout=8.0
+                    timeout=req_timeout
                 ) as client:
                     response = await client.get(
                         self.base_url
                     )
+
+            self._mark_available()
 
             return {
                 "connected": True,
@@ -111,7 +169,19 @@ class TallyClient:
                 "url": self.base_url,
             }
 
+        except httpx.ReadTimeout:
+            # The connection was accepted but Tally did not answer within
+            # the short status timeout: it is running but busy (for example
+            # a report is open in the Tally window). Not an outage.
+            return {
+                "connected": True,
+                "status_code": None,
+                "url": self.base_url,
+                "busy": True,
+            }
+
         except Exception as exc:
+            self._mark_unavailable()
             return {
                 "connected": False,
                 "url": self.base_url,
@@ -125,7 +195,7 @@ class TallyClient:
     ) -> str:
         # Try to identify the report name from the XML for easier debugging.
         report_match = re.search(
-            r"<REPORTNAME>(.*?)</REPORTNAME>",
+            r"<(?:REPORTNAME|ID)>\s*(.*?)\s*</(?:REPORTNAME|ID)>",
             xml_payload,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -139,6 +209,14 @@ class TallyClient:
         # Serialize requests so Tally only ever handles one at a time
         # (see the comment on _lock above).
         async with self._lock:
+            # Once any request or health check has confirmed an outage,
+            # fail queued reports quickly so their cache layer can serve
+            # retained data instead of waiting through another read timeout.
+            if self._circuit_is_open():
+                raise httpx.ConnectError(
+                    "Tally is temporarily marked unavailable"
+                )
+
             # Measure the actual time Tally takes to process this XML request.
             # This starts after the lock is acquired, so queue wait is excluded.
             start_time = time.perf_counter()
@@ -146,6 +224,9 @@ class TallyClient:
             print(
                 f"TALLY DEBUG: starting report={report_name}"
             )
+
+            conn_timeout = cache_settings.TALLY_CONNECT_TIMEOUT
+            req_timeout = httpx.Timeout(timeout=timeout, connect=conn_timeout, read=timeout)
 
             try:
                 if self._shared_client is not None:
@@ -155,14 +236,14 @@ class TallyClient:
                         headers={
                             "Content-Type": "text/xml",
                         },
-                        timeout=timeout,
+                        timeout=req_timeout,
                     )
 
                 else:
                     # This fallback is mainly used by tests or scripts
                     # where the FastAPI lifespan has not created the shared client.
                     async with httpx.AsyncClient(
-                        timeout=timeout
+                        timeout=req_timeout
                     ) as client:
                         response = await client.post(
                             self.base_url,
@@ -179,6 +260,8 @@ class TallyClient:
                 self._raise_for_tally_error(
                     xml_response
                 )
+
+                self._mark_available()
 
                 duration = time.perf_counter() - start_time
 
@@ -200,6 +283,11 @@ class TallyClient:
                 raise
 
             except Exception as exc:
+                # A ReadTimeout means Tally is up but slow on a heavy
+                # report, so it must not open the "unavailable" circuit.
+                if is_tally_unreachable_error(exc):
+                    self._mark_unavailable()
+
                 duration = time.perf_counter() - start_time
 
                 print(

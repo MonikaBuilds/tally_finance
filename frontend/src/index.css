@@ -1417,6 +1417,16 @@ textarea {
   margin-top: 1px;
 }
 
+.browser-cache-notice {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}
+
 .success-message {
   display: flex;
   align-items: center;
@@ -2239,4 +2249,192 @@ textarea {
 .sidebar-logout-collapsed:hover {
   background: #fef2f2 !important;
   color: #dc2626 !important;
+}
+
+/* ==========================================================
+   Inventory Voucher Alteration (Tally voucher screen)
+   ========================================================== */
+
+.voucher-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 16px;
+}
+
+.voucher-sheet-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--text);
+}
+
+.voucher-type-tag {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-weight: 600;
+}
+
+.voucher-optional {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.voucher-sheet-date {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--text-muted);
+}
+
+.voucher-sheet-date strong {
+  color: var(--text-h);
+}
+
+.voucher-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.voucher-field {
+  display: grid;
+  grid-template-columns: minmax(130px, 200px) 1fr;
+  gap: 4px 16px;
+  align-items: baseline;
+}
+
+.voucher-field-with-aside {
+  grid-template-columns: minmax(130px, 200px) minmax(0, 1fr) auto;
+}
+
+.voucher-field-aside {
+  margin-right: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.voucher-field-aside strong {
+  margin-left: 8px;
+}
+
+.voucher-field-label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.voucher-field strong {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.voucher-field-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+}
+
+.voucher-heading {
+  margin: 4px 0 12px;
+  text-align: center;
+  color: var(--text-h);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.voucher-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.voucher-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.voucher-panel-title {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-h);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.voucher-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voucher-item-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.voucher-total {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px 32px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-strong);
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .voucher-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .voucher-field,
+  .voucher-field-with-aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The panels sit inside a bordered box, so the table must not use the
+   card-edge bleed (negative margin) the stand-alone DataTable has. */
+.voucher-panel {
+  overflow: hidden;
+}
+
+.voucher-panel .data-table-scroll {
+  margin: 0;
+}
+
+.voucher-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text-h);
+}
+
+.voucher-address-line {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.voucher-party-panels .voucher-panel {
+  align-self: stretch;
+}
+
+.bill-row--focused td {
+  background: var(--accent-soft);
 }

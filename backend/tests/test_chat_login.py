@@ -48,6 +48,16 @@ def _setup_test_auth(monkeypatch):
         "60",
     )
 
+    from app.security.user_store import delete_user
+    delete_user("test-user-001")
+    from app.security.db import get_connection
+    _conn = get_connection()
+    _cur = _conn.cursor()
+    _cur.execute("DELETE FROM users WHERE username = %s OR user_id = %s", ("monika-test", "test-user-001"))
+    _conn.commit()
+    _cur.close()
+    _conn.close()
+
     initialize_user_store()
 
     create_user(
@@ -61,17 +71,15 @@ def _setup_test_auth(monkeypatch):
 
 
 def _cleanup_test_db(db_path: Path):
-    """
-    Test databases are intentionally left in .test_data during
-    the test run.
-
-    The directory is ignored by Git, so these temporary databases
-    are never committed to the repository.
-
-    Avoid deleting them immediately on Windows because SQLite or
-    another process may still briefly hold a file handle.
-    """
-    return
+    from app.security.user_store import delete_user
+    delete_user("test-user-001")
+    from app.security.db import get_connection
+    _conn = get_connection()
+    _cur = _conn.cursor()
+    _cur.execute("DELETE FROM users WHERE username = %s OR user_id = %s", ("monika-test", "test-user-001"))
+    _conn.commit()
+    _cur.close()
+    _conn.close()
 
 
 def test_login_with_valid_credentials(monkeypatch):
@@ -91,11 +99,10 @@ def test_login_with_valid_credentials(monkeypatch):
 
         data = response.json()
 
-        assert data["token_type"] == "bearer"
         assert data["user_id"] == "test-user-001"
         assert data["username"] == "monika-test"
         assert data["companies"] == ["ABC Pvt Ltd"]
-        assert data["access_token"]
+        assert "access_token" in response.cookies
 
     finally:
         _cleanup_test_db(db_path)
@@ -116,7 +123,7 @@ def test_login_token_contains_user_permissions(monkeypatch):
 
         assert response.status_code == 200
 
-        token = response.json()["access_token"]
+        token = response.cookies["access_token"]
 
         payload = jwt.decode(
             token,

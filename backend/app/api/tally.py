@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
 from datetime import date
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.security.auth import (
     UserContext,
@@ -10,12 +12,47 @@ from app.tally.service import (
     fetch_bill_allocations,
     fetch_bills_receivable,
     fetch_companies,
+    fetch_companies_result,
 )
 
+
+from app.cache.config import is_force_refresh
 
 router = APIRouter()
 
 tally_client = TallyClient()
+
+
+def _is_force_refresh(force_refresh: Any, refresh: Any) -> bool:
+    return is_force_refresh(force_refresh=force_refresh, refresh=refresh)
+
+
+def _resolve_org_id(current_user: UserContext) -> str:
+    user_id = getattr(current_user, "user_id", None)
+
+    if not user_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to resolve authenticated user organization.",
+        )
+
+    try:
+        from app.security.user_store import get_user_organization_id
+
+        organization_id = get_user_organization_id(str(user_id))
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to resolve authenticated user organization.",
+        )
+
+    if not organization_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to resolve authenticated user organization.",
+        )
+
+    return str(organization_id)
 
 
 @router.get("/status")
@@ -46,19 +83,35 @@ async def tally_status(
 @router.get("/companies")
 async def get_companies(
     current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = Query(default=False),
+    refresh: str | int | None = Query(default=None),
 ):
     """
-    Return only the Tally companies that the logged-in
-    user is allowed to access.
+    Return only the Tally companies that the authenticated user
+    is allowed to access.
+
+    Company data is cached per organization. Authorization filtering
+    is always applied after retrieving the cached Tally company list.
     """
     try:
-        companies = await fetch_companies()
+        effective_org_id = _resolve_org_id(current_user)
 
-        # Wildcard access is intended only for explicitly configured
-        # development or admin-style users.
+        is_force = _is_force_refresh(
+            force_refresh=force_refresh,
+            refresh=refresh,
+        )
+
+        cache_result = await fetch_companies_result(
+            force_refresh=is_force,
+            org_id=effective_org_id,
+        )
+
+        companies = cache_result.data
+
+        # Apply authorization AFTER retrieving company data.
+        # Redis never decides what the user is allowed to access.
         if "*" in current_user.allowed_companies:
             allowed_companies = companies
-
         else:
             allowed_lookup = {
                 company.casefold()
@@ -68,15 +121,15 @@ async def get_companies(
             allowed_companies = [
                 company
                 for company in companies
-                if (
-                    company.get("name", "").casefold()
-                    in allowed_lookup
-                )
+                if company.get("name", "").casefold() in allowed_lookup
             ]
 
         return {
             "success": True,
+            "source": cache_result.source,
             "companies": allowed_companies,
+            "cached_at": cache_result.cached_at,
+            "is_stale": cache_result.is_stale,
         }
 
     except HTTPException:
@@ -120,8 +173,11 @@ async def debug_receivables(
                         ),
                     )
 
+        effective_org_id = _resolve_org_id(current_user)
+
         data = await fetch_bills_receivable(
             company_name=company_name,
+            org_id=effective_org_id,
         )
 
         return {

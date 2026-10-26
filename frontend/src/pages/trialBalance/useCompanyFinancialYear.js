@@ -18,7 +18,14 @@ export function useCompanyFinancialYear() {
     const companies = data?.companies
 
     if (error || !Array.isArray(companies) || companies.length === 0) {
-      return { ready: true, from: '', to: '' }
+      return {
+        ready: true,
+        from: '',
+        to: '',
+        reason: error
+          ? `The company list could not be loaded (${error}).`
+          : 'Tally returned no company.',
+      }
     }
 
     const selectedName = sessionStorage.getItem('selected_company')
@@ -29,9 +36,18 @@ export function useCompanyFinancialYear() {
         )) ||
       companies[0]
 
-    const to = financialYearEnd(company?.books_from)
+    // starting_from is where the company's current period begins in
+    // Tally; books_from is only the fallback.
+    const to = financialYearEnd(company?.starting_from || company?.books_from)
 
-    if (!to) return { ready: true, from: '', to: '' }
+    if (!to) {
+      return {
+        ready: true,
+        from: '',
+        to: '',
+        reason: `Tally did not return a books-from / starting date for "${company?.name}".`,
+      }
+    }
 
     // Financial year ends 31-Mar, so it started 1-Apr the year before.
     const from = `${Number(to.slice(0, 4)) - 1}-04-01`

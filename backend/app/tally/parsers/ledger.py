@@ -202,8 +202,12 @@ def _inventory_entry_nodes(voucher):
     paths = [
         "./ALLINVENTORYENTRIES.LIST",
         "./INVENTORYENTRIES.LIST",
+        "./INVENTORYENTRIESIN.LIST",
+        "./INVENTORYENTRIESOUT.LIST",
         ".//ALLINVENTORYENTRIES.LIST",
         ".//INVENTORYENTRIES.LIST",
+        ".//INVENTORYENTRIESIN.LIST",
+        ".//INVENTORYENTRIESOUT.LIST",
     ]
 
     for path in paths:
@@ -784,6 +788,280 @@ def _parse_custom_voucher_ledger_rows(
 # VOUCHER DETAIL
 # ============================================================
 
+def _yes_text(value) -> bool:
+    return str(value or "").strip().casefold() in {
+        "yes",
+        "y",
+        "true",
+        "1",
+    }
+
+
+def _entry_tax_rate(entry):
+    """
+    Tax percentage Tally prints beside a tax ledger on an invoice
+    (e.g. Input CGST 9 %). Returns None when the line has no rate.
+    """
+
+    # Tally nests it as <RATEOFINVOICETAX.LIST><RATEOFINVOICETAX>;
+    # some versions emit it as a plain child instead.
+    rate = to_optional_float(
+        _text(entry, "RATEOFINVOICETAX.LIST/RATEOFINVOICETAX")
+        or _text(entry, "RATEOFINVOICETAX")
+    )
+
+    if not rate:
+        return None
+
+    return round(rate, 2)
+
+
+def _entry_bill_allocations(
+    entry,
+    entry_amount_text,
+    entry_debit,
+):
+    """
+    Bill-wise references on one ledger line: "Agst Ref", "New Ref",
+    "Advance" or "On Account", each with its own amount and Dr/Cr -
+    the lines Tally lists under the party in the voucher screen.
+    """
+
+    entry_amount = to_float(entry_amount_text)
+    entry_side = "Dr" if entry_debit else "Cr"
+    opposite_side = "Cr" if entry_side == "Dr" else "Dr"
+
+    allocations = []
+
+    for bill in entry.findall("BILLALLOCATIONS.LIST"):
+        name = _text(bill, "NAME")
+
+        if not name:
+            continue
+
+        bill_amount = to_float(
+            _text(bill, "AMOUNT")
+        )
+
+        same_side = (
+            bill_amount == 0
+            or entry_amount == 0
+            or (bill_amount > 0) == (entry_amount > 0)
+        )
+
+        allocations.append(
+            {
+                "name": name,
+                "bill_type": _text(bill, "BILLTYPE"),
+                "bill_date": format_tally_date(
+                    _text(bill, "BILLDATE")
+                ),
+                "amount": round(abs(bill_amount), 2),
+                "side": (
+                    entry_side
+                    if same_side
+                    else opposite_side
+                ),
+            }
+        )
+
+    return allocations
+
+
+def _voucher_items(voucher):
+    """
+    Stock-item lines of an item invoice (name, quantity, rate, per,
+    amount). Empty for pure accounting vouchers.
+    """
+
+    nodes = (
+        voucher.findall("./ALLINVENTORYENTRIES.LIST")
+        or voucher.findall("./INVENTORYENTRIES.LIST")
+    )
+
+    items = []
+
+    for node in nodes:
+        name = _text(node, "STOCKITEMNAME")
+
+        if not name:
+            continue
+
+        quantity_text = _first_text(
+            node,
+            "BILLEDQTY",
+            "ACTUALQTY",
+        )
+
+        rate_text, _, rate_unit = _text(
+            node,
+            "RATE",
+        ).partition("/")
+
+        quantity_parts = quantity_text.split(None, 1)
+
+        unit = rate_unit.strip() or (
+            quantity_parts[1].strip()
+            if len(quantity_parts) > 1
+            else ""
+        )
+
+        items.append(
+            {
+                "name": name,
+                "quantity": quantity_text,
+                "rate": to_optional_float(rate_text),
+                "unit": unit,
+                "discount": to_optional_float(
+                    _text(node, "DISCOUNT")
+                ),
+                "amount": round(
+                    abs(
+                        to_float(
+                            _text(node, "AMOUNT")
+                        )
+                    ),
+                    2,
+                ),
+            }
+        )
+
+    return items
+
+
+def _voucher_base_type(voucher_type: str) -> str:
+    """
+    Map a (possibly custom-named) voucher type onto the Tally voucher
+    family it belongs to, e.g. "Sales-GST" -> "sales".
+    """
+
+    name = str(voucher_type or "").strip().casefold()
+
+    # Non-accounting families that merely contain a keyword below.
+    for text in (
+        "receipt note",
+        "delivery note",
+        "sales order",
+        "purchase order",
+        "rejections",
+    ):
+        if text in name:
+            return "other"
+
+    for text, base in (
+        ("credit note", "credit_note"),
+        ("debit note", "debit_note"),
+        ("payment", "payment"),
+        ("receipt", "receipt"),
+        ("contra", "contra"),
+        ("journal", "journal"),
+        ("sales", "sales"),
+        ("purchase", "purchase"),
+    ):
+        if text in name:
+            return base
+
+    return "other"
+
+
+def _apply_voucher_layout(
+    entries,
+    *,
+    base_type,
+    is_invoice,
+    party_name,
+):
+    """
+    Decide how Tally itself lays this voucher out and tag each entry
+    with its role ("account", "party" or "particular").
+
+    The role depends on the voucher - NOT on which ledger the user
+    happened to drill in from - so Payment 1 looks the same whether
+    it is opened from HDFC Bank or from Apex Office Solutions:
+
+    - Payment / Contra: the single credit (bank/cash) line is the
+      Account; the debit lines are the Particulars.
+    - Receipt: the single debit (bank/cash) line is the Account; the
+      credit lines are the Particulars.
+    - Invoices (Sales/Purchase/Credit Note/Debit Note): the party
+      ledger is "Party A/c name"; everything else is Particulars.
+    - Anything else (Journal, multi-bank vouchers): double entry.
+    """
+
+    for entry in entries:
+        entry["role"] = "particular"
+
+    if not entries:
+        return "double_entry"
+
+    if is_invoice and base_type in {
+        "sales",
+        "purchase",
+        "credit_note",
+        "debit_note",
+    }:
+        party = next(
+            (
+                entry
+                for entry in entries
+                if party_name
+                and _same_ledger_name(
+                    entry["ledger_name"],
+                    party_name,
+                )
+            ),
+            None,
+        )
+
+        if party is None:
+            party_side = (
+                "Dr"
+                if base_type in {"sales", "debit_note"}
+                else "Cr"
+            )
+
+            candidates = [
+                entry
+                for entry in entries
+                if entry["side"] == party_side
+            ]
+
+            if candidates:
+                party = max(
+                    candidates,
+                    key=lambda entry: (
+                        entry["debit"] or entry["credit"]
+                    ),
+                )
+
+        if party is not None:
+            party["role"] = "party"
+            return "invoice"
+
+    if base_type in {"payment", "receipt", "contra"}:
+        # Tally's single-entry screens: Payment shows the credited
+        # bank/cash as Account; Receipt and Contra show the DEBITED
+        # ledger as Account (e.g. Contra: Account = Cash, Particulars
+        # = HDFC Bank).
+        account_side = (
+            "Dr"
+            if base_type in {"receipt", "contra"}
+            else "Cr"
+        )
+
+        account_lines = [
+            entry
+            for entry in entries
+            if entry["side"] == account_side
+        ]
+
+        if len(account_lines) == 1 and len(entries) > 1:
+            account_lines[0]["role"] = "account"
+            return "single_entry"
+
+    return "double_entry"
+
+
 def parse_voucher_detail(
     xml_text: str,
     voucher_type: str,
@@ -929,6 +1207,31 @@ def parse_voucher_detail(
                         ledger_name,
                         party_name,
                     ),
+
+                    # Dr / Cr side exactly as Tally booked the line.
+                    "side": (
+                        "Dr"
+                        if debit
+                        else "Cr"
+                    ),
+
+                    # Tax % shown beside GST/tax ledgers on invoices
+                    # (Tally: RATEOFINVOICETAX). None when absent.
+                    "rate": _entry_tax_rate(
+                        entry
+                    ),
+
+                    # "Agst Ref" / "New Ref" / "On Account" lines.
+                    "bill_allocations": _entry_bill_allocations(
+                        entry,
+                        amount_text,
+                        debit,
+                    ),
+
+                    # Filled in by the service layer from Tally's
+                    # ledger master (closing balance).
+                    "current_balance": None,
+                    "current_balance_type": "",
                 }
             )
 
@@ -942,6 +1245,27 @@ def parse_voucher_detail(
             for entry in entries
         )
 
+        is_invoice = _yes_text(
+            _text(voucher, "ISINVOICE")
+        ) or (
+            "invoice"
+            in _text(
+                voucher,
+                "PERSISTEDVIEW",
+            ).casefold()
+        )
+
+        base_type = _voucher_base_type(
+            current_type
+        )
+
+        layout = _apply_voucher_layout(
+            entries,
+            base_type=base_type,
+            is_invoice=is_invoice,
+            party_name=party_name,
+        )
+
         vouchers.append(
             {
                 "date": current_date,
@@ -951,6 +1275,21 @@ def parse_voucher_detail(
                 "reference_date": reference_date,
                 "narration": narration,
                 "party_name": party_name,
+
+                # How the page should lay the voucher out, decided by
+                # the voucher's own type/view the way Tally does it:
+                #   single_entry - Account + Particulars
+                #                  (Payment / Receipt / Contra)
+                #   invoice      - Party A/c name + Particulars
+                #                  (Sales / Purchase / Credit / Debit Note)
+                #   double_entry - Particulars with Debit / Credit columns
+                #                  (Journal, and anything else)
+                "layout": layout,
+                "base_type": base_type,
+                "is_invoice": is_invoice,
+                "items": _voucher_items(
+                    voucher
+                ),
 
                 "is_deleted": (
                     str(is_deleted or "")
@@ -1289,6 +1628,89 @@ def build_continuous_monthly_summary(
         )
 
     return result
+
+
+# ============================================================
+# FULL-PERIOD MONTHLY SUMMARY
+# ============================================================
+
+def financial_year_bounds(anchor: date) -> tuple[date, date]:
+    """1-Apr .. 31-Mar financial year containing `anchor`."""
+
+    start_year = (
+        anchor.year
+        if anchor.month >= 4
+        else anchor.year - 1
+    )
+
+    return (
+        date(start_year, 4, 1),
+        date(start_year + 1, 3, 31),
+    )
+
+
+def extend_monthly_summary_to_period(
+    report: dict,
+    period_start: date | None,
+    period_end: date | None,
+) -> dict:
+    """
+    Rebuild report["monthly_summary"] so it lists EVERY month of the
+    period (as Tally's Ledger Monthly Summary does: April..March),
+    not just the months between the first and last transaction.
+    Months without transactions carry the previous closing balance.
+
+    The period normally comes from the company's financial year in
+    Tally. It is only ever widened to cover the ledger's own
+    transactions, never narrowed. Without a company period, the
+    financial year(s) of the transactions are used.
+    """
+
+    entries = report.get("entries") or []
+
+    row_dates = []
+
+    for row in entries:
+        try:
+            row_dates.append(
+                datetime.strptime(
+                    row.get("date") or "",
+                    "%Y-%m-%d",
+                ).date()
+            )
+        except ValueError:
+            continue
+
+    start = period_start
+    end = period_end
+
+    if row_dates:
+        first = min(row_dates)
+        last = max(row_dates)
+
+        start = (
+            min(start, first)
+            if start
+            else financial_year_bounds(first)[0]
+        )
+
+        end = (
+            max(end, last)
+            if end
+            else financial_year_bounds(last)[1]
+        )
+
+    if start is None or end is None:
+        return report
+
+    report["monthly_summary"] = build_continuous_monthly_summary(
+        entries,
+        float(report.get("opening_balance") or 0),
+        start_date=start,
+        end_date=end,
+    )
+
+    return report
 
 
 # ============================================================

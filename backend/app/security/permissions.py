@@ -4,7 +4,7 @@ from app.security.auth import (
     UserContext,
     get_current_user,
 )
-from app.security.user_store import _connect
+from app.security.db import get_connection
 
 
 def has_role(
@@ -20,7 +20,7 @@ def has_role(
     if not clean_user_id or not clean_role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -121,7 +121,7 @@ def get_all_permissions() -> list[dict]:
     """
     Return all available permissions from MySQL.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -155,7 +155,7 @@ def get_user_access(user_id: str) -> dict:
             "permissions": [],
         }
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
     try:
@@ -206,7 +206,7 @@ def get_all_roles() -> list[dict]:
     """
     Return all roles stored in MySQL.
     """
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor(
         dictionary=True
     )
@@ -235,7 +235,7 @@ def role_exists(role_name: str) -> bool:
     if not role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -268,7 +268,7 @@ def assign_role_to_user(
     if not user_id or not role_name:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -326,6 +326,50 @@ def assign_role_to_user(
     finally:
         cursor.close()
         connection.close()
+
+
+def remove_role_from_user(
+    user_id: str,
+    role_name: str,
+) -> bool:
+    """
+    Remove an assigned role from an existing user.
+
+    Returns True when the role assignment was removed.
+    Returns False when the user or role does not exist or was not assigned.
+    """
+    if not user_id or not role_name:
+        return False
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            DELETE ur FROM user_roles ur
+            JOIN roles r ON ur.role_id = r.role_id
+            WHERE ur.user_id = %s
+              AND r.role_name = %s
+            """,
+            (
+                user_id,
+                role_name,
+            ),
+        )
+
+        removed = cursor.rowcount > 0
+        connection.commit()
+        return removed
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
+
   
       
 def assign_permission_to_user(
@@ -341,7 +385,7 @@ def assign_permission_to_user(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -418,7 +462,7 @@ def remove_permission_from_user(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -464,7 +508,7 @@ def get_required_permission(
     if not tool_name:
         return None
 
-    connection = _connect()
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -503,7 +547,10 @@ def user_has_permission(
     if not user_id or not permission_code:
         return False
 
-    connection = _connect()
+    if is_superadmin(user_id):
+        return True
+
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
@@ -566,3 +613,207 @@ def can_execute_tool(
         user_id,
         required_permission,
     )
+
+
+DEFAULT_ROLES: tuple[str, ...] = ("admin", "user", "superadmin")
+
+DEFAULT_PERMISSIONS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("financial", "Financial", "Accounting", "Financial Reports", "Access financial reports, profitability, expenses, trends, receivables and payables."),
+    ("inventory", "Inventory / Stock", "Inventory", "Stock Management", "Access stock summaries, stock items, stock details, stock movement and inventory analysis."),
+    ("banking", "Banking", "Banking", "Bank and Cash", "Access bank accounts, cash and bank transactions, balances and related banking information."),
+    ("tax", "Tax / TDS", "Taxation", "TDS and GST", "Access TDS, GST and other supported tax-related information."),
+)
+
+DEFAULT_TOOL_PERMISSIONS: dict[str, str] = {
+    # financial
+    "get_aged_payables": "financial",
+    "get_aged_receivables": "financial",
+    "get_balance_sheet": "financial",
+    "get_company_comparison": "financial",
+    "get_cost_centre_analysis": "financial",
+    "get_credit_note_transactions": "financial",
+    "get_customer_profitability": "financial",
+    "get_customer_statement": "financial",
+    "get_debit_note_transactions": "financial",
+    "get_expenses": "financial",
+    "get_financial_summary": "financial",
+    "get_financial_trends": "financial",
+    "get_highest_payable": "financial",
+    "get_highest_receivable": "financial",
+    "get_invoice_details": "financial",
+    "get_invoice_status": "financial",
+    "get_ledger_balance": "financial",
+    "get_ledger_report": "financial",
+    "get_ledger_transactions": "financial",
+    "get_net_profit": "financial",
+    "get_outstanding_summary": "financial",
+    "get_overdue_invoices": "financial",
+    "get_overdue_payables": "financial",
+    "get_overdue_receivables": "financial",
+    "get_party_outstanding_summary": "financial",
+    "get_party_statement": "financial",
+    "get_payables": "financial",
+    "get_payment_transactions": "financial",
+    "get_pending_invoices": "financial",
+    "get_period_comparison": "financial",
+    "get_period_trend": "financial",
+    "get_profit_loss": "financial",
+    "get_profitability_summary": "financial",
+    "get_purchase_transactions": "financial",
+    "get_purchases_by_supplier": "financial",
+    "get_receipt_transactions": "financial",
+    "get_receivables": "financial",
+    "get_revenue": "financial",
+    "get_sales_by_customer": "financial",
+    "get_sales_transactions": "financial",
+    "get_supplier_statement": "financial",
+    "get_top_customers": "financial",
+    "get_top_expenses": "financial",
+    "get_top_payables": "financial",
+    "get_top_receivables": "financial",
+    "get_top_suppliers": "financial",
+    "get_trial_balance": "financial",
+
+    # inventory
+    "get_low_selling_items": "inventory",
+    "get_negative_stock_items": "inventory",
+    "get_product_profitability": "inventory",
+    "get_purchases_by_item": "inventory",
+    "get_sales_by_item": "inventory",
+    "get_stock_item_details": "inventory",
+    "get_stock_items": "inventory",
+    "get_stock_movement": "inventory",
+    "get_stock_summary": "inventory",
+    "get_top_selling_items": "inventory",
+    "get_top_stock_items": "inventory",
+
+    # banking
+    "get_bank_balance": "banking",
+    "get_bank_transactions": "banking",
+    "get_cash_balance": "banking",
+    "get_cash_flow_summary": "banking",
+    "get_cash_transactions": "banking",
+
+    # tax
+    "get_gst_summary": "tax",
+    "get_input_gst": "tax",
+    "get_output_gst": "tax",
+    "get_tax_liability": "tax",
+    "get_tds_payable": "tax",
+    "get_tds_receivable": "tax",
+    "get_tds_summary": "tax",
+    "get_tds_transactions": "tax",
+}
+
+
+def initialize_rbac_store() -> None:
+    """
+    Create RBAC tables if they do not exist and idempotently seed
+    baseline roles, permissions, and tool-permission mappings.
+    """
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS roles (
+                role_id INT NOT NULL AUTO_INCREMENT,
+                role_name VARCHAR(50) NOT NULL UNIQUE,
+                PRIMARY KEY (role_id)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS permissions (
+                permission_id INT NOT NULL AUTO_INCREMENT,
+                permission_code VARCHAR(50) NOT NULL UNIQUE,
+                permission_name VARCHAR(100) NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                subcategory VARCHAR(100),
+                description TEXT,
+                PRIMARY KEY (permission_id)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tool_permissions (
+                tool_name VARCHAR(150) NOT NULL PRIMARY KEY,
+                permission_id INT NOT NULL,
+                CONSTRAINT fk_tool_permissions_permission
+                    FOREIGN KEY (permission_id)
+                    REFERENCES permissions (permission_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_roles (
+                user_id VARCHAR(100) NOT NULL,
+                role_id INT NOT NULL,
+                PRIMARY KEY (user_id, role_id),
+                CONSTRAINT fk_user_roles_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+                CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles (role_id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_permissions (
+                user_id VARCHAR(100) NOT NULL,
+                permission_id INT NOT NULL,
+                PRIMARY KEY (user_id, permission_id),
+                CONSTRAINT fk_user_permissions_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+                CONSTRAINT fk_user_permissions_permission FOREIGN KEY (permission_id) REFERENCES permissions (permission_id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        for role_name in DEFAULT_ROLES:
+            cursor.execute(
+                "INSERT IGNORE INTO roles (role_name) VALUES (%s)",
+                (role_name,),
+            )
+
+        for code, name, cat, subcat, desc in DEFAULT_PERMISSIONS:
+            cursor.execute(
+                """
+                INSERT INTO permissions (permission_code, permission_name, category, subcategory, description)
+                VALUES (%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    permission_name = VALUES(permission_name),
+                    category = VALUES(category),
+                    subcategory = VALUES(subcategory),
+                    description = VALUES(description)
+                """,
+                (code, name, cat, subcat, desc),
+            )
+
+        for tool_name, perm_code in DEFAULT_TOOL_PERMISSIONS.items():
+            cursor.execute(
+                """
+                INSERT INTO tool_permissions (tool_name, permission_id)
+                SELECT %s, permission_id
+                FROM permissions
+                WHERE permission_code = %s
+                ON DUPLICATE KEY UPDATE permission_id = VALUES(permission_id)
+                """,
+                (tool_name, perm_code),
+            )
+
+        connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()

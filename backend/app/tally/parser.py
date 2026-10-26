@@ -2405,21 +2405,37 @@ def parse_stock_categories(xml_text: str):
 # ============================================================
 # GODOWNS
 # ============================================================
-
 def parse_godowns(xml_text: str):
+    """
+    Parse godown / storage-location information returned by Tally.
+    """
+
     root = parse_xml(xml_text)
 
     rows = []
     seen = set()
 
     for node in root.findall(".//GODOWN"):
-        name = _first_text(
-            node,
-            "NAME",
-        )
+        name = (
+            node.attrib.get("NAME")
+            or node.findtext("NAME")
+            or ""
+        ).strip()
 
         if not name:
             continue
+
+        parent = (
+            node.attrib.get("PARENT")
+            or node.findtext("PARENT")
+            or ""
+        ).strip()
+
+        is_internal = (
+            node.attrib.get("ISINTERNAL")
+            or node.findtext("ISINTERNAL")
+            or ""
+        ).strip()
 
         key = name.casefold()
 
@@ -2431,14 +2447,8 @@ def parse_godowns(xml_text: str):
         rows.append(
             {
                 "name": name,
-                "parent": _text(
-                    node,
-                    "PARENT",
-                ),
-                "is_internal": _text(
-                    node,
-                    "ISINTERNAL",
-                ),
+                "parent": parent,
+                "is_internal": is_internal,
             }
         )
 
@@ -2447,8 +2457,6 @@ def parse_godowns(xml_text: str):
         "rows": rows,
         "count": len(rows),
     }
-
-
 # ============================================================
 # STOCK MOVEMENT
 # ============================================================

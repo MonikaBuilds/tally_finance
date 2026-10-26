@@ -21,7 +21,7 @@ async def test_gemini_rate_limit_is_handled(
     )
 
     result = await chatbot_service.process_chat_message(
-        "What are my payables?"
+        "Explain the financial position of my business considering unusual accounting patterns"
     )
 
     assert result["success"] is False
@@ -49,7 +49,7 @@ async def test_gemini_authentication_error_is_handled(
     )
 
     result = await chatbot_service.process_chat_message(
-        "What are my payables?"
+        "Explain the financial position of my business considering unusual accounting patterns"
     )
 
     assert result["success"] is False
@@ -78,7 +78,7 @@ async def test_model_unavailable_is_handled(
     )
 
     result = await chatbot_service.process_chat_message(
-        "What are my payables?"
+        "Explain the financial position of my business considering unusual accounting patterns"
     )
 
     assert result["success"] is False

@@ -47,6 +47,17 @@ def detect_local_intent(
     if not text:
         return None
 
+    if re.search(
+        r"\b(inventory\s+valuation|stock\s+valuation|"
+        r"stock\s+value|inventory\s+value)\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return {
+            "tool_name": "get_stock_summary",
+            "arguments": {"valuation_only": True},
+        }
+
     # --------------------------------------------------
     # CUSTOMER STATEMENT
     # --------------------------------------------------
@@ -370,6 +381,51 @@ def detect_local_intent(
                     "invoice_number": invoice_number,
                 },
             }
+
+    invoice_party_match = re.search(
+        r"\b(?:find|search|list|show)?\s*(?:all\s+)?"
+        r"(?:sales\s+)?invoices?\s+(?:for|of)\s+(.+?)\s*$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if invoice_party_match:
+        party_name = invoice_party_match.group(1).strip().rstrip(" ?")
+        if party_name:
+            return {
+                "tool_name": "get_invoice_details",
+                "arguments": {"party_name": party_name},
+            }
+
+    invoice_amount_match = re.search(
+        r"\b(?:invoices?|bills?)\s+(?:with\s+)?(?:amount|value|of|for)\s+"
+        r"(?:₹|rs\.?\s*)?([\d,]+(?:\.\d{1,2})?)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if invoice_amount_match:
+        amount_text = invoice_amount_match.group(1).replace(",", "")
+        return {
+            "tool_name": "get_invoice_details",
+            "arguments": {"amount": float(amount_text)},
+        }
+
+    if re.search(
+        r"\b(paid\s+invoices?|partially\s+paid\s+invoices?|"
+        r"unpaid\s+invoices?|invoice\s+search)\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        requested_status = None
+        if re.search(r"\bpartially\s+paid\b", message, re.IGNORECASE):
+            requested_status = "partially paid"
+        elif re.search(r"\bpaid\b", message, re.IGNORECASE):
+            requested_status = "paid"
+        elif re.search(r"\bunpaid\b", message, re.IGNORECASE):
+            requested_status = "unpaid"
+        return {
+            "tool_name": "get_invoice_details",
+            "arguments": {"status": requested_status},
+        }
             
     # Overdue invoice queries are simple and deterministic.
     # Route them locally instead of sending them to the AI model.

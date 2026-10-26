@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 
@@ -8,25 +8,113 @@ import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
-import { formatCurrency, formatDate } from '../utils/format'
+import { formatDate } from '../utils/format'
 
-function formatAmount(value) {
+import './Voucherdetail.css'
+
+const inrFormatter = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
+
+const numberFormatter = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
+
+function formatMoney(value) {
   if (value === undefined || value === null || value === '') {
-    return formatCurrency(0)
+    return inrFormatter.format(0)
   }
 
-  return formatCurrency(Number(value) || 0)
+  return inrFormatter.format(Number(value) || 0)
+}
+
+function formatPlain(value) {
+  if (value === undefined || value === null || value === '') return ''
+
+  return numberFormatter.format(Number(value) || 0)
+}
+
+// "2025-04-02" -> "Wednesday"
+function weekdayOf(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return ''
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  if (Number.isNaN(date.getTime())) return ''
+
+  return date.toLocaleDateString('en-US', { weekday: 'long' })
+}
+
+function entryAmount(entry) {
+  return Number(entry?.debit) || Number(entry?.credit) || 0
+}
+
+function entrySide(entry) {
+  return entry?.side || (Number(entry?.debit) ? 'Dr' : 'Cr')
+}
+
+function balanceText(entry) {
+  if (
+    entry?.current_balance === undefined ||
+    entry?.current_balance === null
+  ) {
+    return ''
+  }
+
+  return `${formatMoney(entry.current_balance)} ${entry.current_balance_type || ''}`.trim()
+}
+
+// Tally's field captions for the invoice reference, per voucher family.
+function referenceLabel(voucher) {
+  if (!voucher?.is_invoice) return 'Reference'
+
+  if (voucher.base_type === 'purchase' || voucher.base_type === 'debit_note') {
+    return 'Supplier Invoice No.'
+  }
+
+  return 'Reference No.'
+}
+
+// Bill-wise lines under a ledger: "Agst Ref  FIN/01/202526  ₹10,00,000 Dr"
+function BillAllocations({ allocations }) {
+  if (!Array.isArray(allocations) || allocations.length === 0) return null
+
+  return (
+    <div className="voucher-bills">
+      {allocations.map((bill, index) => (
+        <div className="voucher-bill-row" key={`${bill.name}-${index}`}>
+          <span className="voucher-bill-type">{bill.bill_type || 'Ref'}</span>
+          <span className="voucher-bill-name">{bill.name}</span>
+          <span className="voucher-bill-amount">
+            {formatMoney(bill.amount)} {bill.side}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /*
- * The full accounting voucher behind one Ledger row - what Tally
- * shows on its "Accounting Voucher Alteration" screen: the account
- * you drilled in from at the top, every other ledger line as
- * "Particulars" with its amount, and the narration/reference below.
+ * The full accounting voucher behind one Ledger row. It carries the
+ * same fields Tally's "Accounting Voucher Alteration" screen has, in
+ * the app's own card design:
+ *
+ *   single_entry  Payment / Receipt / Contra -> Account + Particulars
+ *   invoice       Sales / Purchase / Credit / Debit Note
+ *                 -> Party A/c name + items + Particulars (with tax %)
+ *   double_entry  Journal and anything else -> Debit / Credit columns
+ *
+ * Every figure (amounts, current balances, bill references, tax %)
+ * comes from the Tally response; nothing is hardcoded here.
  */
 function VoucherDetail() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const [refreshCount, setRefreshCount] = useState(0)
 
   const voucherType = searchParams.get('voucher_type') || ''
   const voucherNumber = searchParams.get('voucher_number') || ''
@@ -44,8 +132,11 @@ function VoucherDetail() {
     if (voucherDate) params.set('date', voucherDate)
     if (ledgerName) params.set('ledger_name', ledgerName)
 
+    // "Refresh from Tally" bypasses both the browser and server caches.
+    if (refreshCount > 0) params.set('force_refresh', 'true')
+
     return `/reports/voucher?${params.toString()}`
-  }, [voucherType, voucherNumber, voucherDate, ledgerName])
+  }, [voucherType, voucherNumber, voucherDate, ledgerName, refreshCount])
 
   const { data: response, loading, error } = useFetch(queryPath)
 
@@ -53,17 +144,27 @@ function VoucherDetail() {
     response?.success && response?.voucher ? response.voucher : null
 
   const entries = Array.isArray(voucher?.entries) ? voucher.entries : []
+  const items = Array.isArray(voucher?.items) ? voucher.items : []
 
-  // The ledger line matching where the user drilled in from (marked by
-  // the backend via ledger_name) is shown as the "Account" box, the way
-  // Tally always puts the ledger you're viewing at the top. Everything
-  // else becomes "Particulars", just like the real voucher screen.
-  const accountEntry =
-    entries.find((entry) => entry.is_selected_ledger) || entries[0] || null
+  // Older cached responses carry no layout/role: fall back to the
+  // previous behaviour (drilled-in ledger on top) so nothing breaks.
+  const layout = voucher?.layout || 'single_entry'
 
-  const particularEntries = entries.filter(
-    (entry) => entry !== accountEntry
-  )
+  const topEntry = voucher?.layout
+    ? entries.find(
+        (entry) => entry.role === 'account' || entry.role === 'party'
+      ) || null
+    : entries.find((entry) => entry.is_selected_ledger) || entries[0] || null
+
+  const particularEntries = entries.filter((entry) => entry !== topEntry)
+
+  const isInvoice = layout === 'invoice'
+
+  const showRateColumn =
+    isInvoice &&
+    particularEntries.some(
+      (entry) => entry.rate !== null && entry.rate !== undefined
+    )
 
   if (!voucherType || !voucherNumber) {
     return (
@@ -76,11 +177,25 @@ function VoucherDetail() {
     )
   }
 
+  const weekday = weekdayOf(voucher?.date)
+
   return (
     <>
       <PageHeader
         title={voucherType ? `${voucherType} Voucher` : 'Voucher'}
         subtitle="Live data from TallyPrime"
+        actions={
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setRefreshCount((count) => count + 1)}
+            disabled={loading}
+            title="Re-read this voucher from Tally, ignoring saved copies"
+          >
+            <RefreshCw size={16} />
+            Refresh from Tally
+          </button>
+        }
       />
 
       <nav className="breadcrumbs">
@@ -109,14 +224,26 @@ function VoucherDetail() {
           <div className="meta-list">
             <div className="meta-item">
               <span>Date</span>
-              <strong>{formatDate(voucher.date)}</strong>
+              <strong>
+                {formatDate(voucher.date)}
+                {weekday ? ` (${weekday})` : ''}
+              </strong>
             </div>
+
             {voucher.reference_number && (
               <div className="meta-item">
-                <span>Reference</span>
+                <span>{referenceLabel(voucher)}</span>
                 <strong>{voucher.reference_number}</strong>
               </div>
             )}
+
+            {voucher.reference_number && voucher.reference_date && (
+              <div className="meta-item">
+                <span>{isInvoice ? 'Invoice Date' : 'Reference Date'}</span>
+                <strong>{formatDate(voucher.reference_date)}</strong>
+              </div>
+            )}
+
             {voucher.is_cancelled && (
               <div className="meta-item">
                 <span>Status</span>
@@ -125,37 +252,150 @@ function VoucherDetail() {
             )}
           </div>
 
-          {accountEntry && (
+          {/* Account (Payment/Receipt/Contra) or Party A/c name (invoices) */}
+          {topEntry && layout !== 'double_entry' && (
             <div className="voucher-account-box">
-              <div className="voucher-account-label">Account</div>
-              <div className="voucher-account-name">
-                {accountEntry.ledger_name}
+              <div className="voucher-account-label">
+                {isInvoice ? 'Party A/c name' : 'Account'}
               </div>
+
+              <div className="voucher-account-main">
+                <div className="voucher-account-name">
+                  {topEntry.ledger_name}
+                </div>
+
+                {balanceText(topEntry) && (
+                  <div className="voucher-curbal">
+                    Current balance: {balanceText(topEntry)}
+                  </div>
+                )}
+
+                {!isInvoice && (
+                  <BillAllocations allocations={topEntry.bill_allocations} />
+                )}
+              </div>
+
               <div className="voucher-account-amount">
-                {formatAmount(accountEntry.debit || accountEntry.credit)}{' '}
-                {accountEntry.debit ? 'Dr' : 'Cr'}
+                {formatMoney(entryAmount(topEntry))} {entrySide(topEntry)}
               </div>
             </div>
           )}
 
-          <div className="voucher-particulars">
-            <div className="voucher-particulars-title">Particulars</div>
+          {/* Stock items on an item invoice */}
+          {isInvoice && items.length > 0 && (
+            <div className="voucher-particulars">
+              <div className="voucher-grid voucher-grid--items voucher-particulars-title">
+                <span>Name of Item</span>
+                <span className="voucher-num">Quantity</span>
+                <span className="voucher-num">Rate</span>
+                <span>per</span>
+                <span className="voucher-num">Amount</span>
+              </div>
 
-            {particularEntries.length === 0 && (
-              <p className="empty-state">No other ledger lines found.</p>
+              {items.map((item, index) => (
+                <div
+                  className="voucher-grid voucher-grid--items voucher-particular-row"
+                  key={`${item.name}-${index}`}
+                >
+                  <span className="voucher-particular-name">{item.name}</span>
+                  <span className="voucher-num">{item.quantity}</span>
+                  <span className="voucher-num">{formatPlain(item.rate)}</span>
+                  <span>{item.unit}</span>
+                  <span className="voucher-num voucher-particular-amount">
+                    {formatMoney(item.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="voucher-particulars">
+            {layout === 'double_entry' ? (
+              <div className="voucher-grid voucher-grid--double voucher-particulars-title">
+                <span>Particulars</span>
+                <span className="voucher-num">Debit</span>
+                <span className="voucher-num">Credit</span>
+              </div>
+            ) : (
+              <div
+                className={`voucher-grid ${
+                  showRateColumn ? 'voucher-grid--rate' : 'voucher-grid--single'
+                } voucher-particulars-title`}
+              >
+                <span>Particulars</span>
+                {showRateColumn && <span className="voucher-num">Rate</span>}
+                <span className="voucher-num">Amount</span>
+              </div>
             )}
 
-            {particularEntries.map((entry, index) => (
-              <div className="voucher-particular-row" key={index}>
-                <span className="voucher-particular-name">
-                  {entry.ledger_name}
-                </span>
-                <span className="voucher-particular-amount">
-                  {formatAmount(entry.debit || entry.credit)}{' '}
-                  {entry.debit ? 'Dr' : 'Cr'}
-                </span>
-              </div>
-            ))}
+            {layout === 'double_entry'
+              ? entries.map((entry, index) => (
+                  <div
+                    className="voucher-grid voucher-grid--double voucher-particular-row"
+                    key={index}
+                  >
+                    <span className="voucher-particular-name">
+                      <span className="voucher-side">{entrySide(entry)}</span>
+                      {entry.ledger_name}
+                      {balanceText(entry) && (
+                        <span className="voucher-curbal">
+                          Cur Bal: {balanceText(entry)}
+                        </span>
+                      )}
+                      <BillAllocations allocations={entry.bill_allocations} />
+                    </span>
+                    <span className="voucher-num voucher-particular-amount">
+                      {entry.debit ? formatMoney(entry.debit) : ''}
+                    </span>
+                    <span className="voucher-num voucher-particular-amount">
+                      {entry.credit ? formatMoney(entry.credit) : ''}
+                    </span>
+                  </div>
+                ))
+              : particularEntries.map((entry, index) => (
+                  <div
+                    className={`voucher-grid ${
+                      showRateColumn
+                        ? 'voucher-grid--rate'
+                        : 'voucher-grid--single'
+                    } voucher-particular-row`}
+                    key={index}
+                  >
+                    <span className="voucher-particular-name">
+                      {entry.ledger_name}
+                      {!isInvoice && balanceText(entry) && (
+                        <span className="voucher-curbal">
+                          Cur Bal: {balanceText(entry)}
+                        </span>
+                      )}
+                      {!isInvoice && (
+                        <BillAllocations allocations={entry.bill_allocations} />
+                      )}
+                    </span>
+
+                    {showRateColumn && (
+                      <span className="voucher-num">
+                        {entry.rate !== null && entry.rate !== undefined
+                          ? `${formatPlain(entry.rate)} %`
+                          : ''}
+                      </span>
+                    )}
+
+                    <span className="voucher-num voucher-particular-amount">
+                      {formatMoney(entryAmount(entry))} {entrySide(entry)}
+                    </span>
+                  </div>
+                ))}
+
+            {entries.length === 0 && (
+              <p className="empty-state">No ledger lines found.</p>
+            )}
+
+            {layout !== 'double_entry' &&
+              entries.length > 0 &&
+              particularEntries.length === 0 && (
+                <p className="empty-state">No other ledger lines found.</p>
+              )}
           </div>
 
           {voucher.narration && (
@@ -165,8 +405,8 @@ function VoucherDetail() {
           )}
 
           <div className="table-footer">
-            <span>Total Debit: {formatCurrency(voucher.total_debit)}</span>
-            <span>Total Credit: {formatCurrency(voucher.total_credit)}</span>
+            <span>Total Debit: {formatMoney(voucher.total_debit)}</span>
+            <span>Total Credit: {formatMoney(voucher.total_credit)}</span>
           </div>
         </Card>
       )}

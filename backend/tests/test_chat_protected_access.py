@@ -67,6 +67,7 @@ def test_chat_accepts_valid_user(
     async def fake_process_chat_message(
         message,
         company_name=None,
+        **kwargs,
     ):
         return {
             "success": True,
@@ -147,6 +148,7 @@ def test_single_company_is_selected_automatically(
     async def fake_process_chat_message(
         message,
         company_name=None,
+        **kwargs,
     ):
         nonlocal received_company
         received_company = company_name

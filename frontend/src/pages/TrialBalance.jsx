@@ -109,9 +109,11 @@ function TrialBalance() {
           Apply
         </button>
 
-        <button type="button" className="btn btn-secondary" onClick={resetDates}>
-          Company financial year
-        </button>
+        {financialYear.from && financialYear.to && (
+          <button type="button" className="btn btn-secondary" onClick={resetDates}>
+            Company financial year
+          </button>
+        )}
       </form>
 
       {dateError && (

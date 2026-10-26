@@ -45,7 +45,7 @@ async def test_invalid_date_is_rejected(
     result = await execute_tool(
         "get_revenue",
         {
-            "from_date": "2025-04-01",
+            "from_date": "2025/04/01",
             "to_date": "30-04-2025",
         },
         user_id="test-user",
