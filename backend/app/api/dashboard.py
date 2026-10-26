@@ -383,17 +383,25 @@ async def get_dashboard_monthly(
             },
         )
 
-        resp_from = (series[0].get('from_date') if series else None) or start.isoformat()
-        resp_to = (series[-1].get('to_date') if series else None) or end.isoformat()
+        is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
 
-        return {
-            'success': True,
-            'source': 'tally',
-            'data': {
+        async def _fetch_from_tally():
+            series = await _fetch_monthly_income_expense_series(
+                company_name,
+                start,
+                end,
+                is_disconnected=request.is_disconnected if request else None,
+            )
+
+            resp_from = (series[0].get('from_date') if series else None) or start.isoformat()
+            resp_to = (series[-1].get('to_date') if series else None) or end.isoformat()
+
+            return {
                 'company_name': company_name,
                 'from_date': resp_from,
                 'to_date': resp_to,
                 'income_vs_expense': series,
+                'fetched_at': datetime.now(timezone.utc).isoformat(),
             }
 
         cache_res = await cache_manager.get_or_fetch(
