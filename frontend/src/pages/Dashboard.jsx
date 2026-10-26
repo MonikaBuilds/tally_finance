@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
+import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
 import {
   getInitialDashboardFilter,
   getPresetDateRange,
@@ -125,7 +126,24 @@ function outstandingEmpty(data, key, { loading, offline, noun }) {
 }
 
 function Dashboard() {
+  const financialYear = useCompanyFinancialYear()
   const [filter, setFilter] = useState(getInitialDashboardFilter)
+
+  // Align initial dashboard date range with the company's active financial year in Tally
+  useEffect(() => {
+    if (financialYear.ready && financialYear.from && financialYear.to) {
+      const saved = sessionStorage.getItem('tfi.dashboard.date_filter')
+      if (!saved) {
+        const companyFilter = {
+          fromDate: financialYear.from,
+          toDate: financialYear.to,
+          selectedPreset: 'fy',
+        }
+        setFilter(companyFilter)
+        saveDashboardFilter(companyFilter)
+      }
+    }
+  }, [financialYear.ready, financialYear.from, financialYear.to])
 
   // Set only by the Refresh button, and cleared when the period
   // changes: the backend then re-reads Tally instead of reusing
@@ -151,6 +169,8 @@ function Dashboard() {
   )
   const monthlyLoading = monthlyWaiting || (!summaryReady && !error)
   const { data: status, error: statusError } = useFetch('/tally/status', { timeoutMs: 10000 })
+
+
 
   // Keep the last figures on screen (dimmed) while a new period loads,
   // instead of blanking the whole page on every change.
@@ -180,6 +200,8 @@ function Dashboard() {
   }, [freshStatus])
   const tallyStatus = freshStatus || knownStatus || 'checking'
 
+  // Preset date ranges (7d, 1m, 3m, fy) always compute relative to today's date
+  // so clicking "7 days" selects the present 7 days (e.g. 19 Oct to 26 Oct).
   function changeFilter(next) {
     const nextFilter = typeof next === 'string' ? getPresetDateRange(next) : next
     setFilter(nextFilter)
@@ -193,19 +215,13 @@ function Dashboard() {
   const asOnHint = `As on ${formatDay(filter.toDate)}`
   const net = netResult(data)
 
-  // P&L cards hidden because Tally used other dates get a short hint;
-  // the notice above them explains why.
-  const PL_KEYS = ['total_sales', 'total_purchases', 'net_profit', 'net_loss']
-  const sourceFor = (key) =>
-    data.period_verified === false && PL_KEYS.includes(key)
-      ? { ...sources[key], message: 'Hidden: Tally used different dates' }
-      : sources[key]
+  const plPeriodHint = periodHint
 
   const kpi = (props) => (
     <KpiCard
       loading={loading}
       offline={offline}
-      source={sourceFor(props.sourceKey)}
+      source={sources[props.sourceKey]}
       {...props}
     />
   )
@@ -281,7 +297,7 @@ function Dashboard() {
       <div className={`db-content${stale ? ' is-stale' : ''}`} aria-busy={loading}>
         <section aria-labelledby="db-pl-heading">
           <h2 id="db-pl-heading" className="db-section-title">
-            Profit &amp; loss <span>{periodHint}</span>
+            Profit &amp; loss <span>{plPeriodHint}</span>
           </h2>
           <div className="db-kpi-grid">
             {kpi({
@@ -313,12 +329,18 @@ function Dashboard() {
             {kpi({
               label: 'Receivables', icon: ArrowDownLeft, tone: 'neutral', sourceKey: 'receivables',
               value: data.receivables, display: formatAmount(data.receivables),
-              hint: 'Pending bills receivable', to: '/reports/receivables',
+              hint: data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
+                ? `As on ${formatDay(data.report_contexts.receivables.to_date)}`
+                : 'Pending bills receivable',
+              to: '/reports/receivables',
             })}
             {kpi({
               label: 'Payables', icon: ArrowUpRight, tone: 'neutral', sourceKey: 'payables',
               value: data.payables, display: formatAmount(data.payables),
-              hint: 'Pending bills payable', to: '/reports/payables',
+              hint: data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
+                ? `As on ${formatDay(data.report_contexts.payables.to_date)}`
+                : 'Pending bills payable',
+              to: '/reports/payables',
             })}
             {kpi({
               label: 'Cash in hand', icon: Wallet, tone: 'neutral', sourceKey: 'cash_in_hand',
@@ -347,9 +369,11 @@ function Dashboard() {
           <Panel
             title="Sales vs purchases"
             subtitle={
-              unverifiedMonths
-                ? `${unverifiedMonths} of ${series.length} months not shown: Tally used different dates`
-                : "By month, from Tally's Profit & Loss"
+              monthly?.data?.from_date && filter.fromDate !== monthly.data.from_date
+                ? `Monthly trend — ${formatDay(monthly.data.from_date)} – ${formatDay(monthly.data.to_date)} (Tally Books)`
+                : unverifiedMonths
+                  ? `${unverifiedMonths} of ${series.length} months not shown: Tally used different dates`
+                  : "By month, from Tally's Profit & Loss"
             }
             to="/reports/profit-loss"
             loading={monthlyLoading}
@@ -382,7 +406,11 @@ function Dashboard() {
         <div className="db-grid">
           <Panel
             title="Receivables"
-            subtitle="Ageing and largest pending bills from customers"
+            subtitle={
+              data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
+                ? `As on ${formatDay(data.report_contexts.receivables.to_date)} (Tally Books)`
+                : 'Ageing and largest pending bills from customers'
+            }
             to="/reports/receivables"
             linkLabel="View all"
             loading={loading}
@@ -394,7 +422,11 @@ function Dashboard() {
 
           <Panel
             title="Payables"
-            subtitle="Ageing and largest pending bills to suppliers"
+            subtitle={
+              data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
+                ? `As on ${formatDay(data.report_contexts.payables.to_date)} (Tally Books)`
+                : 'Ageing and largest pending bills to suppliers'
+            }
             to="/reports/payables"
             linkLabel="View all"
             loading={loading}

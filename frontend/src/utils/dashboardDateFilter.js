@@ -175,14 +175,35 @@ export function getPresetDateRange(
     }
   }
 
-  const from = new Date(to)
+  // Safely subtract months without JavaScript 31-day rollover bugs
+  // (e.g. subtracting 1 month from Oct 31 should give Sep 30, not Oct 1)
+  function subtractMonthsSafe(dateObj, monthsToSubtract) {
+    const year = dateObj.getFullYear()
+    const month = dateObj.getMonth()
+    const day = dateObj.getDate()
+
+    // Create target date at the 1st of the target month
+    const targetDate = new Date(year, month - monthsToSubtract, 1)
+    const targetYear = targetDate.getFullYear()
+    const targetMonth = targetDate.getMonth()
+
+    // Find the maximum valid days in the target month
+    const maxDaysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+
+    // Clamp the day so 31st becomes 30th or 28th
+    const safeDay = Math.min(day, maxDaysInTargetMonth)
+
+    return new Date(targetYear, targetMonth, safeDay)
+  }
+
+  let from = new Date(to)
 
   if (presetKey === '7d') {
     from.setDate(to.getDate() - 7)
   } else if (presetKey === '1m') {
-    from.setMonth(to.getMonth() - 1)
+    from = subtractMonthsSafe(to, 1)
   } else if (presetKey === '3m') {
-    from.setMonth(to.getMonth() - 3)
+    from = subtractMonthsSafe(to, 3)
   }
 
   return {
@@ -207,6 +228,14 @@ export function validateDateRange(fromStr, toStr) {
     return {
       valid: false,
       error: 'From Date cannot be after To Date.',
+    }
+  }
+
+  const today = getRuntimeTodayISO()
+  if (toStr > today) {
+    return {
+      valid: false,
+      error: 'To Date cannot be in the future.',
     }
   }
 

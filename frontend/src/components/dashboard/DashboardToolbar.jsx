@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Calendar, RefreshCw } from 'lucide-react'
 
-import { DASHBOARD_PRESETS, validateDateRange } from '../../utils/dashboardDateFilter'
+import { DASHBOARD_PRESETS, getRuntimeTodayISO, validateDateRange } from '../../utils/dashboardDateFilter'
 import { formatDay, formatTime } from './format'
 
 function TallyStatusPill({ status }) {
@@ -93,7 +93,7 @@ function DashboardToolbar({
           <input
             type="date"
             value={draft.from}
-            max={draft.to || undefined}
+            max={draft.to || getRuntimeTodayISO()}
             onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))}
             aria-label="From date"
           />
@@ -102,6 +102,7 @@ function DashboardToolbar({
             type="date"
             value={draft.to}
             min={draft.from || undefined}
+            max={getRuntimeTodayISO()}
             onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))}
             aria-label="To date"
           />
