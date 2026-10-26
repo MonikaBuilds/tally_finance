@@ -1400,6 +1400,51 @@ async def get_ledger_list(
 # LEDGER REPORT
 # ============================================================
 
+async def _company_financial_year(
+    company_name: str | None,
+    current_user: UserContext,
+):
+    """
+    The company's current financial year (start, end) from Tally's own
+    company data (STARTINGFROM, else BOOKSFROM). (None, None) when
+    Tally does not provide it.
+    """
+    from datetime import datetime as _datetime
+    from app.tally.service import fetch_companies
+    from app.tally.parsers.ledger import financial_year_bounds
+
+    try:
+        companies = await fetch_companies(
+            org_id=_resolve_org_id(current_user),
+        )
+
+        company = next(
+            (
+                c for c in companies
+                if company_name
+                and (c.get("name") or "").strip().casefold()
+                == company_name.strip().casefold()
+            ),
+            companies[0] if companies else None,
+        )
+
+        anchor_text = (
+            (company or {}).get("starting_from")
+            or (company or {}).get("books_from")
+        )
+
+        if not anchor_text:
+            return None, None
+
+        return financial_year_bounds(
+            _datetime.strptime(anchor_text, "%Y-%m-%d").date()
+        )
+
+    except Exception as exc:
+        logger.warning("Company financial year unavailable: %r", exc)
+        return None, None
+
+
 @router.get("/ledger")
 async def get_ledger_report(
     ledger_name: str,
@@ -1417,16 +1462,34 @@ async def get_ledger_report(
         )
 
     async def _fetch():
-        return await fetch_ledger_report(
+        report = await fetch_ledger_report(
             ledger_name=ledger_name,
             company_name=company_name,
             from_date=from_date,
             to_date=to_date,
         )
 
+        # No explicit period requested: show every month of the
+        # company's financial year (Tally's Apr..Mar monthly summary),
+        # not only the months that happen to have transactions.
+        if from_date is None and to_date is None and isinstance(report, dict):
+            from app.tally.parsers.ledger import (
+                extend_monthly_summary_to_period,
+            )
+
+            fy_start, fy_end = await _company_financial_year(
+                company_name,
+                current_user,
+            )
+
+            extend_monthly_summary_to_period(report, fy_start, fy_end)
+
+        return report
+
     try:
         cache_res = await _cached_report(
-            report_name="ledger_report",
+            # v2: monthly_summary now spans the full financial year.
+            report_name="ledger_report_v2",
             company_name=company_name,
             current_user=current_user,
             params={

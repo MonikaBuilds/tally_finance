@@ -1039,9 +1039,13 @@ def _apply_voucher_layout(
             return "invoice"
 
     if base_type in {"payment", "receipt", "contra"}:
+        # Tally's single-entry screens: Payment shows the credited
+        # bank/cash as Account; Receipt and Contra show the DEBITED
+        # ledger as Account (e.g. Contra: Account = Cash, Particulars
+        # = HDFC Bank).
         account_side = (
             "Dr"
-            if base_type == "receipt"
+            if base_type in {"receipt", "contra"}
             else "Cr"
         )
 
@@ -1624,6 +1628,89 @@ def build_continuous_monthly_summary(
         )
 
     return result
+
+
+# ============================================================
+# FULL-PERIOD MONTHLY SUMMARY
+# ============================================================
+
+def financial_year_bounds(anchor: date) -> tuple[date, date]:
+    """1-Apr .. 31-Mar financial year containing `anchor`."""
+
+    start_year = (
+        anchor.year
+        if anchor.month >= 4
+        else anchor.year - 1
+    )
+
+    return (
+        date(start_year, 4, 1),
+        date(start_year + 1, 3, 31),
+    )
+
+
+def extend_monthly_summary_to_period(
+    report: dict,
+    period_start: date | None,
+    period_end: date | None,
+) -> dict:
+    """
+    Rebuild report["monthly_summary"] so it lists EVERY month of the
+    period (as Tally's Ledger Monthly Summary does: April..March),
+    not just the months between the first and last transaction.
+    Months without transactions carry the previous closing balance.
+
+    The period normally comes from the company's financial year in
+    Tally. It is only ever widened to cover the ledger's own
+    transactions, never narrowed. Without a company period, the
+    financial year(s) of the transactions are used.
+    """
+
+    entries = report.get("entries") or []
+
+    row_dates = []
+
+    for row in entries:
+        try:
+            row_dates.append(
+                datetime.strptime(
+                    row.get("date") or "",
+                    "%Y-%m-%d",
+                ).date()
+            )
+        except ValueError:
+            continue
+
+    start = period_start
+    end = period_end
+
+    if row_dates:
+        first = min(row_dates)
+        last = max(row_dates)
+
+        start = (
+            min(start, first)
+            if start
+            else financial_year_bounds(first)[0]
+        )
+
+        end = (
+            max(end, last)
+            if end
+            else financial_year_bounds(last)[1]
+        )
+
+    if start is None or end is None:
+        return report
+
+    report["monthly_summary"] = build_continuous_monthly_summary(
+        entries,
+        float(report.get("opening_balance") or 0),
+        start_date=start,
+        end_date=end,
+    )
+
+    return report
 
 
 # ============================================================

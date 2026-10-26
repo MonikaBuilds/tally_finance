@@ -1,5 +1,5 @@
-/* Extra styles for the Tally-style voucher page (Voucherdetail.jsx).
-   Builds on the .voucher-* base styles in index.css. */
+/* Extra styles for the voucher page (Voucherdetail.jsx).
+   Builds on the app's own .voucher-* base styles in index.css. */
 
 .voucher-account-main {
   flex: 1 1 260px;

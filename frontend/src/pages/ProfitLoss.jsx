@@ -53,6 +53,18 @@ function drillDownPathFor(name, dates) {
   return `/reports/group-summary${buildQuery({ group: stripPrefix(name), ...dates })}`
 }
 
+const PLAIN_CLICKABLE_STYLE = {
+  background: 'none',
+  border: 0,
+  padding: 0,
+  margin: 0,
+  font: 'inherit',
+  color: 'inherit',
+  textAlign: 'left',
+  textDecoration: 'none',
+  cursor: 'pointer',
+}
+
 function buildColumns(navigate, dates) {
   return [
     {
@@ -60,14 +72,20 @@ function buildColumns(navigate, dates) {
       label: 'Particulars',
       render: (row) => {
         const path = drillDownPathFor(row.name, dates)
-        const label = row.is_group ? <strong>{row.name}</strong> : row.name
+
+        // Show the account name without Tally's "Add:" / "Less:"
+        // operator words (drill-down already queries the bare name).
+        const displayName = stripPrefix(row.name)
+        const label = row.is_group ? <strong>{displayName}</strong> : displayName
 
         if (!path) return label
 
+        // Still clickable (drills into the line), but drawn as plain
+        // text rather than a blue underlined link.
         return (
           <button
             type="button"
-            className="link-button"
+            style={PLAIN_CLICKABLE_STYLE}
             onClick={() => navigate(path)}
             title="View details"
           >
