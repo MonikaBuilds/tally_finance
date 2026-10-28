@@ -1,6 +1,7 @@
 import { useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../../hooks/useFetch'
 import PageHeader from '../../components/layout/PageHeader'
+import ExportButtons from '../../components/common/ExportButtons'
 import Loader from '../../components/common/Loader'
 import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
@@ -85,6 +86,12 @@ function TrialBalanceOpeningStock() {
   return (
     <>
       {header}
+
+      <div className="export-bar">
+
+        <ExportButtons basePath="/reports/trial-balance/opening-stock/export" filenameBase="opening_stock_summary" params={{ from_date: fromDate, to_date: toDate }} />
+
+      </div>
 
       <Card>
         <p className="table-hint">Click a stock item to view its Stock Item Monthly Summary.</p>

@@ -29,6 +29,7 @@ import OutstandingTable from '../components/dashboard/OutstandingTable'
 import CashBankList from '../components/dashboard/CashBankList'
 import AgeingBar from '../components/dashboard/AgeingBar'
 import PeriodNotice from '../components/dashboard/PeriodNotice'
+import ExportButtons from '../components/common/ExportButtons'
 import { formatAmount, formatBalance, formatDay, isNumber } from '../components/dashboard/format'
 import '../components/dashboard/dashboard.css'
 
@@ -272,6 +273,15 @@ function Dashboard() {
         loading={loading}
         fetchedAt={data.fetched_at}
       />
+
+      <div className="export-bar">
+        <ExportButtons
+          basePath="/dashboard/export"
+          filenameBase="dashboard"
+          params={{ from_date: filter.fromDate, to_date: filter.toDate }}
+          disabled={loading}
+        />
+      </div>
 
       {usingBackendStaleCache && !offline && (
         <div className="db-alert" role="status">

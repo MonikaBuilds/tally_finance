@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -289,6 +290,9 @@ function InventoryVoucherDetail() {
           </button>
         }
       />
+      <div className="export-bar">
+        <ExportButtons basePath="/reports/inventory-voucher/export" filenameBase={`${voucherType}_${voucherNumber}`} params={query} />
+      </div>
 
       <Card>
         {!voucherType || !voucherNumber ? (

@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -115,6 +116,9 @@ function StockItemBillsPending() {
           </button>
         }
       />
+      <div className="export-bar">
+        <ExportButtons basePath="/reports/stock-item-bills-pending/export" filenameBase={`bills_pending_${itemName}`} params={query} />
+      </div>
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}

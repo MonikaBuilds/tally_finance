@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useFetch } from '../hooks/useFetch'
 
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -137,6 +138,9 @@ function LedgerMonthDetail() {
         title={ledgerName}
         subtitle={`${formatMonthKey(monthKey)} · Live data from TallyPrime`}
       />
+      <div className="export-bar">
+        <ExportButtons basePath="/reports/ledger/export" filenameBase={`${ledgerName}_${monthKey}`} params={{ ledger_name: ledgerName, from_date: range?.from, to_date: range?.to }} />
+      </div>
 
       <nav className="breadcrumbs">
         <Link to={`/reports/ledger?ledger=${encodeURIComponent(ledgerName)}&view=monthly`}>

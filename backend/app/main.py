@@ -7,6 +7,7 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.admin import router as admin_router
 from app.api.dashboard import router as dashboard_router
+from app.api.dashboard_export import router as dashboard_export_router
 from app.api.reports import router as reports_router
 from app.api.tally import router as tally_router
 from app.core.logging_config import configure_logging
@@ -103,6 +104,12 @@ app.include_router(
 
 app.include_router(
     dashboard_router,
+    prefix="/api/v1/dashboard",
+    tags=["Dashboard"],
+)
+
+app.include_router(
+    dashboard_export_router,
     prefix="/api/v1/dashboard",
     tags=["Dashboard"],
 )

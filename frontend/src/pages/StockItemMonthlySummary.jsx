@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -130,6 +131,9 @@ function StockItemMonthlySummary() {
           </button>
         }
       />
+      <div className="export-bar">
+        <ExportButtons basePath="/reports/stock-item-monthly/export" filenameBase={`monthly_${itemName}`} params={{ stock_item_name: itemName, godown_name: godown, from_date: from, to_date: to }} />
+      </div>
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}
