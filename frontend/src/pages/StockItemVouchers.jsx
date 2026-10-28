@@ -200,7 +200,7 @@ function StockItemVouchers() {
 
             <div className="card-toolbar">
               <ExportButtons
-                basePath="/reports/stock-movement/export"
+                basePath="/reports/stock-item-vouchers/export"
                 params={queryParams}
                 filenameBase="stock_item_vouchers"
               />

@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -90,6 +91,9 @@ function RegisterVouchers() {
           </button>
         }
       />
+      <div className="export-bar">
+        <ExportButtons basePath={`/reports/inventory-register/${key}/vouchers/export`} filenameBase={`${key}_vouchers`} params={{ from_date: from, to_date: to }} />
+      </div>
 
       <Card>
         {!from || !to ? <ErrorMessage message="No period was specified." /> : null}

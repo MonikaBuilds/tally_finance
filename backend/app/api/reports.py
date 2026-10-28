@@ -1,5 +1,6 @@
 import logging
-from datetime import date
+import re
+from datetime import date, timedelta
 from typing import Any, Awaitable, Callable, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +16,9 @@ from app.security.auth import (
     get_current_user,
 )
 from app.security.config import get_auth_settings
+from app.export import report_specs as specs
+from app.export.exporter import build_report_excel, build_report_pdf
+from app.export.invoke import invoke_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -299,16 +303,54 @@ def _download_headers(filename: str) -> dict:
     }
 
 
+def _check_format(file_format: str) -> None:
+    if file_format not in ("pdf", "xlsx"):
+        raise HTTPException(
+            status_code=400,
+            detail="format must be 'pdf' or 'xlsx'",
+        )
+
+
+def _safe_name(*parts) -> str:
+    text = "_".join(str(p) for p in parts if p not in (None, ""))
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+    return text or "report"
+
+
+def _spec_response(file_format: str, spec: dict, filename_base: str):
+    _check_format(file_format)
+
+    if file_format == "xlsx":
+        return Response(
+            content=build_report_excel(spec),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            ),
+            headers=_download_headers(f"{filename_base}.xlsx"),
+        )
+
+    return Response(
+        content=build_report_pdf(spec),
+        media_type="application/pdf",
+        headers=_download_headers(f"{filename_base}.pdf"),
+    )
+
+
 def _export_response(
     file_format: str,
-    title: str,
-    columns: list,
-    rows: list,
-    company_name: str | None,
-    filename_base: str,
+    title: str | None = None,
+    columns: list | None = None,
+    rows: list | None = None,
+    company_name: str | None = None,
+    filename_base: str = "report",
     footer: dict | None = None,
     period: str | None = None,
+    spec: dict | None = None,
 ):
+    if spec is not None:
+        return _spec_response(file_format, spec, filename_base)
+
     if file_format not in ("pdf", "xlsx"):
         raise HTTPException(
             status_code=400,
@@ -465,12 +507,13 @@ async def export_profit_loss_report(
 
     return _export_response(
         file_format=file_format,
-        title="Profit & Loss",
-        columns=PROFIT_LOSS_COLUMNS,
-        rows=_pl_rows_to_two_columns(report),
         company_name=company_name,
         filename_base="profit_and_loss",
-        period=_period_label(from_date=from_date, to_date=to_date),
+        spec=specs.profit_loss_spec(
+            report,
+            company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
     )
 
 
@@ -728,17 +771,13 @@ async def export_trial_balance_report(
 
     return _export_response(
         file_format=file_format,
-        title="Trial Balance",
-        columns=TRIAL_BALANCE_COLUMNS,
-        rows=rows,
         company_name=company_name,
         filename_base="trial_balance",
-        footer={
-            "label": f"Total (Credit: {total_credit:,.2f})",
-            "key": "debit",
-            "value": total_debit,
-        },
-        period=_period_label(from_date=from_date, to_date=to_date),
+        spec=specs.trial_balance_spec(
+            rows,
+            company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
     )
 
 
@@ -1043,12 +1082,13 @@ async def export_balance_sheet_report(
 
     return _export_response(
         file_format=file_format,
-        title="Balance Sheet",
-        columns=BALANCE_SHEET_COLUMNS,
-        rows=_bs_rows_to_two_columns(report),
         company_name=company_name,
         filename_base="balance_sheet",
-        period=_period_label(from_date=from_date, to_date=to_date),
+        spec=specs.balance_sheet_spec(
+            report,
+            company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
     )
 
 
@@ -1211,16 +1251,15 @@ async def export_receivables_report(
 
     return _export_response(
         file_format=file_format,
-        title="Receivables",
-        columns=BILLS_COLUMNS,
-        rows=data["bills"],
         company_name=company_name,
         filename_base="receivables",
-        footer={
-            "label": "Total Receivable",
-            "key": "outstanding_amount",
-            "value": data["total_receivable"],
-        },
+        spec=specs.bills_spec(
+            "Receivables",
+            data["bills"],
+            "Total Receivable",
+            data["total_receivable"],
+            company_name,
+        ),
     )
 
 
@@ -1333,16 +1372,15 @@ async def export_payables_report(
 
     return _export_response(
         file_format=file_format,
-        title="Payables",
-        columns=BILLS_COLUMNS,
-        rows=data["bills"],
         company_name=company_name,
         filename_base="payables",
-        footer={
-            "label": "Total Payable",
-            "key": "outstanding_amount",
-            "value": data["total_payable"],
-        },
+        spec=specs.bills_spec(
+            "Payables",
+            data["bills"],
+            "Total Payable",
+            data["total_payable"],
+            company_name,
+        ),
     )
 
 
@@ -1530,8 +1568,7 @@ async def get_ledger_report(
 # LEDGER EXPORT
 # ============================================================
 
-@router.get("/ledger/export/{file_format}")
-async def export_ledger_report(
+async def _legacy_export_ledger_report(
     file_format: str,
     ledger_name: str,
     company_name: str | None = Depends(get_authorized_company),
@@ -1882,11 +1919,16 @@ async def export_pending_invoices_report(
 
     return _export_response(
         file_format=file_format,
-        title="Pending Invoices",
-        columns=PENDING_INVOICES_COLUMNS,
-        rows=data["invoices"],
         company_name=company_name,
         filename_base="pending_invoices",
+        spec=specs.bills_spec(
+            "Pending Invoices",
+            data["invoices"],
+            "Total",
+            None,
+            company_name,
+            with_type=True,
+        ),
     )
 
 
@@ -2070,8 +2112,7 @@ async def get_stock_summary_report(
         )
 
 
-@router.get("/stock-summary/export/{file_format}")
-async def export_stock_summary_report(
+async def _legacy_export_stock_summary_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     to_date: date | None = None,
@@ -2298,8 +2339,7 @@ async def get_stock_groups_report(
         )
 
 
-@router.get("/stock-groups/export/{file_format}")
-async def export_stock_groups_report(
+async def _legacy_export_stock_groups_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
@@ -2911,8 +2951,7 @@ async def get_stock_categories_report(
         )
 
 
-@router.get("/stock-categories/export/{file_format}")
-async def export_stock_categories_report(
+async def _legacy_export_stock_categories_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
@@ -3001,8 +3040,7 @@ async def get_godowns_report(
         )
 
 
-@router.get("/godowns/export/{file_format}")
-async def export_godowns_report(
+async def _legacy_export_godowns_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
@@ -3585,13 +3623,541 @@ async def export_inventory_register(
 
     return _export_response(
         file_format=file_format,
-        title=register["title"],
-        columns=INVENTORY_REGISTER_COLUMNS,
-        rows=result["rows"],
         company_name=company_name,
         filename_base=register["filename"],
-        period=_period_label(
-            from_date=date.fromisoformat(result["from"]),
-            to_date=date.fromisoformat(result["to"]),
+        spec=specs.register_months_spec(
+            register["title"],
+            result,
+            company_name,
+            _period_label(
+                from_date=date.fromisoformat(result["from"]),
+                to_date=date.fromisoformat(result["to"]),
+            ),
         ),
+    )
+
+
+# ======================================================================
+# PDF / Excel exports that read the page's own data
+#
+# Each endpoint below runs the matching JSON endpoint of this module
+# (same cache key, same Tally fetch), so the file always shows exactly
+# what the screen shows.
+# ======================================================================
+
+def _fmt_period(resp: dict) -> str | None:
+    return specs.period_label(resp.get("from"), resp.get("to"))
+
+
+async def _master_export(
+    file_format, endpoint, title, columns, filename, company_name, current_user
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        endpoint, company_name=company_name, current_user=current_user
+    )
+    rows = []
+    for row in resp.get("report", []):
+        row = dict(row)
+        if row.get("is_primary"):
+            row["_style"] = "bold"
+        rows.append(row)
+    return _export_response(
+        file_format=file_format,
+        title=title,
+        columns=columns,
+        rows=rows,
+        company_name=company_name,
+        filename_base=filename,
+    )
+
+
+@router.get("/stock-groups/export/{file_format}")
+async def export_stock_groups_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _master_export(
+        file_format, get_stock_groups_report, "Stock Group Summary",
+        STOCK_GROUP_COLUMNS, "stock_group_summary", company_name, current_user,
+    )
+
+
+@router.get("/stock-categories/export/{file_format}")
+async def export_stock_categories_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _master_export(
+        file_format, get_stock_categories_report, "Stock Category Summary",
+        STOCK_CATEGORY_COLUMNS, "stock_category_summary", company_name, current_user,
+    )
+
+
+@router.get("/godowns/export/{file_format}")
+async def export_godowns_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _master_export(
+        file_format, get_godowns_report, "Locations",
+        GODOWN_COLUMNS, "locations", company_name, current_user,
+    )
+
+
+@router.get("/stock-summary/export/{file_format}")
+async def export_stock_summary_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    to_date: date | None = Query(default=None),
+    from_date: date | None = Query(default=None),
+    view: str = Query(default="full"),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_stock_summary_report,
+        company_name=company_name,
+        to_date=to_date,
+        from_date=from_date,
+        current_user=current_user,
+    )
+    view = view if view in ("full", "opening", "closing") else "full"
+    title = {"full": "Stock Summary", "opening": "Opening Stock Summary",
+             "closing": "Closing Stock Summary"}[view]
+    period = _period_label(from_date=from_date, to_date=to_date)
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(title.lower()),
+        spec=specs.stock_summary_spec(
+            resp.get("report", []), title, company_name, period, view
+        ),
+    )
+
+
+@router.get("/ledger/export/{file_format}")
+async def export_ledger_report(
+    file_format: str,
+    ledger_name: str = Query(...),
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_ledger_report,
+        ledger_name=ledger_name,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(ledger_name, "ledger"),
+        spec=specs.ledger_spec(
+            resp["report"],
+            ledger_name,
+            company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/group-summary/export/{file_format}")
+async def export_group_summary_report(
+    file_format: str,
+    group: str = Query(...),
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_group_summary_report,
+        group=group,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name("group", group),
+        spec=specs.group_summary_spec(
+            resp, group, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/trial-balance/purchase-bills-pending/export/{file_format}")
+async def export_trial_balance_purchase_bills_pending(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_trial_balance_purchase_bills_pending,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base="purchase_bills_pending",
+        spec=specs.purchase_bills_pending_spec(
+            resp, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/trial-balance/opening-stock/export/{file_format}")
+async def export_trial_balance_opening_stock(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    """Same arithmetic as the Trial Balance > Opening Stock page: the
+    stock as at the day before the period starts (or each item's
+    opening balance when no From Date is in play)."""
+    _check_format(file_format)
+    as_on = from_date - timedelta(days=1) if from_date else None
+    resp = await invoke_endpoint(
+        get_stock_summary_report,
+        company_name=company_name,
+        to_date=as_on,
+        current_user=current_user,
+    )
+
+    def number(value):
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    rows = []
+    for item in resp.get("report", []):
+        quantity = number(item.get("closing_quantity" if as_on else "opening_quantity"))
+        value = number(item.get("closing_value" if as_on else "opening_value"))
+        if as_on:
+            rate = number(item.get("closing_rate"))
+        else:
+            rate = abs(value / quantity) if quantity else 0.0
+        if quantity != 0 or value != 0:
+            rows.append({
+                "stock_item": item.get("stock_item"), "unit": item.get("unit"),
+                "quantity": quantity, "rate": rate, "value": value,
+            })
+
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base="opening_stock_summary",
+        spec=specs.trial_balance_opening_stock_spec(
+            rows, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/voucher/export/{file_format}")
+async def export_voucher_detail(
+    file_format: str,
+    voucher_type: str = Query(...),
+    voucher_number: str = Query(...),
+    voucher_date: date | None = Query(default=None, alias="date"),
+    ledger_name: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_voucher_detail,
+        voucher_type=voucher_type,
+        voucher_number=voucher_number,
+        date=voucher_date,
+        ledger_name=ledger_name,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(voucher_type, voucher_number),
+        spec=specs.voucher_spec(resp["voucher"], company_name),
+    )
+
+
+@router.get("/inventory-voucher/export/{file_format}")
+async def export_inventory_voucher_detail(
+    file_format: str,
+    voucher_type: str = Query(...),
+    voucher_number: str = Query(...),
+    voucher_date: date | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_inventory_voucher_detail_report,
+        voucher_type=voucher_type,
+        voucher_number=voucher_number,
+        voucher_date=voucher_date,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(voucher_type, voucher_number),
+        spec=specs.inventory_voucher_spec(resp["voucher"], company_name),
+    )
+
+
+@router.get("/stock-item-monthly/export/{file_format}")
+async def export_stock_item_monthly(
+    file_format: str,
+    stock_item_name: str = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    godown_name: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_stock_item_monthly_report,
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+        godown_name=godown_name,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(stock_item_name, godown_name, "monthly"),
+        spec=specs.stock_item_monthly_spec(
+            resp, stock_item_name, godown_name, company_name, _fmt_period(resp)
+        ),
+    )
+
+
+@router.get("/stock-item-vouchers/export/{file_format}")
+async def export_stock_item_vouchers(
+    file_format: str,
+    stock_item_name: str = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    godown_name: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_stock_item_vouchers_report,
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+        godown_name=godown_name,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(stock_item_name, godown_name, "vouchers"),
+        spec=specs.stock_item_vouchers_spec(
+            resp, stock_item_name, godown_name, company_name, _fmt_period(resp)
+        ),
+    )
+
+
+@router.get("/stock-item-bills-pending/export/{file_format}")
+async def export_stock_item_bills_pending(
+    file_format: str,
+    stock_item_name: str = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    tracking_number: str | None = Query(default=None),
+    party: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_stock_item_bills_pending_report,
+        stock_item_name=stock_item_name,
+        from_date=from_date,
+        to_date=to_date,
+        tracking_number=tracking_number,
+        party=party,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(stock_item_name, "bills_pending"),
+        spec=specs.stock_item_bills_pending_spec(
+            resp, stock_item_name, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+async def _summary_export(
+    file_format, endpoint, label, selected_kw, selected, company_name,
+    from_date, to_date, include_zero, current_user,
+):
+    _check_format(file_format)
+    given = {
+        selected_kw: selected,
+        "company_name": company_name,
+        "from_date": from_date,
+        "to_date": to_date,
+        "current_user": current_user,
+    }
+    if include_zero is not None:
+        given["include_zero"] = include_zero
+    resp = await invoke_endpoint(endpoint, **given)
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(label, resp.get("selected")),
+        spec=specs.summary_drill_spec(
+            label, resp.get("selected") or selected or "", resp, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/stock-group-summary/export/{file_format}")
+async def export_stock_group_summary(
+    file_format: str,
+    group: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    include_zero: bool | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _summary_export(
+        file_format, get_stock_group_summary_report, "Stock Group Summary",
+        "group", group, company_name, from_date, to_date, include_zero, current_user,
+    )
+
+
+@router.get("/stock-category-summary/export/{file_format}")
+async def export_stock_category_summary(
+    file_format: str,
+    category: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    include_zero: bool | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _summary_export(
+        file_format, get_stock_category_summary_report, "Stock Category Summary",
+        "category", category, company_name, from_date, to_date, include_zero, current_user,
+    )
+
+
+@router.get("/godown-summary/export/{file_format}")
+async def export_godown_summary(
+    file_format: str,
+    godown: str | None = Query(default=None),
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    include_zero: bool | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    return await _summary_export(
+        file_format, get_godown_summary_report, "Godown Summary",
+        "godown", godown, company_name, from_date, to_date, include_zero, current_user,
+    )
+
+
+@router.get("/inventory-register/{register_key}/vouchers/export/{file_format}")
+async def export_inventory_register_vouchers(
+    register_key: str,
+    file_format: str,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_inventory_register_vouchers,
+        register_key=register_key,
+        from_date=from_date,
+        to_date=to_date,
+        company_name=company_name,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base=_safe_name(register_key, "vouchers"),
+        spec=specs.register_vouchers_spec(
+            resp, company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
+
+
+@router.get("/ledgers/export/{file_format}")
+async def export_ledger_list(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_ledger_list, company_name=company_name, current_user=current_user
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base="ledgers",
+        spec=specs.ledger_list_spec(resp.get("ledgers", []), company_name),
+    )
+
+
+@router.get("/bill-allocations/export/{file_format}")
+async def export_bill_allocations(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_bill_allocations, company_name=company_name, current_user=current_user
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base="purchase_bills",
+        spec=specs.bill_allocations_spec(resp.get("bills", []), company_name),
     )

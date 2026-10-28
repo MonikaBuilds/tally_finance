@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -136,6 +137,9 @@ function StockSummaryDrill({ kind }) {
           </button>
         }
       />
+      <div className="export-bar">
+        <ExportButtons basePath={`${config.api}/export`} filenameBase={`${config.title}_${name}`} params={{ [config.param]: name, from_date: from, to_date: to, include_zero: includeZero ? 'true' : undefined }} disabled={!periodReady} />
+      </div>
 
       <Card>
         <div className="ledger-filters filter-bar">

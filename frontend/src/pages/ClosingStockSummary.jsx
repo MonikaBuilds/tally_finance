@@ -127,7 +127,7 @@ function ClosingStockSummary() {
             </button>
             <ExportButtons
               basePath="/reports/stock-summary/export"
-              params={{ to_date: toDate }}
+              params={{ to_date: toDate, view: 'closing' }}
               filenameBase="closing_stock_summary"
             />
           </>

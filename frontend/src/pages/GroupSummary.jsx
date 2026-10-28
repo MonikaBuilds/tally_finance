@@ -2,6 +2,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -96,6 +97,9 @@ function GroupSummary() {
         title={`Group Summary: ${group}`}
         subtitle="Click a row to drill further - into a sub-group, or into a ledger's monthly summary"
       />
+      <div className="export-bar">
+        <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />
+      </div>
 
       <nav className="breadcrumbs">
         <Link to="/reports/profit-loss">

@@ -1,6 +1,7 @@
 import { useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../../hooks/useFetch'
 import PageHeader from '../../components/layout/PageHeader'
+import ExportButtons from '../../components/common/ExportButtons'
 import Loader from '../../components/common/Loader'
 import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
@@ -71,6 +72,12 @@ function BalanceSheetGroup() {
   return (
     <>
       {header}
+
+      <div className="export-bar">
+
+        <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />
+
+      </div>
 
       <Card>
         <p className="table-hint">
