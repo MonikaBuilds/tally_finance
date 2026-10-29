@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 
@@ -62,7 +62,6 @@ function StockSummaryDrill({ kind }) {
   const navigate = useNavigate()
   const { name } = useParams()
   const [searchParams] = useSearchParams()
-  const [includeZero, setIncludeZero] = useState(false)
 
   // Period: explicit ?from/?to when we arrived from another drill-down,
   // otherwise the company's own financial year as reported by Tally.
@@ -76,7 +75,6 @@ function StockSummaryDrill({ kind }) {
         [config.param]: name,
         from_date: from,
         to_date: to,
-        include_zero: includeZero ? 'true' : undefined,
       })}`
     : null
 
@@ -138,23 +136,10 @@ function StockSummaryDrill({ kind }) {
         }
       />
       <div className="export-bar">
-        <ExportButtons basePath={`${config.api}/export`} filenameBase={`${config.title}_${name}`} params={{ [config.param]: name, from_date: from, to_date: to, include_zero: includeZero ? 'true' : undefined }} disabled={!periodReady} />
+        <ExportButtons basePath={`${config.api}/export`} filenameBase={`${config.title}_${name}`} params={{ [config.param]: name, from_date: from, to_date: to }} disabled={!periodReady} />
       </div>
 
       <Card>
-        <div className="ledger-filters filter-bar">
-          <label className="form-field">
-            <span>
-              <input
-                type="checkbox"
-                checked={includeZero}
-                onChange={(event) => setIncludeZero(event.target.checked)}
-              />{' '}
-              Show zero balances
-            </span>
-          </label>
-        </div>
-
         {loading && <Loader />}
         {error && <ErrorMessage message={error} />}
 

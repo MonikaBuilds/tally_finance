@@ -204,7 +204,8 @@ def group_summary_spec(data, group, company, period):
 # Ledger
 # ----------------------------------------------------------------------
 
-def ledger_spec(report, ledger_name, company, period):
+def ledger_spec(report, ledger_name, company, period, view="monthly"):
+    """view: "monthly" (Monthly Summary), "detailed" (vouchers) or "both"."""
     opening = _num(report.get("opening_balance"))
     entries = report.get("entries", []) or []
 
@@ -228,7 +229,9 @@ def ledger_spec(report, ledger_name, company, period):
         col("debit", "Debit", "amount", True), col("credit", "Credit", "amount", True),
         col("running_balance", "Balance", "balance"),
     ]
-    sections = [{
+    sections = []
+    if view in ("detailed", "both"):
+        sections.append({
         "sheet": "Vouchers", "heading": "Ledger Vouchers",
         "columns": detail_columns,
         "rows": [opening_row] + entries,
@@ -236,10 +239,11 @@ def ledger_spec(report, ledger_name, company, period):
                     "credit": total_credit,
                     "running_balance": report.get("closing_balance")}],
         "filterable": True,
-    }]
+        })
 
     summary = report.get("monthly_summary")
-    if isinstance(summary, dict) and summary:
+    summary = summary if isinstance(summary, dict) else {}
+    if view in ("monthly", "both"):
         month_rows = [{
             "month": "Opening Balance",
             "debit": opening if opening > 0 else 0,
@@ -271,7 +275,11 @@ def ledger_spec(report, ledger_name, company, period):
         ("Closing Balance", _balance_text(report.get("closing_balance"))),
         ("Entries", report.get("entry_count", len(entries))),
     ]
-    return spec(f"Ledger: {ledger_name}", company, sections, period=period, meta=meta)
+    title = {
+        "monthly": f"Ledger Monthly Summary: {ledger_name}",
+        "detailed": f"Ledger Vouchers: {ledger_name}",
+    }.get(view, f"Ledger: {ledger_name}")
+    return spec(title, company, sections, period=period, meta=meta)
 
 
 def _balance_text(value):

@@ -139,7 +139,7 @@ function LedgerMonthDetail() {
         subtitle={`${formatMonthKey(monthKey)} · Live data from TallyPrime`}
       />
       <div className="export-bar">
-        <ExportButtons basePath="/reports/ledger/export" filenameBase={`${ledgerName}_${monthKey}`} params={{ ledger_name: ledgerName, from_date: range?.from, to_date: range?.to }} />
+        <ExportButtons basePath="/reports/ledger/export" filenameBase={`${ledgerName}_${monthKey}`} params={{ ledger_name: ledgerName, from_date: range?.from, to_date: range?.to, view: 'detailed' }} />
       </div>
 
       <nav className="breadcrumbs">

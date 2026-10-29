@@ -77,10 +77,6 @@ function TrialBalanceGroup() {
       </div>
 
       <Card>
-        <p className="table-hint">
-          Click a row to drill further - into a sub-group, or into a ledger&apos;s monthly summary.
-        </p>
-
         <DataTable
           columns={COLUMNS}
           rows={rows}
