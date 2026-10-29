@@ -95,7 +95,6 @@ function GroupSummary() {
     <>
       <PageHeader
         title={`Group Summary: ${group}`}
-        subtitle="Click a row to drill further - into a sub-group, or into a ledger's monthly summary"
       />
       <div className="export-bar">
         <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />

@@ -221,8 +221,6 @@ function BalanceSheet() {
 
     body = (
       <>
-        <p className="table-hint">Click a line to drill into its detail, the same way Tally does.</p>
-
         <div className="split-grid">
           <Card title="Liabilities">
             {table(liabilityRows)}

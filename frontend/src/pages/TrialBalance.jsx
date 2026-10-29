@@ -146,8 +146,6 @@ function TrialBalance() {
 
     body = (
       <Card>
-        <p className="table-hint">Click a line to drill into its detail, the same way Tally does.</p>
-
         <DataTable
           columns={COLUMNS}
           rows={report}

@@ -11,7 +11,7 @@ export const ALL_REPORTS = [
   { to: '/reports/receivables', label: 'Receivables', description: 'Bills receivable and ageing by party.' },
   { to: '/reports/payables', label: 'Payables', description: 'Bills payable and ageing by party.' },
   { to: '/reports/pending-invoices', label: 'Pending Invoices', description: 'Invoices awaiting payment or approval.' },
-  { to: '/reports/inventory', label: 'Stock Summary', description: 'Item-wise stock quantity and value.' },
+  { to: '/reports/inventory', label: 'Inventory Books', description: 'Stock summary and registers, as in Tally.' },
 ]
 
 export const REPORT_ROUTES = ALL_REPORTS.map((report) => report.to)

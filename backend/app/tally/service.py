@@ -1,6 +1,7 @@
 import re
 import logging
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timedelta
 
 from app.cache.config import cache_settings
 from app.cache.keys import build_cache_key
@@ -1263,6 +1264,82 @@ async def _attach_ledger_balances(result: dict, company_name: str | None) -> dic
 # item, which can take far longer than the default 30 seconds.
 STOCK_SUMMARY_TIMEOUT = 120.0
 
+_BOOKS_FROM_CACHE: dict = {}
+_BOOKS_FROM_TTL_SECONDS = 600
+
+
+async def _company_books_from(company_name: str | None) -> date | None:
+    """First day of the company's books (Tally's BOOKSFROM), or None when
+    it cannot be determined. Cached briefly: it practically never changes."""
+    key = (company_name or "").strip().casefold()
+    hit = _BOOKS_FROM_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _BOOKS_FROM_TTL_SECONDS:
+        return hit[1]
+
+    value = None
+    try:
+        companies = parse_companies(
+            await client.send_xml(build_company_request())
+        ).get("companies", [])
+        chosen = next(
+            (
+                c for c in companies
+                if key and (c.get("name") or "").strip().casefold() == key
+            ),
+            companies[0] if len(companies) == 1 else None,
+        )
+        if chosen and chosen.get("books_from"):
+            value = date.fromisoformat(str(chosen["books_from"])[:10])
+    except Exception:
+        _log.warning("Could not read the company's books-from date", exc_info=True)
+        return None
+
+    _BOOKS_FROM_CACHE[key] = (time.monotonic(), value)
+    return value
+
+
+async def _roll_opening_forward(
+    rows: list,
+    company_name: str | None,
+    from_date: date | None,
+) -> None:
+    """Make the Opening columns those of the period starting `from_date`.
+
+    The Stock Item collection is requested without a from-date (Tally
+    stops answering when one is sent), so Tally's OPENINGBALANCE is always
+    the opening of the books - e.g. 15 NOS - even when the report is for a
+    later financial year. For such a period the true opening is the
+    closing of the day before it starts, which Tally answers quickly with
+    only a to-date.
+    """
+    if not from_date:
+        return
+
+    books_from = await _company_books_from(company_name)
+    if not books_from or from_date <= books_from:
+        return
+
+    previous = parse_stock_summary(
+        await client.send_xml(
+            build_stock_summary_request(
+                company_name=company_name,
+                to_date=from_date - timedelta(days=1),
+            ),
+            timeout=STOCK_SUMMARY_TIMEOUT,
+        )
+    )
+    by_name = {
+        (r.get("name") or "").strip().casefold(): r
+        for r in previous.get("rows", [])
+    }
+
+    for row in rows:
+        before = by_name.get((row.get("name") or "").strip().casefold())
+        row["opening_quantity"] = (before or {}).get("closing_quantity") or 0.0
+        row["opening_rate"] = (before or {}).get("closing_rate") or 0.0
+        row["opening_value"] = (before or {}).get("closing_value") or 0.0
+
+
 async def fetch_stock_summary(
     company_name: str | None = None,
     to_date: date | None = None,
@@ -1277,7 +1354,18 @@ async def fetch_stock_summary(
         timeout=STOCK_SUMMARY_TIMEOUT,
     )
 
-    return parse_stock_summary(response)
+    result = parse_stock_summary(response)
+
+    try:
+        await _roll_opening_forward(
+            result.get("rows", []), company_name, from_date
+        )
+    except Exception:
+        # Never lose the report because the opening could not be rolled
+        # forward; fall back to Tally's own opening.
+        _log.warning("Stock summary opening roll-forward failed", exc_info=True)
+
+    return result
 
 
 async def fetch_chatbot_ledger_raw(
@@ -1734,6 +1822,32 @@ async def fetch_stock_item_monthly(
             )
             opening_qty = (master or {}).get("opening_quantity") or 0.0
             opening_val = (master or {}).get("opening_value") or 0.0
+
+            # For a financial year after the books began, the opening is
+            # the closing of the day before it starts, not the master's.
+            books_from = await _company_books_from(company_name)
+            if books_from and from_date and from_date > books_from:
+                before = await _load_item_master(
+                    stock_item_name,
+                    company_name,
+                    as_on=from_date - timedelta(days=1),
+                )
+                if before:
+                    opening_qty = before.get("closing_quantity") or 0.0
+                    opening_val = before.get("closing_value") or 0.0
+
+            # Tally leaves a month's closing quantity empty when nothing
+            # moved in it; carry the running balance instead of showing 0.
+            running = opening_qty
+            for month_row in native_rows:
+                expected = (
+                    running
+                    + (month_row.get("inward_quantity") or 0.0)
+                    - (month_row.get("outward_quantity") or 0.0)
+                )
+                if not month_row.get("closing_quantity") and abs(expected) > 1e-9:
+                    month_row["closing_quantity"] = expected
+                running = month_row.get("closing_quantity") or 0.0
             tally_closing = (
                 {
                     "quantity": master.get("closing_quantity"),

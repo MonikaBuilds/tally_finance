@@ -29,31 +29,6 @@ function formatAmount(value) {
   return formatCurrency(Number(value) || 0)
 }
 
-const COLUMNS = [
-  { key: 'date', label: 'Date' },
-  { key: 'particulars', label: 'Particulars' },
-  { key: 'voucher_type', label: 'Vch Type' },
-  { key: 'voucher_number', label: 'Vch No.' },
-  {
-    key: 'debit',
-    label: 'Debit',
-    align: 'right',
-    render: (row) => formatAmount(row.debit),
-  },
-  {
-    key: 'credit',
-    label: 'Credit',
-    align: 'right',
-    render: (row) => formatAmount(row.credit),
-  },
-  {
-    key: 'running_balance',
-    label: 'Balance',
-    align: 'right',
-    render: (row) => formatBalance(row.running_balance),
-  },
-]
-
 function Ledger() {
   const navigate = useNavigate()
 
@@ -90,7 +65,6 @@ function Ledger() {
   const [toDate, setToDate] = useState('')
   const [selectionError, setSelectionError] = useState(null)
   const [activeLedger, setActiveLedger] = useState(null)
-  const [view, setView] = useState('detailed')
 
   // Support arriving here via a drill-down link, e.g.
   // /reports/ledger?ledger=Office%20Rent%20Exp&view=monthly - the same
@@ -116,17 +90,12 @@ function Ledger() {
 
     const linkedFrom = searchParams.get('from_date') || ''
     const linkedTo = searchParams.get('to_date') || ''
-    const linkedView = searchParams.get('view')
 
     setLedgerName(match.name)
     setFromDate(linkedFrom)
     setToDate(linkedTo)
     setSelectionError(null)
     setActiveLedger({ name: match.name, from: linkedFrom || null, to: linkedTo || null })
-
-    if (linkedView === 'monthly') {
-      setView('monthly')
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, ledgers.length])
 
@@ -233,33 +202,8 @@ function Ledger() {
     : []
 
   /*
-   * Opening balance row
-   */
-  const openingRow = report
-    ? {
-        date: '',
-        particulars: 'Opening Balance',
-        voucher_type: '',
-        voucher_number: '',
-        debit:
-          Number(report.opening_balance) > 0
-            ? Number(report.opening_balance)
-            : 0,
-        credit:
-          Number(report.opening_balance) < 0
-            ? Math.abs(Number(report.opening_balance))
-            : 0,
-        running_balance: Number(report.opening_balance) || 0,
-      }
-    : null
-
-  /*
    * Detailed table rows
    */
-  const detailedRows = openingRow
-    ? [openingRow, ...entries]
-    : []
-
   const totalDebit = Number(
     report?.total_debit ??
       entries.reduce(
@@ -339,20 +283,6 @@ function Ledger() {
     })
 
     navigate(`/reports/ledger/month?${params.toString()}`)
-  }
-
-  function goToVoucher(row) {
-    if (!row.voucher_number || !activeLedger) return
-
-    const params = new URLSearchParams({
-      voucher_type: row.voucher_type || '',
-      voucher_number: row.voucher_number,
-      ledger_name: activeLedger.name,
-    })
-
-    if (row.date) params.set('date', row.date)
-
-    navigate(`/reports/voucher?${params.toString()}`)
   }
 
   return (
@@ -508,37 +438,7 @@ function Ledger() {
             </div>
           </div>
 
-          <div className="card-toolbar">
-            <div className="segmented" role="tablist" aria-label="Ledger view">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === 'detailed'}
-                className={`segmented-option${
-                  view === 'detailed'
-                    ? ' segmented-option--active'
-                    : ''
-                }`}
-                onClick={() => setView('detailed')}
-              >
-                Detailed
-              </button>
-
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === 'monthly'}
-                className={`segmented-option${
-                  view === 'monthly'
-                    ? ' segmented-option--active'
-                    : ''
-                }`}
-                onClick={() => setView('monthly')}
-              >
-                Monthly Summary
-              </button>
-            </div>
-
+          <div className="card-toolbar" style={{ justifyContent: 'flex-end' }}>
             <ExportButtons
               basePath="/reports/ledger/export"
               params={{
@@ -547,6 +447,7 @@ function Ledger() {
                   activeLedger.from || undefined,
                 to_date:
                   activeLedger.to || undefined,
+                view: 'monthly',
               }}
               filenameBase={`${activeLedger.name
                 .trim()
@@ -555,16 +456,8 @@ function Ledger() {
             />
           </div>
 
-          {view === 'detailed' ? (
             <DataTable
-              columns={COLUMNS}
-              rows={detailedRows}
-              onRowClick={goToVoucher}
-              isRowClickable={(row) => Boolean(row.voucher_number)}
-            />
-          ) : (
-            <DataTable
-              columns={monthlyColumns}
+            columns={monthlyColumns}
               rows={[
                 {
                   month: 'Opening Balance',
@@ -586,7 +479,6 @@ function Ledger() {
               onRowClick={goToMonth}
               isRowClickable={(row) => Boolean(row.key)}
             />
-          )}
 
           <div className="table-footer">
             <span>

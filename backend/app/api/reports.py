@@ -3746,6 +3746,7 @@ async def export_ledger_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
+    view: str = Query(default="monthly"),
     current_user: UserContext = Depends(get_current_user),
 ):
     _check_format(file_format)
@@ -3760,12 +3761,15 @@ async def export_ledger_report(
     return _export_response(
         file_format=file_format,
         company_name=company_name,
-        filename_base=_safe_name(ledger_name, "ledger"),
+        filename_base=_safe_name(
+            ledger_name, "ledger", "monthly" if view == "monthly" else "vouchers"
+        ),
         spec=specs.ledger_spec(
             resp["report"],
             ledger_name,
             company_name,
             _period_label(from_date=from_date, to_date=to_date),
+            view if view in ("monthly", "detailed", "both") else "monthly",
         ),
     )
 

@@ -53,45 +53,18 @@ function drillDownPathFor(name, dates) {
   return `/reports/group-summary${buildQuery({ group: stripPrefix(name), ...dates })}`
 }
 
-const PLAIN_CLICKABLE_STYLE = {
-  background: 'none',
-  border: 0,
-  padding: 0,
-  margin: 0,
-  font: 'inherit',
-  color: 'inherit',
-  textAlign: 'left',
-  textDecoration: 'none',
-  cursor: 'pointer',
-}
-
-function buildColumns(navigate, dates) {
+function buildColumns() {
   return [
     {
       key: 'name',
       label: 'Particulars',
       render: (row) => {
-        const path = drillDownPathFor(row.name, dates)
-
         // Show the account name without Tally's "Add:" / "Less:"
         // operator words (drill-down already queries the bare name).
         const displayName = stripPrefix(row.name)
         const label = row.is_group ? <strong>{displayName}</strong> : displayName
 
-        if (!path) return label
-
-        // Still clickable (drills into the line), but drawn as plain
-        // text rather than a blue underlined link.
-        return (
-          <button
-            type="button"
-            style={PLAIN_CLICKABLE_STYLE}
-            onClick={() => navigate(path)}
-            title="View details"
-          >
-            {label}
-          </button>
-        )
+        return label
       },
     },
     {
@@ -230,8 +203,8 @@ function ProfitLoss() {
 
   const subtitle =
     fromDate && toDate
-      ? `Period ${formatDate(fromDate)} to ${formatDate(toDate)} · click any line to drill into its detail, the same way Tally does`
-      : 'Click any line to drill into its detail, the same way Tally does'
+      ? `Period ${formatDate(fromDate)} to ${formatDate(toDate)}`
+      : undefined
 
   const header = (
     <PageHeader
@@ -270,7 +243,14 @@ function ProfitLoss() {
   const leftTotal = response.report?.total_left ?? sumGroupAmounts(leftRows)
   const rightTotal = response.report?.total_right ?? sumGroupAmounts(rightRows)
 
-  const columns = buildColumns(navigate, dates)
+  const columns = buildColumns()
+
+  // The whole row opens the line, not just its text (same as Ledger and Stock).
+  const openRow = (row) => {
+    const path = drillDownPathFor(row.name, dates)
+    if (path) navigate(path)
+  }
+  const canOpenRow = (row) => Boolean(drillDownPathFor(row.name, dates))
 
   return (
     <>
@@ -280,7 +260,12 @@ function ProfitLoss() {
 
       <div className="split-grid">
         <Card title="Expenditure">
-          <DataTable columns={columns} rows={leftRows} />
+          <DataTable
+            columns={columns}
+            rows={leftRows}
+            onRowClick={openRow}
+            isRowClickable={canOpenRow}
+          />
           <div className="table-footer">
             <span>Total</span>
             <span>{formatCurrency(leftTotal)}</span>
@@ -288,7 +273,12 @@ function ProfitLoss() {
         </Card>
 
         <Card title="Income">
-          <DataTable columns={columns} rows={rightRows} />
+          <DataTable
+            columns={columns}
+            rows={rightRows}
+            onRowClick={openRow}
+            isRowClickable={canOpenRow}
+          />
           <div className="table-footer">
             <span>Total</span>
             <span>{formatCurrency(rightTotal)}</span>

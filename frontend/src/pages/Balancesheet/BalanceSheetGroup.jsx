@@ -80,10 +80,6 @@ function BalanceSheetGroup() {
       </div>
 
       <Card>
-        <p className="table-hint">
-          Click a row to drill further - into a sub-group, a ledger&apos;s monthly summary, or stock.
-        </p>
-
         <DataTable
           columns={COLUMNS}
           rows={rows}
