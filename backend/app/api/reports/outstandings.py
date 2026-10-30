@@ -39,6 +39,7 @@ from app.tally.service import (
 
 from app.financial.service import (
     build_outstanding_summary,
+    ensure_bill_vouchers,
     build_receivables_from_tally_report,
     build_payables_from_tally_report,
     build_pending_invoices_from_reports,
@@ -166,7 +167,7 @@ async def get_receivables_report(
             "source": cache_res.source,
             "is_stale": cache_res.is_stale,
             "cached_at": cache_res.cached_at,
-            "data": cache_res.data,
+            "data": ensure_bill_vouchers(cache_res.data),
         }
 
     except HTTPException:
@@ -287,7 +288,7 @@ async def get_payables_report(
             "source": cache_res.source,
             "is_stale": cache_res.is_stale,
             "cached_at": cache_res.cached_at,
-            "data": cache_res.data,
+            "data": ensure_bill_vouchers(cache_res.data),
         }
 
     except HTTPException:

@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router'
+import { Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import ExportButtons from '../components/common/ExportButtons'
@@ -7,6 +7,7 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import { formatCurrency } from '../utils/format'
+import { ledgerMonthlyPath } from './trialBalance/tbRouting'
 
 // The page Tally shows when you double-click a group line on the P&L,
 // Balance Sheet, or another Group Summary screen - e.g. clicking
@@ -132,6 +133,16 @@ function GroupSummary() {
   if (error) return <>{header}<ErrorMessage message={error} /></>
   if (!response?.success) {
     return <>{header}<ErrorMessage message={response?.error || response?.message} /></>
+  }
+
+  // The name is a ledger, not a group: open its Ledger Monthly Summary.
+  if (response.resolved_as === 'ledger') {
+    return (
+      <Navigate
+        to={ledgerMonthlyPath(group, { from_date: fromDate, to_date: toDate })}
+        replace
+      />
+    )
   }
 
   const rows = response.report || []

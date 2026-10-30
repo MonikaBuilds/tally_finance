@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router'
+import { Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../../hooks/useFetch'
 import PageHeader from '../../components/layout/PageHeader'
 import ExportButtons from '../../components/common/ExportButtons'
@@ -7,7 +7,7 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency } from '../../utils/format'
-import { buildQuery } from '../trialBalance/tbRouting'
+import { buildQuery, ledgerMonthlyPath } from '../trialBalance/tbRouting'
 import { bsPath, balanceSheetGroupRowPath } from './bsRouting'
 
 const COLUMNS = [
@@ -100,6 +100,13 @@ function BalanceSheetGroup() {
   if (error) return <>{header}<ErrorMessage message={error} /></>
   if (!response?.success) {
     return <>{header}<ErrorMessage message={response?.error || response?.message} /></>
+  }
+
+  // The line clicked is a ledger (e.g. a loan account), not a group:
+  // Tally opens its Ledger Monthly Summary, so follow it there rather
+  // than showing an empty Group Summary.
+  if (response.resolved_as === 'ledger') {
+    return <Navigate to={ledgerMonthlyPath(group, dates)} replace />
   }
 
   const rows = response.report || []

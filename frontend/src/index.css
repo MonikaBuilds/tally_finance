@@ -2484,3 +2484,46 @@ textarea {
 .bill-row--focused td {
   background: var(--accent-soft);
 }
+
+
+/* ==========================================================
+   Bills Receivable / Payable drill-down (BillsOutstandingTable)
+   ========================================================== */
+
+.bills-chevron {
+  display: inline-flex;
+  width: 18px;
+  margin-left: -4px;
+  vertical-align: middle;
+  color: var(--text-subtle);
+}
+
+.bills-voucher-row td {
+  background: var(--surface-2);
+  color: var(--text);
+  font-style: italic;
+}
+
+.bills-voucher-row[tabindex] {
+  cursor: pointer;
+}
+
+.bills-voucher-row[tabindex]:hover td {
+  background: var(--accent-soft);
+}
+
+.bills-voucher-row:focus-visible {
+  box-shadow: inset var(--focus-ring);
+}
+
+.bills-item-row td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.bills-item-name {
+  margin-left: 8px;
+}

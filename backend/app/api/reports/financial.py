@@ -40,6 +40,7 @@ from app.tally.service import (
     fetch_balance_sheet as _real_fetch_balance_sheet,
     fetch_balance_sheet_report as _real_fetch_balance_sheet_report,
     fetch_stock_movement as _real_fetch_stock_movement,
+    fetch_ledger_list as _real_fetch_ledger_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,9 @@ async def fetch_balance_sheet_report(*args, **kwargs):
 
 async def fetch_stock_movement(*args, **kwargs):
     return await _get_fetcher("fetch_stock_movement", _real_fetch_stock_movement)(*args, **kwargs)
+
+async def fetch_ledger_list(*args, **kwargs):
+    return await _get_fetcher("fetch_ledger_list", _real_fetch_ledger_list)(*args, **kwargs)
 
 # ============================================================
 # PROFIT & LOSS
@@ -228,35 +232,59 @@ async def get_group_summary_report(
             company_name=company_name,
         )
 
-        try:
-            ledgers = await fetch_ledger_list(company_name=company_name)
-            ledger_names = {
-                (l.get("name") or "").strip().casefold()
-                for l in ledgers
-                if l.get("name")
-            }
-        except Exception:
-            # If the ledger list call fails, fall back to treating
-            # every row as a group rather than breaking the page -
-            # the row is still clickable, just drills one level
-            # further into Group Summary instead of the ledger.
-            ledger_names = set()
+        # Tally's Group Summary XML does not say whether a row is a
+        # sub-group or a ledger, so each row name is checked against
+        # the company's ledger list (the same list, and the same cache
+        # entry, as /reports/ledgers).
+        #
+        # If that list cannot be read we must NOT carry on: every row
+        # would be mislabelled as a group, and that wrong answer would
+        # then be cached and served. Failing here (-> 502, nothing
+        # cached) is the correct behaviour.
+        ledger_cache = await _cached_report(
+            report_name="ledger_list",
+            company_name=company_name,
+            current_user=current_user,
+            params={},
+            fetcher=lambda: fetch_ledger_list(company_name=company_name),
+            ttl_name="ledger_list",
+        )
+
+        ledger_names = {
+            (l.get("name") or "").strip().casefold()
+            for l in (ledger_cache.data or [])
+            if l.get("name")
+        }
+
+        raw_rows = report.get("rows", [])
 
         rows = []
-        for row in report.get("rows", []):
+        for row in raw_rows:
             is_ledger = (row.get("name") or "").strip().casefold() in ledger_names
             rows.append({**row, "is_ledger": is_ledger, "is_group": not is_ledger})
+
+        # The requested name may itself be a ledger rather than a group
+        # (e.g. a Balance Sheet / Trial Balance line such as a loan
+        # ledger). Tally has no Group Summary for a ledger - it opens
+        # the Ledger Monthly Summary - so say so, and the frontend
+        # follows it to that page instead of showing "No records".
+        resolved_as = None
+        if not raw_rows and group.strip().casefold() in ledger_names:
+            resolved_as = "ledger"
 
         return {
             "group_name": report.get("group_name", group),
             "report": rows,
+            "resolved_as": resolved_as,
             "total_debit": report.get("total_debit", 0),
             "total_credit": report.get("total_credit", 0),
         }
 
     try:
         cache_res = await _cached_report(
-            report_name="group_summary",
+            # v2: rows are now classified from the real ledger list and
+            # the response carries resolved_as - don't serve v1 entries.
+            report_name="group_summary_v2",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -277,6 +305,7 @@ async def get_group_summary_report(
             "cached_at": cache_res.cached_at,
             "group_name": data.get("group_name", group),
             "report": data.get("report", []),
+            "resolved_as": data.get("resolved_as"),
             "total_debit": data.get("total_debit", 0),
             "total_credit": data.get("total_credit", 0),
         }

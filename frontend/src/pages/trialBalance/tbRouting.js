@@ -53,6 +53,17 @@ export function isPurchaseBillsToCome(name) {
   return /^purchase bills to come$/i.test((name || '').trim())
 }
 
+// The app's one Ledger report, opened on its Monthly Summary - what
+// Tally shows when you open a ledger from a Group Summary, Trial
+// Balance or Balance Sheet line. Used both for ledger rows and when the
+// server reports that a "group" name is really a ledger.
+export function ledgerMonthlyPath(name, { from_date, to_date } = {}) {
+  const params = new URLSearchParams({ ledger: name, view: 'monthly' })
+  if (from_date) params.set('from_date', from_date)
+  if (to_date) params.set('to_date', to_date)
+  return `/reports/ledger?${params.toString()}`
+}
+
 // Where a row of a Group Summary (or of the Trial Balance itself,
 // which only ever lists groups) should lead. `row` comes straight from
 // the Tally-backed API: { name, is_ledger, is_group, ... }.
@@ -76,10 +87,7 @@ export function drillPathForRow(row, { from_date, to_date }) {
     // Balance-only ledger view - that duplicate was reading a
     // `monthly_summary` field the /reports/ledger API never returns,
     // which is why it showed incomplete data.
-    const params = new URLSearchParams({ ledger: name, view: 'monthly' })
-    if (from_date) params.set('from_date', from_date)
-    if (to_date) params.set('to_date', to_date)
-    return `/reports/ledger?${params.toString()}`
+    return ledgerMonthlyPath(name, dates)
   }
 
   return tbPath('/group', { group: name, ...dates })
