@@ -153,6 +153,17 @@
   color: var(--text-h);
 }
 
+.login-caps-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  padding: 2px 0 0 2px;
+}
+
 .login-error {
   display: flex;
   align-items: flex-start;

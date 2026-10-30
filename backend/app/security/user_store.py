@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# Precomputed dummy hash for constant-time comparison when username does not exist.
+# Prevents side-channel timing attacks that allow username enumeration.
+_DUMMY_PASSWORD_HASH = hash_password("dummy-defense-timing-salt")
+
 
 @dataclass(frozen=True)
 class StoredUser:
@@ -435,6 +439,9 @@ def get_user_organization_id(
     if not clean_user_id:
         return None
 
+    if clean_user_id == "development-user":
+        return "default"
+
     connection = get_connection()
     cursor = connection.cursor(dictionary=True)
 
@@ -455,9 +462,9 @@ def get_user_organization_id(
         connection.close()
 
     if row is None:
-        return None
+        return "default"
 
-    return row["organization_id"]
+    return row["organization_id"] or "default"
 
 def get_all_users(
     organization_id: str,
@@ -656,9 +663,14 @@ def authenticate_user(
     user = get_user_by_username(username)
 
     if user is None:
+        # Constant-time mitigation: calculate dummy PBKDF2 hash
+        # so response time does not reveal whether username exists.
+        verify_password(password, _DUMMY_PASSWORD_HASH)
         return None
 
     if not user.is_active:
+        verify_password(password, user.password_hash)
+        logger.warning("Authentication failed: User '%s' is inactive.", username)
         return None
 
     if not verify_password(

@@ -20,8 +20,21 @@ function Login({ onLogin }) {
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
     const [showPassword, setShowPassword] = useState(false)
+    const [capsLockActive, setCapsLockActive] = useState(false)
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
+
+    function handleKeyDown(event) {
+        if (event.getModifierState) {
+            setCapsLockActive(event.getModifierState('CapsLock'))
+        }
+    }
+
+    function handleKeyUp(event) {
+        if (event.getModifierState) {
+            setCapsLockActive(event.getModifierState('CapsLock'))
+        }
+    }
 
     async function handleSubmit(event) {
         event.preventDefault()
@@ -37,12 +50,18 @@ function Login({ onLogin }) {
         setLoading(true)
 
         try {
+            // Authenticate user with backend in a single roundtrip.
+            // Backend returns user_id, username, companies, roles, and permissions.
             const response = await apiPost('/auth/login', {
                 username: cleanUsername,
                 password,
             })
 
-            const currentUser = await apiGet('/auth/me')
+            // Fallback to /auth/me only if roles/permissions were missing in response
+            let currentUser = response
+            if (!currentUser?.roles || !currentUser?.permissions) {
+                currentUser = await apiGet('/auth/me')
+            }
 
             clearBrowserCache()
 
@@ -65,12 +84,20 @@ function Login({ onLogin }) {
                 )
             }
 
-            onLogin?.()
+            onLogin?.(currentUser)
         } catch (err) {
-            setError(
-                err?.message ||
-                'Unable to sign in. Please verify your credentials.'
-            )
+            let message = err?.message || 'Unable to sign in. Please verify your credentials.'
+
+            // Surface human-friendly messaging for network disconnects or offline server
+            if (
+                (typeof navigator !== 'undefined' && !navigator.onLine) ||
+                message.toLowerCase().includes('failed to fetch') ||
+                message.toLowerCase().includes('networkerror')
+            ) {
+                message = 'Unable to connect to the server. Please verify the backend service is running and check your network connection.'
+            }
+
+            setError(message)
         } finally {
             setLoading(false)
         }
@@ -135,8 +162,13 @@ function Login({ onLogin }) {
                                     }}
                                     placeholder="Enter your username"
                                     autoComplete="username"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck={false}
                                     disabled={loading}
                                     autoFocus
+                                    aria-invalid={Boolean(error)}
+                                    aria-describedby={error ? 'login-error-message' : undefined}
                                 />
                             </div>
                         </div>
@@ -164,9 +196,14 @@ function Login({ onLogin }) {
                                             setError('')
                                         }
                                     }}
+                                    onKeyDown={handleKeyDown}
+                                    onKeyUp={handleKeyUp}
                                     placeholder="Enter your password"
                                     autoComplete="current-password"
+                                    spellCheck={false}
                                     disabled={loading}
+                                    aria-invalid={Boolean(error)}
+                                    aria-describedby={error ? 'login-error-message' : undefined}
                                 />
 
                                 <button
@@ -194,12 +231,20 @@ function Login({ onLogin }) {
                                     )}
                                 </button>
                             </div>
+
+                            {capsLockActive && (
+                                <div className="login-caps-warning" role="status">
+                                    Caps Lock is on
+                                </div>
+                            )}
                         </div>
 
                         {error && (
                             <div
+                                id="login-error-message"
                                 className="login-error"
                                 role="alert"
+                                aria-live="polite"
                             >
                                 <AlertCircle size={16} />
                                 <span>{error}</span>

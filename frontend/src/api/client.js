@@ -210,6 +210,17 @@ async function refreshAuthentication() {
           const error = new Error(message);
           error.status = response.status;
 
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem("chat_user");
+            sessionStorage.removeItem("selected_company");
+            clearBrowserCache();
+            window.dispatchEvent(
+              new CustomEvent("tfi:session-expired", {
+                detail: { message },
+              })
+            );
+          }
+
           throw error;
         }
 

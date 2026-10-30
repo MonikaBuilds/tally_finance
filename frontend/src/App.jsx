@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
+import { BarChart3, Loader2 } from 'lucide-react'
 
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
@@ -111,7 +112,31 @@ function App() {
   }, [])
 
 
-  function handleLogin() {
+  // Listen for session expiration events dispatched when token refresh fails
+  useEffect(() => {
+    function handleSessionExpired() {
+      sessionStorage.removeItem('chat_user')
+      sessionStorage.removeItem('selected_company')
+      sessionStorage.removeItem('tfi.dashboard.date_filter')
+      clearBrowserCache()
+      setCurrentUser(null)
+      setIsAuthenticated(false)
+    }
+
+    window.addEventListener('tfi:session-expired', handleSessionExpired)
+    return () => {
+      window.removeEventListener('tfi:session-expired', handleSessionExpired)
+    }
+  }, [])
+
+
+  function handleLogin(user) {
+    if (user) {
+      setCurrentUser(user)
+      setIsAuthenticated(true)
+      return
+    }
+
     try {
       const storedUser = sessionStorage.getItem('chat_user')
 
@@ -155,7 +180,18 @@ function App() {
 
   // Wait until /auth/me has checked the HttpOnly cookie.
   if (authLoading) {
-    return null
+    return (
+      <div className="login-page">
+        <main className="login-main">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+            <div className="login-logo" style={{ width: '48px', height: '48px' }}>
+              <BarChart3 size={24} />
+            </div>
+            <Loader2 size={24} className="spin" style={{ color: 'var(--accent)', marginTop: '8px' }} />
+          </div>
+        </main>
+      </div>
+    )
   }
 
 
