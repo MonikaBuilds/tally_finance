@@ -1,5 +1,4 @@
-import { useNavigate, useSearchParams, Link } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import ExportButtons from '../components/common/ExportButtons'
@@ -53,13 +52,31 @@ function buildColumns(navigate, fromDate, toDate) {
       key: 'debit',
       label: 'Debit',
       align: 'right',
-      render: (row) => (row.debit ? formatCurrency(row.debit) : ''),
+      render: (row) => (row.debit ? formatCurrency(row.debit) : '-'),
     },
     {
       key: 'credit',
       label: 'Credit',
       align: 'right',
-      render: (row) => (row.credit ? formatCurrency(row.credit) : ''),
+      render: (row) => (row.credit ? formatCurrency(row.credit) : '-'),
+    },
+    {
+      key: 'closing',
+      label: 'Closing Balance',
+      align: 'right',
+      render: (row) => {
+        const debit = Number(row.debit) || 0
+        const credit = Number(row.credit) || 0
+        const diff = debit - credit
+        if (Math.abs(diff) < 0.001) {
+          if (debit > 0) return `${formatCurrency(debit)} Dr`
+          if (credit > 0) return `${formatCurrency(credit)} Cr`
+          return '-'
+        }
+        return diff > 0
+          ? `${formatCurrency(diff)} Dr`
+          : `${formatCurrency(Math.abs(diff))} Cr`
+      },
     },
   ]
 }
@@ -80,40 +97,55 @@ function GroupSummary() {
     group ? `/reports/group-summary?${query.toString()}` : null
   )
 
+  const subtitle = fromDate && toDate ? `${fromDate} to ${toDate}` : undefined
+  const fallbackUrl = fromDate && toDate
+    ? `/reports/balance-sheet?from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`
+    : '/reports/balance-sheet'
+
   if (!group) {
-    return <ErrorMessage message="No group specified. Go back and click a line to drill in." />
+    return (
+      <>
+        <PageHeader title="Group Summary" backFallback="/reports/balance-sheet" />
+        <ErrorMessage message="No group specified. Go back and click a line to drill in." />
+      </>
+    )
   }
 
-  if (loading) return <Loader />
-  if (error) return <ErrorMessage message={error} />
-  if (!response?.success) return <ErrorMessage message={response?.error || response?.message} />
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/group-summary/export"
+      filenameBase={`group_${group}`}
+      params={{ group, from_date: fromDate, to_date: toDate }}
+    />
+  )
+
+  const header = (
+    <PageHeader
+      title={`Group Summary: ${group}`}
+      subtitle={subtitle}
+      backFallback={fallbackUrl}
+      actions={exportActions}
+    />
+  )
+
+  if (loading) return <>{header}<Loader /></>
+  if (error) return <>{header}<ErrorMessage message={error} /></>
+  if (!response?.success) {
+    return <>{header}<ErrorMessage message={response?.error || response?.message} /></>
+  }
 
   const rows = response.report || []
   const columns = buildColumns(navigate, fromDate, toDate)
 
   return (
     <>
-      <PageHeader
-        title={`Group Summary: ${group}`}
-      />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />
-      </div>
-
-      <nav className="breadcrumbs">
-        <Link to="/reports/profit-loss">
-          <ArrowLeft size={16} />
-          Back to Profit &amp; Loss
-        </Link>
-      </nav>
+      {header}
 
       <Card>
         <DataTable columns={columns} rows={rows} />
         <div className="table-footer">
-          <span>Total</span>
-          <span>
-            {formatCurrency(response.total_debit || 0)} / {formatCurrency(response.total_credit || 0)}
-          </span>
+          <span>Total Debit: {formatCurrency(response.total_debit || 0)}</span>
+          <span>Total Credit: {formatCurrency(response.total_credit || 0)}</span>
         </div>
       </Card>
     </>

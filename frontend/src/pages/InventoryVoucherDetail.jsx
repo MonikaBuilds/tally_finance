@@ -284,15 +284,11 @@ function InventoryVoucherDetail() {
             : 'Inventory Voucher Alteration (Secondary)'
         }
         subtitle={voucher ? `${voucher.voucher_type} No. ${voucher.voucher_number}` : 'Live data from Tally'}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons basePath="/reports/inventory-voucher/export" filenameBase={`${voucherType}_${voucherNumber}`} params={query} />
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/inventory-voucher/export" filenameBase={`${voucherType}_${voucherNumber}`} params={query} />
-      </div>
 
       <Card>
         {!voucherType || !voucherNumber ? (

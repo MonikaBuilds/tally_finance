@@ -30,7 +30,7 @@ function toQuery(params) {
   return query ? `?${query}` : ''
 }
 
-function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase, footer, onRowClick }) {
+function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase, footer, onRowClick, showExport = true }) {
   const { data: response, loading, error } = useFetch(path)
 
   if (loading) return <Loader />
@@ -43,13 +43,15 @@ function ReportBody({ path, columns, exportBasePath, exportParams, filenameBase,
 
   return (
     <>
-      <div className="card-toolbar">
-        <ExportButtons
-          basePath={exportBasePath}
-          params={exportParams}
-          filenameBase={filenameBase}
-        />
-      </div>
+      {showExport && exportBasePath && (
+        <div className="card-toolbar card-toolbar--right">
+          <ExportButtons
+            basePath={exportBasePath}
+            params={exportParams}
+            filenameBase={filenameBase}
+          />
+        </div>
+      )}
 
       <DataTable columns={columns} rows={report} onRowClick={onRowClick} />
 
@@ -106,25 +108,33 @@ function RegisterTab({ registerKey }) {
 
   return (
     <>
-      <div className="ledger-filters filter-bar">
-        <div className="form-field form-field--date">
-          <label htmlFor={`${registerKey}-from`}>From Date</label>
-          <input
-            id={`${registerKey}-from`}
-            type="date"
-            value={fromDate}
-            onChange={(event) => setFromDate(event.target.value)}
-          />
+      <div className="tab-header-toolbar">
+        <div className="ledger-filters filter-bar">
+          <div className="form-field form-field--date">
+            <label htmlFor={`${registerKey}-from`}>From Date</label>
+            <input
+              id={`${registerKey}-from`}
+              type="date"
+              value={fromDate}
+              onChange={(event) => setFromDate(event.target.value)}
+            />
+          </div>
+          <div className="form-field form-field--date">
+            <label htmlFor={`${registerKey}-to`}>To Date</label>
+            <input
+              id={`${registerKey}-to`}
+              type="date"
+              value={toDate}
+              onChange={(event) => setToDate(event.target.value)}
+            />
+          </div>
         </div>
-        <div className="form-field form-field--date">
-          <label htmlFor={`${registerKey}-to`}>To Date</label>
-          <input
-            id={`${registerKey}-to`}
-            type="date"
-            value={toDate}
-            onChange={(event) => setToDate(event.target.value)}
-          />
-        </div>
+
+        <ExportButtons
+          basePath={`/reports/inventory-register/${registerKey}/export`}
+          params={params}
+          filenameBase={registerKey.replace(/-/g, '_')}
+        />
       </div>
 
       {loading && <Loader />}
@@ -136,14 +146,6 @@ function RegisterTab({ registerKey }) {
 
       {!loading && !error && response?.success && (
         <>
-          <div className="card-toolbar">
-            <ExportButtons
-              basePath={`/reports/inventory-register/${registerKey}/export`}
-              params={params}
-              filenameBase={registerKey.replace(/-/g, '_')}
-            />
-          </div>
-
           <p className="table-hint">
             {response.from} to {response.to}. Click a month to list its vouchers.
           </p>
@@ -226,18 +228,26 @@ function StockSummaryTab() {
 
   return (
     <>
-      <DateFilter
-        label="As on Date"
-        value={toDate}
-        onChange={(value) => {
-          setTouched(true)
-          setToDate(value)
-        }}
-      />
+      <div className="tab-header-toolbar">
+        <DateFilter
+          label="As on Date"
+          value={toDate}
+          onChange={(value) => {
+            setTouched(true)
+            setToDate(value)
+          }}
+        />
+        <ExportButtons
+          basePath="/reports/stock-summary/export"
+          params={params}
+          filenameBase="stock_summary"
+        />
+      </div>
       <p className="table-hint">Click a stock item to view its Stock Monthly Summary.</p>
       <ReportBody
         path={`/reports/stock-summary${toQuery(params)}`}
         columns={STOCK_SUMMARY_COLUMNS}
+        showExport={false}
         exportBasePath="/reports/stock-summary/export"
         exportParams={params}
         filenameBase="stock_summary"

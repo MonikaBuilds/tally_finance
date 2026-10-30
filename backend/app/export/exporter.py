@@ -92,11 +92,15 @@ def _to_number(value):
     if _is_number(value):
         return float(value)
     if isinstance(value, str):
-        text = value.strip().replace(",", "")
-        if not text:
+        cleaned = value.strip().replace(",", "").replace("₹", "").replace("Rs.", "").strip()
+        if not cleaned:
             return None
+        if cleaned.startswith("(") and cleaned.endswith(")"):
+            cleaned = "-" + cleaned[1:-1].strip()
+        elif cleaned.startswith("(-)"):
+            cleaned = "-" + cleaned[3:].strip()
         try:
-            return float(text)
+            return float(cleaned)
         except ValueError:
             return None
     return None
@@ -139,6 +143,10 @@ def fmt_qty(value, blank_zero: bool = False) -> str:
 
 
 def fmt_balance(value) -> str:
+    if isinstance(value, str):
+        v = value.strip()
+        if "Dr" in v or "Cr" in v or v == "-":
+            return v
     number = _to_number(value)
     if number is None:
         return "" if value is None else str(value)
@@ -258,13 +266,13 @@ _HAIR_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _FONT = "Arial"
 
 _NUMBER_FORMATS = {
-    "amount": '#,##0.00;"(-)"#,##0.00;0.00',
-    "amount_blank": '#,##0.00;"(-)"#,##0.00;',
-    "qty": '#,##0.00#;"(-)"#,##0.00#;0',
-    "qty_blank": '#,##0.00#;"(-)"#,##0.00#;',
-    "int": "#,##0",
-    "int_blank": "#,##0;-#,##0;",
-    "balance": '#,##0.00" Dr";#,##0.00" Cr";0.00',
+    "amount": r'[>=10000000]##\,##\,##\,##0.00;[>=100000]##\,##\,##0.00;##,##0.00',
+    "amount_blank": r'[>=10000000]##\,##\,##\,##0.00;[>=100000]##\,##\,##0.00;##,##0.00;',
+    "qty": r'[>=10000000]##\,##\,##\,##0.00#;[>=100000]##\,##\,##0.00#;##,##0.00#',
+    "qty_blank": r'[>=10000000]##\,##\,##\,##0.00#;[>=100000]##\,##\,##0.00#;##,##0.00#;',
+    "int": r'[>=10000000]##\,##\,##\,##0;[>=100000]##\,##\,##0;##,##0',
+    "int_blank": r'[>=10000000]##\,##\,##\,##0;[>=100000]##\,##\,##0;##,##0;',
+    "balance": r'##,##0.00" Dr";##,##0.00" Cr";0.00',
     "percent": '0.00"%"',
     "date": "d-mmm-yyyy",
 }
@@ -309,8 +317,8 @@ def _estimate_width(column: dict, rows: list) -> float:
         text = format_cell(column, row.get(column["key"]))
         if text:
             longest = max(longest, max(len(part) for part in text.split("\n")))
-    minimum = 14 if _is_numeric_col(column) else 10
-    return float(min(max(minimum, longest + 3), 52))
+    minimum = 16 if _is_numeric_col(column) else 12
+    return float(min(max(minimum, longest + 4), 60))
 
 
 def build_report_excel(spec: dict) -> bytes:
@@ -347,7 +355,7 @@ def build_report_excel(spec: dict) -> bytes:
 def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
     sheet = workbook.create_sheet(info["name"])
     sections = info["sections"]
-    sheet.sheet_view.showGridLines = False
+    sheet.sheet_view.showGridLines = True
     sheet.sheet_properties.tabColor = ACCENT
     sheet.sheet_properties.outlinePr.summaryBelow = False
 
@@ -425,6 +433,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
         header_row = row
         if first_header_row is None:
             first_header_row = header_row
+            sheet.freeze_panes = f"A{header_row + 1}"
         for index, column in enumerate(columns, start=1):
             cell = sheet.cell(row=row, column=index, value=column["label"])
             cell.font = Font(name=_FONT, size=10, bold=True, color="FFFFFF")
@@ -606,9 +615,13 @@ def _font_family() -> tuple[str, bool]:
 
 
 def _safe_text(text: str, unicode_ok: bool) -> str:
+    if not text:
+        return ""
+    text_str = str(text)
     if unicode_ok:
-        return text
-    return text.encode("cp1252", "replace").decode("cp1252")
+        return text_str
+    text_str = text_str.replace("₹", "Rs. ")
+    return text_str.encode("cp1252", "replace").decode("cp1252")
 
 
 def _xml(text: str) -> str:
@@ -687,18 +700,20 @@ def _make_canvas_class(company: str, title: str, period: str | None, unicode_ok:
 
 def _col_weights(columns: list, rows: list, size: float) -> list:
     weights = []
-    for column in columns:
+    num_cols = len(columns)
+    for index, column in enumerate(columns):
         longest = len(str(column.get("label", "")))
         for row in rows[:400]:
             text = format_cell(column, row.get(column["key"]))
             if text:
                 longest = max(longest, len(text))
         if _is_numeric_col(column):
-            weights.append(float(min(max(longest, 11), 20)))
+            weights.append(float(min(max(longest, 12), 24)))
         elif column.get("type") == "date":
-            weights.append(float(max(longest, 10)))
+            weights.append(float(max(longest, 11)))
         else:
-            weights.append(float(min(max(longest, 7), 42)))
+            min_w = 22 if (num_cols <= 4 and index == 0) else 8
+            weights.append(float(min(max(longest, min_w), 50)))
     return weights
 
 
@@ -892,17 +907,19 @@ def build_report_pdf(spec: dict) -> bytes:
             table_rows.append(build_line(data, force_style="total"))
             index = len(table_rows) - 1
             commands.append(("BACKGROUND", (0, index), (-1, index), colors.HexColor("#" + TOTAL_FILL)))
-            commands.append(("LINEABOVE", (0, index), (-1, index), 0.9, colors.HexColor("#" + NAVY)))
+            commands.append(("LINEABOVE", (0, index), (-1, index), 1.0, colors.HexColor("#" + NAVY)))
+            commands.append(("LINEBELOW", (0, index), (-1, index), 1.5, colors.HexColor("#" + NAVY)))
 
         two_sided = [c.get("type", "text") for c in columns] == ["text", "amount", "text", "amount"]
         if two_sided:
             commands.append(("LINEAFTER", (1, 0), (1, -1), 0.9, colors.HexColor("#" + NAVY)))
         weights = _col_weights(columns, _all_rows(section), size)
         total_weight = sum(weights) or 1
-        # Narrow reports (2-4 columns) should not stretch across the page.
-        natural = total_weight * size * 0.52 + 8 * len(columns)
-        floor = 0.8 if two_sided else 0.55
-        target = min(avail, max(natural * 1.35, avail * floor))
+        if two_sided or len(columns) <= 4:
+            target = avail
+        else:
+            natural = total_weight * size * 0.52 + 8 * len(columns)
+            target = min(avail, max(natural * 1.35, avail * 0.68))
         col_widths = [target * w / total_weight for w in weights]
 
         table = Table(table_rows, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
@@ -929,7 +946,7 @@ def _infer_type(column: dict, rows: list) -> str:
         return column["type"]
     key = column["key"]
     values = [r.get(key) for r in rows if r.get(key) not in (None, "")]
-    if values and all(_is_number(v) for v in values):
+    if values and all(_to_number(v) is not None for v in values):
         lowered = key.lower()
         if "quantity" in lowered or lowered.endswith("_qty"):
             return "qty"

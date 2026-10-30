@@ -187,15 +187,41 @@ def trial_balance_spec(rows, company, period):
 
 
 def group_summary_spec(data, group, company, period):
-    rows = [{**r} for r in data.get("report", [])]
-    columns = [col("name", "Particulars"), col("debit", "Debit", "amount", True),
-               col("credit", "Credit", "amount", True)]
+    rows = []
+    for r in data.get("report", []):
+        row = {**r}
+        debit = _num(row.get("debit"))
+        credit = _num(row.get("credit"))
+        diff = debit - credit
+        if abs(diff) >= 0.005:
+            row["closing_balance"] = f"{abs(diff):,.2f} {'Dr' if diff > 0 else 'Cr'}"
+        else:
+            if debit > 0:
+                row["closing_balance"] = f"{debit:,.2f} Dr"
+            elif credit > 0:
+                row["closing_balance"] = f"{credit:,.2f} Cr"
+            else:
+                row["closing_balance"] = "-"
+        rows.append(row)
+
+    total_debit = data.get("total_debit", 0)
+    total_credit = data.get("total_credit", 0)
+    total_diff = _num(total_debit) - _num(total_credit)
+    total_closing = f"{abs(total_diff):,.2f} {'Dr' if total_diff > 0 else 'Cr'}" if abs(total_diff) >= 0.005 else "-"
+
+    columns = [
+        col("name", "Particulars"),
+        col("debit", "Debit", "amount", True),
+        col("credit", "Credit", "amount", True),
+        col("closing_balance", "Closing Balance", "balance"),
+    ]
     return spec(f"Group Summary: {group}", company, [{
         "columns": columns,
         "rows": rows,
         "totals": [{"name": "Total",
-                    "debit": data.get("total_debit", 0),
-                    "credit": data.get("total_credit", 0)}],
+                    "debit": total_debit,
+                    "credit": total_credit,
+                    "closing_balance": total_closing}],
         "filterable": True,
     }], period=period, meta=[("Group", group)])
 

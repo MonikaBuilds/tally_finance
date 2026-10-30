@@ -85,15 +85,15 @@ function RegisterVouchers() {
       <PageHeader
         title={`List of All ${response?.voucher_type || ''} Vouchers`.replace('  ', ' ')}
         subtitle={from && to ? `${response?.report_name || ''} · ${from} to ${to}` : undefined}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath={`/reports/inventory-register/${key}/vouchers/export`}
+            filenameBase={`${key}_vouchers`}
+            params={{ from_date: from, to_date: to }}
+          />
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath={`/reports/inventory-register/${key}/vouchers/export`} filenameBase={`${key}_vouchers`} params={{ from_date: from, to_date: to }} />
-      </div>
 
       <Card>
         {!from || !to ? <ErrorMessage message="No period was specified." /> : null}

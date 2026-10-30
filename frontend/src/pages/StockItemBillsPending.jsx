@@ -110,15 +110,15 @@ function StockItemBillsPending() {
             ? `${itemName}${fromDate && toDate ? ` · ${fromDate} to ${toDate}` : ''}`
             : undefined
         }
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath="/reports/stock-item-bills-pending/export"
+            filenameBase={`bills_pending_${itemName}`}
+            params={query}
+          />
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/stock-item-bills-pending/export" filenameBase={`bills_pending_${itemName}`} params={query} />
-      </div>
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}
