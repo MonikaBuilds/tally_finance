@@ -185,33 +185,32 @@ function VoucherDetail() {
       <PageHeader
         title={voucherType ? `${voucherType} Voucher` : 'Voucher'}
         subtitle="Live data from TallyPrime"
+        backFallback="/reports/ledger"
         actions={
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setRefreshCount((count) => count + 1)}
-            disabled={loading}
-            title="Re-read this voucher from Tally, ignoring saved copies"
-          >
-            <RefreshCw size={16} />
-            Refresh from Tally
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setRefreshCount((count) => count + 1)}
+              disabled={loading}
+              title="Re-read this voucher from Tally, ignoring saved copies"
+            >
+              <RefreshCw size={16} />
+              Refresh from Tally
+            </button>
+            <ExportButtons
+              basePath="/reports/voucher/export"
+              filenameBase={`${voucherType}_${voucherNumber}`}
+              params={{
+                voucher_type: voucherType,
+                voucher_number: voucherNumber,
+                date: voucherDate,
+                ledger_name: ledgerName,
+              }}
+            />
+          </>
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/voucher/export" filenameBase={`${voucherType}_${voucherNumber}`} params={{ voucher_type: voucherType, voucher_number: voucherNumber, date: voucherDate, ledger_name: ledgerName }} />
-      </div>
-
-      <nav className="breadcrumbs">
-        <button
-          type="button"
-          className="breadcrumb-link"
-          onClick={() => navigate(-1)}
-        >
-          <ArrowLeft size={16} />
-          Back
-        </button>
-      </nav>
 
       {loading && <Loader />}
 

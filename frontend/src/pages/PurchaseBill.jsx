@@ -1,5 +1,6 @@
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
+import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
@@ -67,6 +68,13 @@ function PurchaseBill() {
       <PageHeader
         title="Purchase Bill"
         subtitle="Purchase bill data fetched from Tally"
+        backFallback="/reports/pending-invoices"
+        actions={
+          <ExportButtons
+            basePath="/reports/bill-allocations/export"
+            filenameBase="purchase_bills"
+          />
+        }
       />
 
       <Card title="Purchase Bill">

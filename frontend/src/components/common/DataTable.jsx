@@ -30,7 +30,11 @@ function DataTable({ columns, rows, onRowClick, isRowClickable }) {
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className={cellClass(column)}>
+              <th
+                key={column.key}
+                className={cellClass(column)}
+                style={{ width: column.width, minWidth: column.minWidth }}
+              >
                 {column.label}
               </th>
             ))}
@@ -50,7 +54,11 @@ function DataTable({ columns, rows, onRowClick, isRowClickable }) {
                 role={clickable ? 'button' : undefined}
               >
                 {columns.map((column) => (
-                  <td key={column.key} className={cellClass(column)}>
+                  <td
+                    key={column.key}
+                    className={cellClass(column)}
+                    style={{ width: column.width, minWidth: column.minWidth }}
+                  >
                     {column.render ? column.render(row) : row[column.key]}
                   </td>
                 ))}

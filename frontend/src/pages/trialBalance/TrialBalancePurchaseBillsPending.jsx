@@ -7,25 +7,38 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency, formatDate, formatQuantity } from '../../utils/format'
-import TrialBalanceBackButton from './TrialBalanceBackButton'
 import { buildQuery, tbPath } from './tbRouting'
 
 const COLUMNS = [
   { key: 'date', label: 'Date', render: (row) => formatDate(row.date) },
-  { key: 'tracking_number', label: 'Tracking Number' },
-  { key: 'stock_item', label: 'Name of Item' },
-  { key: 'party', label: 'From' },
-  { key: 'initial_quantity', label: 'Initial Quantity', align: 'right', render: (row) => formatQuantity(row.initial_quantity) },
-  { key: 'pending_quantity', label: 'Pending Quantity', align: 'right', render: (row) => formatQuantity(row.pending_quantity) },
-  { key: 'rate', label: 'Rate', align: 'right', render: (row) => formatCurrency(row.rate) },
-  { key: 'value', label: 'Value', align: 'right', render: (row) => formatCurrency(row.value) },
+  { key: 'particulars', label: 'Particulars' },
+  { key: 'order_number', label: 'Order No.' },
+  {
+    key: 'quantity',
+    label: 'Quantity',
+    align: 'right',
+    render: (row) => formatQuantity(row.quantity),
+  },
+  {
+    key: 'rate',
+    label: 'Rate',
+    align: 'right',
+    render: (row) => formatCurrency(row.rate),
+  },
+  {
+    key: 'value',
+    label: 'Value',
+    align: 'right',
+    render: (row) => formatCurrency(row.value),
+  },
 ]
 
 /*
- * Trial Balance -> Purchase Accounts -> Purchase Bills to Come ->
- * Purchase Bills Pending: goods received (Receipt Notes) for the
- * selected period, item by item, from the Tally-backed
- * /reports/trial-balance/purchase-bills-pending API.
+ * Trial Balance -> Purchase Bills to Come (Purchase Bills Pending).
+ *
+ * Shows goods received for which purchase bills have not yet been
+ * received, matching Tally's "Purchase Bills to Come" report under
+ * Current Liabilities.
  */
 function TrialBalancePurchaseBillsPending() {
   const [searchParams] = useSearchParams()
@@ -39,11 +52,20 @@ function TrialBalancePurchaseBillsPending() {
     `/reports/trial-balance/purchase-bills-pending${buildQuery(dates)}`
   )
 
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/trial-balance/purchase-bills-pending/export"
+      filenameBase="purchase_bills_pending"
+      params={{ from_date: fromDate, to_date: toDate }}
+    />
+  )
+
   const header = (
     <PageHeader
       title="Purchase Bills Pending"
       subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
-      actions={<TrialBalanceBackButton fallbackTo={tbPath('', dates)} />}
+      backFallback={tbPath('', dates)}
+      actions={exportActions}
     />
   )
 
@@ -56,12 +78,6 @@ function TrialBalancePurchaseBillsPending() {
   return (
     <>
       {header}
-
-      <div className="export-bar">
-
-        <ExportButtons basePath="/reports/trial-balance/purchase-bills-pending/export" filenameBase="purchase_bills_pending" params={{ from_date: fromDate, to_date: toDate }} />
-
-      </div>
 
       <Card title="Goods Recd. but Bills not Recd.">
         <DataTable columns={COLUMNS} rows={response.report || []} />

@@ -7,13 +7,40 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency } from '../../utils/format'
-import TrialBalanceBackButton from './TrialBalanceBackButton'
 import { buildQuery, drillPathForRow, tbPath } from './tbRouting'
 
 const COLUMNS = [
   { key: 'name', label: 'Particulars' },
-  { key: 'debit', label: 'Debit', align: 'right', render: (row) => (row.debit ? formatCurrency(row.debit) : '') },
-  { key: 'credit', label: 'Credit', align: 'right', render: (row) => (row.credit ? formatCurrency(row.credit) : '') },
+  {
+    key: 'debit',
+    label: 'Debit',
+    align: 'right',
+    render: (row) => (row.debit ? formatCurrency(row.debit) : '-'),
+  },
+  {
+    key: 'credit',
+    label: 'Credit',
+    align: 'right',
+    render: (row) => (row.credit ? formatCurrency(row.credit) : '-'),
+  },
+  {
+    key: 'closing',
+    label: 'Closing Balance',
+    align: 'right',
+    render: (row) => {
+      const debit = Number(row.debit) || 0
+      const credit = Number(row.credit) || 0
+      const diff = debit - credit
+      if (Math.abs(diff) < 0.001) {
+        if (debit > 0) return `${formatCurrency(debit)} Dr`
+        if (credit > 0) return `${formatCurrency(credit)} Cr`
+        return '-'
+      }
+      return diff > 0
+        ? `${formatCurrency(diff)} Dr`
+        : `${formatCurrency(Math.abs(diff))} Cr`
+    },
+  },
 ]
 
 /*
@@ -41,11 +68,20 @@ function TrialBalanceGroup() {
     group ? `/reports/group-summary${buildQuery({ group, ...dates })}` : null
   )
 
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/group-summary/export"
+      filenameBase={`group_${group}`}
+      params={{ group, from_date: fromDate, to_date: toDate }}
+    />
+  )
+
   const header = (
     <PageHeader
       title={`Group Summary: ${group}`}
       subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
-      actions={<TrialBalanceBackButton fallbackTo={tbPath('', dates)} />}
+      backFallback={tbPath('', dates)}
+      actions={exportActions}
     />
   )
 
@@ -69,12 +105,6 @@ function TrialBalanceGroup() {
   return (
     <>
       {header}
-
-      <div className="export-bar">
-
-        <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />
-
-      </div>
 
       <Card>
         <DataTable

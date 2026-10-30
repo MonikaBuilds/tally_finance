@@ -129,15 +129,16 @@ function StockSummaryDrill({ kind }) {
       <PageHeader
         title={`${config.title}: ${selected || ''}`}
         subtitle={from && to ? `${from} to ${to}` : undefined}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath={`${config.api}/export`}
+            filenameBase={`${config.title}_${name}`}
+            params={{ [config.param]: name, from_date: from, to_date: to }}
+            disabled={!periodReady}
+          />
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath={`${config.api}/export`} filenameBase={`${config.title}_${name}`} params={{ [config.param]: name, from_date: from, to_date: to }} disabled={!periodReady} />
-      </div>
 
       <Card>
         {loading && <Loader />}

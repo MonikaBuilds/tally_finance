@@ -7,14 +7,41 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency } from '../../utils/format'
-import TrialBalanceBackButton from '../trialBalance/TrialBalanceBackButton'
 import { buildQuery } from '../trialBalance/tbRouting'
 import { bsPath, balanceSheetGroupRowPath } from './bsRouting'
 
 const COLUMNS = [
   { key: 'name', label: 'Particulars' },
-  { key: 'debit', label: 'Debit', align: 'right', render: (row) => (row.debit ? formatCurrency(row.debit) : '') },
-  { key: 'credit', label: 'Credit', align: 'right', render: (row) => (row.credit ? formatCurrency(row.credit) : '') },
+  {
+    key: 'debit',
+    label: 'Debit',
+    align: 'right',
+    render: (row) => (row.debit ? formatCurrency(row.debit) : '-'),
+  },
+  {
+    key: 'credit',
+    label: 'Credit',
+    align: 'right',
+    render: (row) => (row.credit ? formatCurrency(row.credit) : '-'),
+  },
+  {
+    key: 'closing',
+    label: 'Closing Balance',
+    align: 'right',
+    render: (row) => {
+      const debit = Number(row.debit) || 0
+      const credit = Number(row.credit) || 0
+      const diff = debit - credit
+      if (Math.abs(diff) < 0.001) {
+        if (debit > 0) return `${formatCurrency(debit)} Dr`
+        if (credit > 0) return `${formatCurrency(credit)} Cr`
+        return '-'
+      }
+      return diff > 0
+        ? `${formatCurrency(diff)} Dr`
+        : `${formatCurrency(Math.abs(diff))} Cr`
+    },
+  },
 ]
 
 /*
@@ -27,8 +54,7 @@ const COLUMNS = [
  * Sheet's From/To dates. Row drilling reuses the Trial Balance rules
  * (sub-group, ledger monthly summary, Opening Stock, ...) and adds
  * Closing Stock -> Stock Group Summary, which the Trial Balance rules
- * do not cover. This page exists only so the Trial Balance files could
- * be left untouched; it has no data logic of its own.
+ * do not cover.
  */
 function BalanceSheetGroup() {
   const navigate = useNavigate()
@@ -44,11 +70,20 @@ function BalanceSheetGroup() {
     group ? `/reports/group-summary${buildQuery({ group, ...dates })}` : null
   )
 
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/group-summary/export"
+      filenameBase={`group_${group}`}
+      params={{ group, from_date: fromDate, to_date: toDate }}
+    />
+  )
+
   const header = (
     <PageHeader
       title={`Group Summary: ${group}`}
       subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
-      actions={<TrialBalanceBackButton fallbackTo={bsPath('', dates)} />}
+      backFallback={bsPath('', dates)}
+      actions={exportActions}
     />
   )
 
@@ -72,12 +107,6 @@ function BalanceSheetGroup() {
   return (
     <>
       {header}
-
-      <div className="export-bar">
-
-        <ExportButtons basePath="/reports/group-summary/export" filenameBase={`group_${group}`} params={{ group, from_date: fromDate, to_date: toDate }} />
-
-      </div>
 
       <Card>
         <DataTable

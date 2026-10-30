@@ -55,12 +55,14 @@ function OpeningStockSummary() {
     {
       key: 'opening_quantity',
       label: 'Opening Qty',
+      align: 'right',
       render: (row) =>
         formatQuantity(row.opening_quantity),
     },
     {
       key: 'opening_value',
       label: 'Opening Value',
+      align: 'right',
       render: (row) =>
         formatCurrency(row.opening_value),
     },
@@ -77,6 +79,7 @@ function OpeningStockSummary() {
       <PageHeader
         title="Opening Stock Summary"
         subtitle="Opening stock details fetched from Tally"
+        backFallback="/reports/trial-balance"
         actions={
           <ExportButtons
             basePath="/reports/stock-summary/export"

@@ -7,26 +7,32 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency, formatQuantity } from '../../utils/format'
-import TrialBalanceBackButton from './TrialBalanceBackButton'
 import { buildQuery, dayBefore, tbPath } from './tbRouting'
 
-function quantityWithUnit(row) {
-  return `${formatQuantity(row.quantity)}${row.unit ? ` ${row.unit}` : ''}`
-}
-
 const COLUMNS = [
-  { key: 'stock_item', label: 'Particulars' },
-  { key: 'quantity', label: 'Quantity', align: 'right', render: quantityWithUnit },
-  { key: 'rate', label: 'Rate', align: 'right', render: (row) => formatCurrency(row.rate) },
-  { key: 'value', label: 'Value', align: 'right', render: (row) => formatCurrency(row.value) },
+  { key: 'stock_item', label: 'Stock Item' },
+  { key: 'stock_group', label: 'Stock Group' },
+  { key: 'unit', label: 'Unit' },
+  {
+    key: 'quantity',
+    label: 'Opening Qty',
+    align: 'right',
+    render: (row) => formatQuantity(row.quantity),
+  },
+  {
+    key: 'value',
+    label: 'Opening Value',
+    align: 'right',
+    render: (row) => formatCurrency(row.value),
+  },
 ]
 
 /*
- * Trial Balance -> Current Assets -> Opening Stock -> Opening Stock
- * Summary. Item-wise opening balance for the selected period.
+ * Trial Balance -> Opening Stock (Tally's F4 on Opening Stock).
  *
- * Data: the existing /reports/stock-summary API. The opening balance
- * of a period is the stock as at the day before it starts, which is
+ * Opening stock for a period is the closing stock on the day before
+ * From Date. We reuse the existing /reports/stock-summary API with
+ * ?to_date=<day before From Date>, which matches Tally and matches
  * how the existing Stock Item Monthly Summary computes its own Opening
  * Balance row - so the two screens agree. If no From Date is in play,
  * the items' opening balances as held in Tally are used instead.
@@ -48,11 +54,20 @@ function TrialBalanceOpeningStock() {
     `/reports/stock-summary${buildQuery({ to_date: asOn })}`
   )
 
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/trial-balance/opening-stock/export"
+      filenameBase="opening_stock_summary"
+      params={{ from_date: fromDate, to_date: toDate }}
+    />
+  )
+
   const header = (
     <PageHeader
       title="Opening Stock Summary"
       subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
-      actions={<TrialBalanceBackButton fallbackTo={tbPath('', dates)} />}
+      backFallback={tbPath('', dates)}
+      actions={exportActions}
     />
   )
 
@@ -68,30 +83,23 @@ function TrialBalanceOpeningStock() {
     .map((item) => {
       const quantity = Number(useClosingAsOn ? item.closing_quantity : item.opening_quantity) || 0
       const value = Number(useClosingAsOn ? item.closing_value : item.opening_value) || 0
-
-      const rate = useClosingAsOn
-        ? Number(item.closing_rate) || 0
-        : quantity
-          ? Math.abs(value / quantity)
-          : 0
-
-      return { stock_item: item.stock_item, unit: item.unit, quantity, rate, value }
+      return {
+        stock_item: item.stock_item || item.name || '',
+        stock_group: item.stock_group || item.parent || '',
+        unit: item.unit || item.base_units || '',
+        quantity,
+        value,
+      }
     })
-    .filter((row) => row.quantity !== 0 || row.value !== 0)
+    .filter((row) => row.value !== 0 || row.quantity !== 0)
 
-  const totalValue = rows.reduce((sum, row) => sum + row.value, 0)
-  const units = new Set(rows.map((row) => row.unit))
-  const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0)
+  const totalValue = rows.reduce((acc, row) => acc + (row.value || 0), 0)
+  const totalQuantity = rows.reduce((acc, row) => acc + (row.quantity || 0), 0)
+  const units = new Set(rows.map((row) => row.unit).filter(Boolean))
 
   return (
     <>
       {header}
-
-      <div className="export-bar">
-
-        <ExportButtons basePath="/reports/trial-balance/opening-stock/export" filenameBase="opening_stock_summary" params={{ from_date: fromDate, to_date: toDate }} />
-
-      </div>
 
       <Card>
         <p className="table-hint">Click a stock item to view its Stock Item Monthly Summary.</p>

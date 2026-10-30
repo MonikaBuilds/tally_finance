@@ -1,6 +1,4 @@
 import { useLocation, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
-
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
@@ -11,156 +9,81 @@ import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
 import { formatSignedAmount, formatSignedQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
+function formatQty(row) {
+  const signed = row.signed_quantity !== undefined ? row.signed_quantity : row.quantity
+  return formatSignedQuantityWithUnit(signed, row.base_units || row.unit)
+}
+
+function formatRate(row) {
+  if (row.rate_value === undefined || row.rate_value === null) return ''
+  const number = Number(row.rate_value)
+  if (!Number.isFinite(number)) return ''
+  return `₹ ${Math.abs(number).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function formatAmount(row) {
+  const signed = row.signed_amount !== undefined ? row.signed_amount : row.value
+  return formatSignedAmount(signed)
+}
+
+const COLUMNS = [
+  { key: 'date', label: 'Date', render: (r) => formatDate(r.date) },
+  { key: 'particulars', label: 'Particulars' },
+  { key: 'voucher_type', label: 'Vch Type' },
+  { key: 'voucher_number', label: 'Vch No.' },
+  { key: 'quantity', label: 'Quantity', align: 'right', render: formatQty },
+  { key: 'rate_value', label: 'Rate', align: 'right', render: formatRate },
+  { key: 'value', label: 'Value', align: 'right', render: formatAmount },
+]
+
 /*
- * Stock Item Monthly Summary -> (click a month) -> Stock Item
- * Vouchers: Tally's own drill-down screen.
+ * Stock Item Vouchers / Godown Vouchers (item-level).
  *
- *   Opening Balance
- *   one line per voucher (Inwards / Outwards, closing on the last line
- *   of each day)
- *   (Sale Bills Pending) - delivery notes not yet billed - with the
- *   notes it is made of
- *   totals
- *
- * Everything is built by /reports/stock-item-vouchers.
+ * All voucher lines affecting one stock item for a date range. Reached
+ * by clicking an item on the Stock Summary or a month on the Stock
+ * Item Monthly Summary.
  */
 function StockItemVouchers() {
   const location = useLocation()
   const navigate = useNavigate()
   const params = new URLSearchParams(location.search)
 
-  const godownName = params.get('location') || params.get('godown') || ''
   const itemName = params.get('item') || ''
+  const godownName = params.get('godown') || ''
   const fromDate = params.get('from') || ''
   const toDate = params.get('to') || ''
 
   const queryParams = {
-    stock_item_name: itemName || undefined,
-    godown_name: godownName || undefined,
+    stock_item_name: itemName,
+    godown_name: godownName,
     from_date: fromDate || undefined,
     to_date: toDate || undefined,
   }
 
-  const path = itemName ? `/reports/stock-item-vouchers${toQuery(queryParams)}` : null
+  const path = itemName
+    ? `/reports/stock-item-vouchers${toQuery(queryParams)}`
+    : null
+
   const { data: response, loading, error } = useFetch(path)
 
-  const unit = response?.unit
-  const qty = (value) => formatSignedQuantityWithUnit(value, unit)
+  const rows = response?.report || []
 
-  const opening = response?.opening
-  const totals = response?.totals
-
-  // Flatten the backend lines into table rows: Opening Balance, the
-  // vouchers, each Bills Pending line followed by its notes, Totals.
-  const rows = []
-
-  if (response?.success) {
-    rows.push({
-      kind: 'opening',
-      date: response.from,
-      inward_quantity: opening?.quantity,
-      inward_value: opening?.value,
-      closing_quantity: opening?.quantity,
-      closing_value: opening?.value,
-    })
-
-    for (const line of response.report || []) {
-      rows.push(line)
-
-      for (const child of line.children || []) {
-        rows.push({ kind: 'pending_child', ...child, pending_side: line.pending_side })
-      }
-    }
-
-    if (totals) rows.push({ kind: 'total', ...totals })
-  }
-
-  const hasValue = (value) => value !== undefined && value !== null
-
-  const quantityCell = (row, key) => {
-    const value = row[key]
-
-    if (!hasValue(value)) return ''
-
-    const text = qty(value)
-
-    return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
-  }
-
-  // Tally prints no Inwards / Outwards value on the Bills Pending line,
-  // only its quantity - but it does print the closing value.
-  const valueCell = (row, key) => {
-    const value = row[key]
-
-    if (!hasValue(value)) return ''
-    if (row.kind === 'pending' && key !== 'closing_value') return ''
-
-    const text = formatSignedAmount(value)
-
-    return row.kind === 'opening' || row.kind === 'total' ? <strong>{text}</strong> : text
-  }
-
-  const columns = [
-    {
-      key: 'date',
-      label: 'Date',
-      render: (r) => (r.kind === 'total' ? '' : r.date ? formatDate(r.date) : ''),
+  const totals = rows.reduce(
+    (acc, row) => {
+      const qty = row.signed_quantity !== undefined ? Number(row.signed_quantity) : Number(row.quantity)
+      const amt = row.signed_amount !== undefined ? Number(row.signed_amount) : Number(row.value)
+      if (Number.isFinite(qty)) acc.quantity += qty
+      if (Number.isFinite(amt)) acc.value += amt
+      return acc
     },
-    {
-      key: 'particulars',
-      label: 'Particulars',
-      render: (r) => {
-        if (r.kind === 'opening') return <strong>Opening Balance</strong>
-        if (r.kind === 'total') return <strong>Totals</strong>
-        if (r.kind === 'pending') return <strong><em>{r.particulars}</em></strong>
-        if (r.kind === 'pending_child') return <em>{r.party}</em>
-        return r.particulars
-      },
-    },
-    {
-      key: 'voucher_type',
-      label: 'Vch Type',
-      // Tally prints a Bills Pending note's tracking number and
-      // quantity right after the party, not in the value columns.
-      render: (r) =>
-        r.kind === 'voucher' ? (
-          r.voucher_type
-        ) : r.kind === 'pending_child' ? (
-          <em>
-            {[r.tracking_number, hasValue(r.quantity) ? qty(r.quantity) : '']
-              .filter(Boolean)
-              .join('\u00A0\u00A0\u00A0\u00A0')}
-          </em>
-        ) : (
-          ''
-        ),
-    },
-    { key: 'voucher_number', label: 'Vch No.', render: (r) => (r.kind === 'voucher' ? r.voucher_number : '') },
-    { key: 'inward_quantity', label: 'Inwards Qty', align: 'right', render: (r) => quantityCell(r, 'inward_quantity') },
-    { key: 'inward_value', label: 'Inwards Value', align: 'right', render: (r) => valueCell(r, 'inward_value') },
-    {
-      key: 'outward_quantity',
-      label: 'Outwards Qty',
-      align: 'right',
-      render: (r) => quantityCell(r, 'outward_quantity'),
-    },
-    { key: 'outward_value', label: 'Outwards Value', align: 'right', render: (r) => valueCell(r, 'outward_value') },
-    { key: 'closing_quantity', label: 'Closing Qty', align: 'right', render: (r) => quantityCell(r, 'closing_quantity') },
-    { key: 'closing_value', label: 'Closing Value', align: 'right', render: (r) => valueCell(r, 'closing_value') },
-  ]
+    { quantity: 0, value: 0 }
+  )
 
-  const billsPendingPath = (extra = {}) =>
-    `/reports/stock-item-bills-pending${toQuery({
-      item: itemName,
-      from: fromDate,
-      to: toDate,
-      ...extra,
-    })}`
-
-  const isClickable = (row) =>
-    row.kind === 'pending' ||
-    row.kind === 'pending_child' ||
-    (row.kind === 'voucher' && Boolean(row.voucher_type && row.voucher_number))
+  const units = new Set(rows.map((row) => row.base_units || row.unit).filter(Boolean))
+  const singleUnit = units.size === 1 ? [...units][0] : ''
 
   return (
     <>
@@ -171,10 +94,13 @@ function StockItemVouchers() {
             : `Stock Item Vouchers${itemName ? `: ${itemName}` : ''}`
         }
         subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : undefined}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath="/reports/stock-item-vouchers/export"
+            params={queryParams}
+            filenameBase="stock_item_vouchers"
+          />
         }
       />
 
@@ -198,38 +124,28 @@ function StockItemVouchers() {
               )}
             </div>
 
-            <div className="card-toolbar">
-              <ExportButtons
-                basePath="/reports/stock-item-vouchers/export"
-                params={queryParams}
-                filenameBase="stock_item_vouchers"
-              />
-            </div>
-
             <DataTable
-              columns={columns}
+              columns={COLUMNS}
               rows={rows}
-              isRowClickable={isClickable}
               onRowClick={(row) => {
-                if (row.kind === 'pending') {
-                  navigate(billsPendingPath())
-                  return
-                }
-
-                if (row.kind === 'pending_child') {
-                  navigate(billsPendingPath({ tracking_number: row.tracking_number, party: row.party }))
-                  return
-                }
-
-                navigate(`/reports/inventory-voucher${toQuery({
-                  voucher_type: row.voucher_type,
-                  voucher_number: row.voucher_number,
-                  date: row.date,
-                  item: itemName,
-                  godown: godownName,
-                })}`)
+                if (!row.voucher_type || !row.voucher_number) return
+                navigate(
+                  `/reports/inventory-voucher${toQuery({
+                    voucher_type: row.voucher_type,
+                    voucher_number: row.voucher_number,
+                    date: row.date,
+                  })}`
+                )
               }}
+              isRowClickable={(row) => Boolean(row.voucher_type && row.voucher_number)}
             />
+
+            <div className="table-footer">
+              <span>
+                Total Quantity: {formatSignedQuantityWithUnit(totals.quantity, singleUnit)}
+              </span>
+              <span>Total Value: {formatSignedAmount(totals.value)}</span>
+            </div>
           </>
         )}
       </Card>

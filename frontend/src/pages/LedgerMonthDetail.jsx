@@ -1,9 +1,6 @@
 import { useMemo } from 'react'
-import { useSearchParams, useNavigate, Link } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
-
+import { useSearchParams, useNavigate } from 'react-router'
 import { useFetch } from '../hooks/useFetch'
-
 import PageHeader from '../components/layout/PageHeader'
 import ExportButtons from '../components/common/ExportButtons'
 import Loader from '../components/common/Loader'
@@ -59,64 +56,55 @@ const COLUMNS = [
  * Ledger Monthly Summary screen into that month's Ledger Vouchers.
  */
 function LedgerMonthDetail() {
-  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const ledgerName = searchParams.get('ledger') || ''
   const monthKey = searchParams.get('month') || ''
-  const range = monthKeyToRange(monthKey)
 
-  const queryPath = useMemo(() => {
-    if (!ledgerName || !range) return null
+  const range = useMemo(() => monthKeyToRange(monthKey), [monthKey])
 
-    const params = new URLSearchParams({
-      ledger_name: ledgerName,
-      from_date: range.from,
-      to_date: range.to,
-    })
+  const query = new URLSearchParams()
+  if (ledgerName) query.set('ledger_name', ledgerName)
+  if (range?.from) query.set('from_date', range.from)
+  if (range?.to) query.set('to_date', range.to)
+  query.set('view', 'detailed')
 
-    return `/reports/ledger?${params.toString()}`
-  }, [ledgerName, range])
+  const { data: response, loading, error } = useFetch(
+    ledgerName && range ? `/reports/ledger?${query.toString()}` : null
+  )
 
-  const { data: reportResponse, loading, error } = useFetch(queryPath)
+  const report = response?.report
+  const entries = report?.entries || []
 
-  const report =
-    reportResponse?.success && reportResponse?.report
-      ? reportResponse.report
-      : null
+  const rows = useMemo(() => {
+    if (!report) return []
 
-  const entries = Array.isArray(report?.entries) ? report.entries : []
+    const openingRow = {
+      date: range?.from || '-',
+      particulars: 'Opening Balance',
+      voucher_type: '',
+      voucher_number: '',
+      debit: Number(report.opening_balance) > 0 ? report.opening_balance : null,
+      credit: Number(report.opening_balance) < 0 ? Math.abs(Number(report.opening_balance)) : null,
+      running_balance: report.opening_balance,
+      isOpening: true,
+    }
 
-  const openingRow = report
-    ? {
-        date: '',
-        particulars: 'Opening Balance',
-        voucher_type: '',
-        voucher_number: '',
-        debit:
-          Number(report.opening_balance) > 0
-            ? Number(report.opening_balance)
-            : 0,
-        credit:
-          Number(report.opening_balance) < 0
-            ? Math.abs(Number(report.opening_balance))
-            : 0,
-        running_balance: Number(report.opening_balance) || 0,
-      }
-    : null
+    return [openingRow, ...entries]
+  }, [report, entries, range])
 
-  const rows = openingRow ? [openingRow, ...entries] : []
+  function handleRowClick(row) {
+    if (row.isOpening) return
 
-  function goToVoucher(row) {
-    if (!row.voucher_number) return
-
-    const params = new URLSearchParams({
-      voucher_type: row.voucher_type || '',
-      voucher_number: row.voucher_number,
-      ledger_name: ledgerName,
-    })
-
+    const params = new URLSearchParams()
+    if (row.guid) params.set('guid', row.guid)
     if (row.date) params.set('date', row.date)
+    if (row.voucher_number) params.set('voucher_number', row.voucher_number)
+    if (row.voucher_type) params.set('voucher_type', row.voucher_type)
+    if (row.particulars) params.set('ledger', row.particulars)
+    if (ledgerName) params.set('return_ledger', ledgerName)
+    if (monthKey) params.set('return_month', monthKey)
 
     navigate(`/reports/voucher?${params.toString()}`)
   }
@@ -124,7 +112,7 @@ function LedgerMonthDetail() {
   if (!ledgerName || !range) {
     return (
       <>
-        <PageHeader title="Ledger" subtitle="Month detail" />
+        <PageHeader title="Ledger" subtitle="Month detail" backFallback="/reports/ledger" />
         <Card>
           <ErrorMessage message="Missing or invalid ledger/month reference." />
         </Card>
@@ -132,22 +120,27 @@ function LedgerMonthDetail() {
     )
   }
 
+  const exportActions = (
+    <ExportButtons
+      basePath="/reports/ledger/export"
+      filenameBase={`${ledgerName}_${monthKey}`}
+      params={{
+        ledger_name: ledgerName,
+        from_date: range?.from,
+        to_date: range?.to,
+        view: 'detailed',
+      }}
+    />
+  )
+
   return (
     <>
       <PageHeader
         title={ledgerName}
         subtitle={`${formatMonthKey(monthKey)} · Live data from TallyPrime`}
+        backFallback={`/reports/ledger?ledger=${encodeURIComponent(ledgerName)}&view=monthly`}
+        actions={exportActions}
       />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/ledger/export" filenameBase={`${ledgerName}_${monthKey}`} params={{ ledger_name: ledgerName, from_date: range?.from, to_date: range?.to, view: 'detailed' }} />
-      </div>
-
-      <nav className="breadcrumbs">
-        <Link to={`/reports/ledger?ledger=${encodeURIComponent(ledgerName)}&view=monthly`}>
-          <ArrowLeft size={16} />
-          Back to Ledger
-        </Link>
-      </nav>
 
       {loading && <Loader />}
 
@@ -173,16 +166,13 @@ function LedgerMonthDetail() {
           <DataTable
             columns={COLUMNS}
             rows={rows}
-            onRowClick={goToVoucher}
-            isRowClickable={(row) => Boolean(row.voucher_number)}
+            onRowClick={handleRowClick}
+            isRowClickable={(row) => !row.isOpening}
           />
 
           <div className="table-footer">
-            <span>Total Debit: {formatCurrency(report.total_debit)}</span>
-            <span>Total Credit: {formatCurrency(report.total_credit)}</span>
-            <span>
-              Closing Balance: {formatBalance(report.closing_balance)}
-            </span>
+            <span>Closing Balance</span>
+            <span>{formatBalance(report.closing_balance)}</span>
           </div>
         </Card>
       )}

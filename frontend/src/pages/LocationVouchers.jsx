@@ -1,6 +1,4 @@
 import { useLocation, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
-
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
@@ -8,18 +6,8 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
-import { formatCurrency, formatQuantity, formatDate } from '../utils/format'
-import StockItemVouchers from './StockItemVouchers'
-
-function toQuery(params) {
-  const query = new URLSearchParams(
-    Object.entries(params).filter(([, value]) => (
-      value !== undefined && value !== null && value !== ''
-    ))
-  ).toString()
-
-  return query ? `?${query}` : ''
-}
+import { formatCurrency, formatDate, formatQuantity } from '../utils/format'
+import { toQuery } from '../utils/stockFormat'
 
 const COLUMNS = [
   { key: 'date', label: 'Date', render: (r) => formatDate(r.date) },
@@ -30,26 +18,26 @@ const COLUMNS = [
   { key: 'quantity', label: 'Quantity', align: 'right', render: (r) => formatQuantity(r.quantity) },
   { key: 'rate', label: 'Rate', align: 'right', render: (r) => formatCurrency(r.rate) },
   { key: 'value', label: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
+  { key: 'direction', label: 'Movement' },
 ]
 
+/*
+ * Godown Vouchers: /reports/location-vouchers?location=&from=&to=
+ *
+ * All inventory movements into or out of one godown for a date range.
+ * Data: /reports/stock-movement with ?godown_name=...
+ */
 function LocationVouchers() {
   const location = useLocation()
   const navigate = useNavigate()
   const params = new URLSearchParams(location.search)
 
   const locationName = params.get('location') || ''
-  const itemName = params.get('item') || ''
-
-  if (itemName) {
-    return <StockItemVouchers />
-  }
-
   const fromDate = params.get('from') || ''
   const toDate = params.get('to') || ''
 
   const queryParams = {
-    godown_name: locationName || undefined,
-    stock_item_name: itemName || undefined,
+    godown_name: locationName,
     from_date: fromDate || undefined,
     to_date: toDate || undefined,
   }
@@ -65,10 +53,13 @@ function LocationVouchers() {
       <PageHeader
         title={`Godown Vouchers${locationName ? `: ${locationName}` : ''}`}
         subtitle={fromDate && toDate ? `${fromDate} to ${toDate}` : 'Live data from Tally'}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath="/reports/stock-movement/export"
+            params={queryParams}
+            filenameBase="godown_vouchers"
+          />
         }
       />
 
@@ -78,29 +69,21 @@ function LocationVouchers() {
         {locationName && error && <ErrorMessage message={error} />}
 
         {locationName && !loading && !error && response?.success && (
-          <>
-            <div className="card-toolbar">
-              <ExportButtons
-                basePath="/reports/stock-movement/export"
-                params={queryParams}
-                filenameBase="godown_vouchers"
-              />
-            </div>
-
-            <DataTable
-              columns={COLUMNS}
-              rows={response.report || []}
-              onRowClick={(row) => {
-                if (!row.voucher_type || !row.voucher_number) return
-
-                navigate(`/reports/inventory-voucher${toQuery({
+          <DataTable
+            columns={COLUMNS}
+            rows={response.report || []}
+            onRowClick={(row) => {
+              if (!row.voucher_type || !row.voucher_number) return
+              navigate(
+                `/reports/inventory-voucher${toQuery({
                   voucher_type: row.voucher_type,
                   voucher_number: row.voucher_number,
                   date: row.date,
-                })}`)
-              }}
-            />
-          </>
+                })}`
+              )
+            }}
+            isRowClickable={(row) => Boolean(row.voucher_type && row.voucher_number)}
+          />
         )}
       </Card>
     </>

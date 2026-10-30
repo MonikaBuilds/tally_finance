@@ -1,5 +1,4 @@
 import { useLocation, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
 import Loader from '../components/common/Loader'
@@ -27,8 +26,7 @@ function toQuery(params) {
  * Current Assets -> Closing Stock. The Balance Sheet's From/To dates
  * arrive in the URL (?from_date=...&to_date=...); the closing stock is
  * fetched as at the To Date. Clicking an item opens its Stock Item
- * Monthly Summary for the same period. With no dates in the URL it
- * behaves as it did before.
+ * Monthly Summary for the same period.
  */
 function ClosingStockSummary() {
   const location = useLocation()
@@ -82,20 +80,21 @@ function ClosingStockSummary() {
     {
       key: 'closing_quantity',
       label: 'Closing Qty',
+      align: 'right',
       render: (row) =>
         formatQuantity(row.closing_quantity),
     },
     {
       key: 'closing_rate',
       label: 'Closing Rate',
+      align: 'right',
       render: (row) =>
-        formatCurrency(
-          row.closing_rate ?? row.rate
-        ),
+        formatCurrency(row.closing_rate),
     },
     {
       key: 'closing_value',
       label: 'Closing Value',
+      align: 'right',
       render: (row) =>
         formatCurrency(row.closing_value),
     },
@@ -107,6 +106,10 @@ function ClosingStockSummary() {
     0
   )
 
+  const fallbackUrl = fromDate && toDate
+    ? `/reports/balance-sheet?from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`
+    : '/reports/balance-sheet'
+
   return (
     <>
       <PageHeader
@@ -116,21 +119,13 @@ function ClosingStockSummary() {
             ? `Closing stock details fetched from Tally - ${fromDate} to ${toDate}`
             : 'Closing stock details fetched from Tally'
         }
+        backFallback={fallbackUrl}
         actions={
-          <>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => navigate(-1)}
-            >
-              <ArrowLeft size={16} /> Back
-            </button>
-            <ExportButtons
-              basePath="/reports/stock-summary/export"
-              params={{ to_date: toDate, view: 'closing' }}
-              filenameBase="closing_stock_summary"
-            />
-          </>
+          <ExportButtons
+            basePath="/reports/stock-summary/export"
+            params={{ to_date: toDate, view: 'closing' }}
+            filenameBase="closing_stock_summary"
+          />
         }
       />
 

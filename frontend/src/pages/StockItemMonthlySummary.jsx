@@ -125,15 +125,15 @@ function StockItemMonthlySummary() {
             : `Stock Item Monthly Summary${itemName ? `: ${itemName}` : ''}`
         }
         subtitle={from && to ? `${from} to ${to}` : undefined}
+        backFallback="/reports/inventory"
         actions={
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          <ExportButtons
+            basePath="/reports/stock-item-monthly/export"
+            filenameBase={`monthly_${itemName}`}
+            params={{ stock_item_name: itemName, godown_name: godown, from_date: from, to_date: to }}
+          />
         }
       />
-      <div className="export-bar">
-        <ExportButtons basePath="/reports/stock-item-monthly/export" filenameBase={`monthly_${itemName}`} params={{ stock_item_name: itemName, godown_name: godown, from_date: from, to_date: to }} />
-      </div>
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}
