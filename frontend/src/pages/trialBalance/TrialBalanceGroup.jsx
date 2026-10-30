@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router'
+import { Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useFetch } from '../../hooks/useFetch'
 import PageHeader from '../../components/layout/PageHeader'
 import ExportButtons from '../../components/common/ExportButtons'
@@ -7,7 +7,7 @@ import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
 import { formatCurrency } from '../../utils/format'
-import { buildQuery, drillPathForRow, tbPath } from './tbRouting'
+import { buildQuery, drillPathForRow, ledgerMonthlyPath, tbPath } from './tbRouting'
 
 const COLUMNS = [
   { key: 'name', label: 'Particulars' },
@@ -100,6 +100,12 @@ function TrialBalanceGroup() {
     return <>{header}<ErrorMessage message={response?.error || response?.message} /></>
   }
 
+  // The line clicked is a ledger, not a group: Tally opens its Ledger
+  // Monthly Summary, so follow it there.
+  if (response.resolved_as === 'ledger') {
+    return <Navigate to={ledgerMonthlyPath(group, dates)} replace />
+  }
+
   const rows = response.report || []
 
   return (
@@ -120,7 +126,7 @@ function TrialBalanceGroup() {
             <button
               type="button"
               className="link-button"
-              onClick={() => navigate(tbPath('/ledger', { ledger: group, ...dates }))}
+              onClick={() => navigate(ledgerMonthlyPath(group, dates))}
             >
               Open it as a ledger instead
             </button>

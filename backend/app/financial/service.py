@@ -1,6 +1,87 @@
 from collections import defaultdict
 
 
+def _net_vouchers_for_bill(transactions):
+    """
+    One line per voucher, as Tally's Bills Receivable / Payable shows it.
+
+    A single voucher can carry several allocations against the same bill
+    (for example a Cr line and a Dr line). Tally prints the voucher once
+    with the net of those allocations, so they are summed here. The raw
+    allocations stay available in "transactions" for every other consumer.
+    """
+    order = []
+    merged = {}
+
+    for tx in transactions:
+        number = (tx.get("voucher_number") or "").strip()
+
+        if number:
+            key = (
+                (tx.get("voucher_type") or "").strip().casefold(),
+                number.casefold(),
+                tx.get("voucher_date") or "",
+            )
+        else:
+            # Without a voucher number the GUID is the only safe identity.
+            key = ("guid", tx.get("guid") or id(tx))
+
+        if key not in merged:
+            merged[key] = dict(tx)
+            merged[key]["amount"] = 0.0
+            order.append(key)
+
+        merged[key]["amount"] += float(tx.get("amount", 0) or 0)
+
+    vouchers = []
+
+    for key in order:
+        voucher = merged[key]
+        net = round(voucher["amount"], 2)
+
+        # A voucher whose allocations cancel out has nothing to show.
+        if abs(net) < 0.005:
+            continue
+
+        voucher["amount"] = net
+        voucher["side"] = "Cr" if net >= 0 else "Dr"
+        voucher["display_amount"] = abs(net)
+        vouchers.append(voucher)
+
+    return vouchers
+
+
+def ensure_bill_vouchers(report):
+    """
+    Make sure every bill in a receivables / payables report carries its
+    net "vouchers" list.
+
+    The report is cached, and a copy cached before "vouchers" existed only
+    has the raw "transactions". Adding the list here, when the report is
+    served, means the drill-down is right without waiting for the cache to
+    be rebuilt. The cached copy itself is never modified.
+    """
+    if not isinstance(report, dict) or not isinstance(report.get("bills"), list):
+        return report
+
+    bills = []
+
+    for bill in report["bills"]:
+        if (
+            isinstance(bill, dict)
+            and "vouchers" not in bill
+            and isinstance(bill.get("transactions"), list)
+        ):
+            bill = {
+                **bill,
+                "vouchers": _net_vouchers_for_bill(bill["transactions"]),
+            }
+
+        bills.append(bill)
+
+    return {**report, "bills": bills}
+
+
 def build_outstanding_summary(bill_allocations):
     grouped = defaultdict(lambda: {
         "party": "",
@@ -37,6 +118,12 @@ def build_outstanding_summary(bill_allocations):
             "voucher_date": bill.get("voucher_date"),
             "bill_type": bill.get("bill_type"),
             "amount": amount,
+            # Tally signs bill allocations: credit positive, debit
+            # negative. The drill-down shows "amount Cr/Dr" exactly like
+            # Tally's own Bills Receivable / Payable screen, so the side
+            # is derived here, once, from the server's own sign.
+            "side": "Cr" if amount >= 0 else "Dr",
+            "display_amount": abs(amount),
             "guid": bill.get("guid")
         })
 
@@ -49,6 +136,18 @@ def build_outstanding_summary(bill_allocations):
     result = []
 
     for item in grouped.values():
+        # Tally lists a bill's vouchers oldest first. ISO dates sort
+        # correctly as text, and sort() is stable, so vouchers on the
+        # same day keep the order Tally returned them in.
+        item["transactions"].sort(
+            key=lambda t: t.get("voucher_date") or ""
+        )
+
+        # What the drill-down lists: one net line per voucher.
+        item["vouchers"] = _net_vouchers_for_bill(
+            item["transactions"]
+        )
+
         balance = round(item["balance"], 2)
         item["balance"] = balance
 
