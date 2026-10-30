@@ -11,6 +11,7 @@ from app.security.config import get_auth_settings
 class UserContext:
     user_id: str
     allowed_companies: tuple[str, ...]
+    organization_id: str = "default"
 
 
 def _auth_enabled() -> bool:
@@ -22,10 +23,26 @@ def _auth_enabled() -> bool:
     return settings.auth_enabled
 
 
+def is_secure_cookie(request: Request | None, default_secure: bool) -> bool:
+    """
+    Determine whether cookies should carry the Secure flag.
+    Returns True if explicitly enabled in configuration or if the incoming
+    request arrived over HTTPS (including TLS-terminating reverse proxies).
+    """
+    if default_secure:
+        return True
+    if request is not None:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+        if forwarded_proto == "https" or request.url.scheme == "https":
+            return True
+    return False
+
+
 def create_access_token(
     *,
     user_id: str,
     companies: tuple[str, ...],
+    organization_id: str = "default",
 ) -> str:
     """
     Create a signed JWT access token for an authenticated user.
@@ -33,6 +50,7 @@ def create_access_token(
     The token stores:
     - user identity
     - companies the user is allowed to access
+    - organization scope
     - token creation time
     - token expiration time
 
@@ -50,6 +68,7 @@ def create_access_token(
     payload = {
         "sub": user_id,
         "companies": list(companies),
+        "org": organization_id,
         "iat": now,
         "exp": expires_at,
     }
@@ -81,6 +100,7 @@ def _decode_token(token: str) -> dict:
             algorithms=[
                 settings.jwt_algorithm,
             ],
+            leeway=10,
         )
 
     except jwt.ExpiredSignatureError:
@@ -149,12 +169,15 @@ async def get_current_user(
             detail="Invalid company permissions in token.",
         )
 
+    org = payload.get("org") or "default"
+
     return UserContext(
         user_id=str(user_id),
         allowed_companies=tuple(
             str(company)
             for company in companies
         ),
+        organization_id=str(org),
     )
 
 

@@ -1,4 +1,7 @@
+import logging
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 from fastapi import (
     APIRouter,
     Depends,
@@ -13,6 +16,7 @@ from app.security.auth import (
     UserContext,
     create_access_token,
     get_current_user,
+    is_secure_cookie,
 )
 from app.security.config import get_auth_settings
 from app.security.csrf import generate_csrf_token
@@ -22,6 +26,7 @@ from app.security.user_store import (
     authenticate_user,
     get_user_by_id,
     get_user_companies,
+    get_user_organization_id,
     update_user_password,
 )
 from app.security.refresh_store import (
@@ -50,6 +55,8 @@ class LoginResponse(BaseModel):
     user_id: str
     username: str
     companies: list[str]
+    roles: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
 
 
 class CurrentUserResponse(BaseModel):
@@ -78,6 +85,7 @@ class ChangePasswordRequest(BaseModel):
 def login(
     request: LoginRequest,
     response: Response,
+    http_request: Request,
 ) -> LoginResponse:
     """
     Authenticate a user and issue the JWT access token
@@ -90,6 +98,10 @@ def login(
     )
 
     if result is None:
+        logger.warning(
+            "Authentication failed: Invalid credentials for username '%s'.",
+            request.username,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
@@ -98,14 +110,20 @@ def login(
     user, companies = result
 
     if not companies:
+        logger.warning(
+            "Authentication forbidden: User '%s' has no company access.",
+            user.username,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This user does not have access to any company.",
         )
 
+    org_id = get_user_organization_id(user.user_id) or "default"
     access_token = create_access_token(
         user_id=user.user_id,
         companies=companies,
+        organization_id=org_id,
     )
 
     settings = get_auth_settings()
@@ -125,11 +143,19 @@ def login(
         expires_at=refresh_expires_at,
     )
 
+    secure_cookie = is_secure_cookie(
+        http_request, settings.cookie_secure
+    )
+
+    access_max_age = settings.jwt_expire_minutes * 60
+    refresh_max_age = settings.refresh_token_expire_days * 86400
+
     response.set_cookie(
         key=settings.access_token_cookie_name,
         value=access_token,
+        max_age=access_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.cookie_path,
     )
@@ -137,8 +163,9 @@ def login(
     response.set_cookie(
         key=settings.refresh_token_cookie_name,
         value=refresh_token,
+        max_age=refresh_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.refresh_cookie_path,
     )
@@ -146,16 +173,25 @@ def login(
     response.set_cookie(
         key=settings.csrf_cookie_name,
         value=csrf_token,
+        max_age=refresh_max_age,
         httponly=False,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.cookie_path,
     )
+
+    access = get_user_access(user.user_id)
+    roles = access.get("roles", [])
+    permissions = access.get("permissions", [])
+
+    logger.info("User '%s' authenticated successfully.", user.username)
 
     return LoginResponse(
         user_id=user.user_id,
         username=user.username,
         companies=list(companies),
+        roles=roles,
+        permissions=permissions,
     )
 
 
@@ -275,16 +311,26 @@ def refresh_access_token(
             detail="Refresh session is no longer valid.",
         )
 
+    org_id = get_user_organization_id(user.user_id) or "default"
     new_access_token = create_access_token(
         user_id=user.user_id,
         companies=companies,
+        organization_id=org_id,
     )
+
+    secure_cookie = is_secure_cookie(
+        request, settings.cookie_secure
+    )
+
+    access_max_age = settings.jwt_expire_minutes * 60
+    refresh_max_age = settings.refresh_token_expire_days * 86400
 
     response.set_cookie(
         key=settings.access_token_cookie_name,
         value=new_access_token,
+        max_age=access_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.cookie_path,
     )
@@ -292,8 +338,9 @@ def refresh_access_token(
     response.set_cookie(
         key=settings.refresh_token_cookie_name,
         value=new_refresh_token,
+        max_age=refresh_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.refresh_cookie_path,
     )
@@ -340,6 +387,16 @@ def logout(
         samesite=settings.cookie_samesite,
     )
 
+    # Clean up legacy root-scoped refresh cookie if path is different
+    if settings.refresh_cookie_path != "/":
+        response.delete_cookie(
+            key=settings.refresh_token_cookie_name,
+            path="/",
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+        )
+
     response.delete_cookie(
         key=settings.csrf_cookie_name,
         path=settings.cookie_path,
@@ -356,6 +413,7 @@ def logout(
 def change_password(
     request: ChangePasswordRequest,
     response: Response,
+    http_request: Request,
     current_user: UserContext = Depends(get_current_user),
 ):
     """
@@ -392,9 +450,11 @@ def change_password(
     # Issue fresh tokens for the current session
     companies = get_user_companies(user.user_id)
     settings = get_auth_settings()
+    org_id = current_user.organization_id or get_user_organization_id(user.user_id) or "default"
     new_access_token = create_access_token(
         user_id=user.user_id,
         companies=companies,
+        organization_id=org_id,
     )
     new_refresh_token = generate_refresh_token()
     csrf_token = generate_csrf_token()
@@ -410,11 +470,19 @@ def change_password(
         expires_at=refresh_expires_at,
     )
 
+    secure_cookie = is_secure_cookie(
+        http_request, settings.cookie_secure
+    )
+
+    access_max_age = settings.jwt_expire_minutes * 60
+    refresh_max_age = settings.refresh_token_expire_days * 86400
+
     response.set_cookie(
         key=settings.access_token_cookie_name,
         value=new_access_token,
+        max_age=access_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.cookie_path,
     )
@@ -422,8 +490,9 @@ def change_password(
     response.set_cookie(
         key=settings.refresh_token_cookie_name,
         value=new_refresh_token,
+        max_age=refresh_max_age,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.refresh_cookie_path,
     )
@@ -431,8 +500,9 @@ def change_password(
     response.set_cookie(
         key=settings.csrf_cookie_name,
         value=csrf_token,
+        max_age=refresh_max_age,
         httponly=False,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
         path=settings.cookie_path,
     )
