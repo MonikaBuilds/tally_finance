@@ -44,6 +44,9 @@ const COLUMNS = [
   },
 ]
 
+// The Balance Sheet shows the stock at the END of the period, so this
+// page asks the server for it (stock=closing): Tally's Group Summary
+// export itself carries the opening value on that line.
 /*
  * Balance Sheet -> Group Summary (Tally's drill-down on a Balance Sheet
  * line, e.g. Capital Account, Loans (Liability), Current Liabilities,
@@ -67,14 +70,16 @@ function BalanceSheetGroup() {
   const dates = { from_date: fromDate, to_date: toDate }
 
   const { data: response, loading, error } = useFetch(
-    group ? `/reports/group-summary${buildQuery({ group, ...dates })}` : null
+    group
+      ? `/reports/group-summary${buildQuery({ group, ...dates, stock: 'closing' })}`
+      : null
   )
 
   const exportActions = (
     <ExportButtons
       basePath="/reports/group-summary/export"
       filenameBase={`group_${group}`}
-      params={{ group, from_date: fromDate, to_date: toDate }}
+      params={{ group, from_date: fromDate, to_date: toDate, stock: 'closing' }}
     />
   )
 

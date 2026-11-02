@@ -814,6 +814,8 @@ async def get_stock_item_bills_pending_report(
             "report": result.get("rows", []),
             "details": result.get("details", []),
             "count": result.get("count", 0),
+            # The item's own unit (NOS): Tally prints it after every quantity.
+            "unit": result.get("unit", ""),
         }
 
     except HTTPException:

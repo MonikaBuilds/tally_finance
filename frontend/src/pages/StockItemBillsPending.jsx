@@ -181,11 +181,15 @@ function StockItemBillsPending() {
                               >
                                 <td><em>{formatDate(note.date)}</em></td>
                                 <td><em>{note.voucher_type} {note.voucher_number}</em></td>
-                                <td />
-                                <td className="is-numeric"><em>{qty(Math.abs(note.quantity || 0))} @</em></td>
-                                <td />
-                                <td className="is-numeric"><em>{amountOrBlank(note.rate)}</em></td>
-                                <td />
+                                {/* Tally prints the note's quantity, "@" and rate together
+                                    after the voucher, not in the quantity / rate columns. */}
+                                <td colSpan={5}>
+                                  <em className="bill-note-figures">
+                                    <span className="bill-note-qty">{qty(Math.abs(note.quantity || 0))}</span>
+                                    <span>@</span>
+                                    <span className="bill-note-rate">{amountOrBlank(note.rate)}</span>
+                                  </em>
+                                </td>
                               </tr>
                             ))
                           : []),

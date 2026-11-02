@@ -417,7 +417,7 @@ async def get_voucher_detail(
         cache_res = await _cached_report(
             # v2: response now carries layout/role, bill refs, tax %
             # and current balances - don't serve older cached shapes.
-            report_name="voucher_detail_v2",
+            report_name="voucher_detail_v3",
             company_name=company_name,
             current_user=current_user,
             params={

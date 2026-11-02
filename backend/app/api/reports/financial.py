@@ -3,6 +3,7 @@ Financial reports router: Profit & Loss, Balance Sheet, Trial Balance, Group Sum
 """
 
 import logging
+import re
 import sys
 from datetime import date, timedelta
 from typing import Any
@@ -197,6 +198,54 @@ async def export_profit_loss_report(
 # GROUP SUMMARY (Profit & Loss / Balance Sheet drill-down)
 # ============================================================
 
+def _is_stock_in_hand_row(name) -> bool:
+    """The stock line Tally's Group Summary export labels with the
+    opening value ("Opening Stock", or the Stock-in-Hand group)."""
+    return (name or "").strip().casefold() in {"opening stock", "stock-in-hand", "stock in hand"}
+
+
+async def _closing_stock_value(*, company_name, current_user, from_date, to_date):
+    """
+    The closing stock Tally itself reports for the period: the
+    "Closing Stock" line of the Profit & Loss (same period, same cache
+    entry as /reports/profit-loss). None when Tally gives no such line,
+    in which case the caller leaves the row untouched.
+    """
+    async def _fetch_pl():
+        return await fetch_profit_loss(
+            from_date=from_date,
+            to_date=to_date,
+            company_name=company_name,
+        )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="profit_loss",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch_pl,
+            ttl_name="profit_loss",
+        )
+    except Exception as exc:
+        logger.warning("Closing stock unavailable: %r", exc)
+        return None
+
+    report = cache_res.data
+    if not isinstance(report, dict):
+        return None
+
+    for row in (report.get("left") or []) + (report.get("right") or []):
+        name = re.sub(r"^(add:|less:)\s*", "", (row.get("name") or "").strip(), flags=re.I)
+        if name.casefold() == "closing stock" and row.get("amount") is not None:
+            return round(abs(float(row["amount"])), 2)
+
+    return None
+
+
 @router.get("/group-summary")
 async def get_group_summary_report(
     group: str,
@@ -206,6 +255,7 @@ async def get_group_summary_report(
     current_user: UserContext = Depends(get_current_user),
     force_refresh: bool = False,
     refresh: str | int | None = None,
+    stock: str | None = None,
 ):
     """
     The screen Tally shows when you double-click a P&L/Balance Sheet
@@ -263,6 +313,47 @@ async def get_group_summary_report(
             is_ledger = (row.get("name") or "").strip().casefold() in ledger_names
             rows.append({**row, "is_ledger": is_ledger, "is_group": not is_ledger})
 
+        total_debit = report.get("total_debit", 0)
+        total_credit = report.get("total_credit", 0)
+
+        # Tally's Group Summary export carries the stock-in-hand line
+        # with the OPENING value. On the Balance Sheet (and its group
+        # drill-downs) Tally shows "Closing Stock" - the stock at the
+        # end of the period - so a Balance Sheet drill-down asks for
+        # stock=closing and that line is swapped for the closing value
+        # Tally reports on the Profit & Loss for the same period. The
+        # Trial Balance does not ask, and keeps Opening Stock.
+        if (stock or "").strip().casefold() == "closing":
+            closing_value = await _closing_stock_value(
+                company_name=company_name,
+                current_user=current_user,
+                from_date=from_date,
+                to_date=to_date,
+            )
+
+            if closing_value is not None:
+                swapped = False
+                for index, row in enumerate(rows):
+                    if _is_stock_in_hand_row(row.get("name")):
+                        rows[index] = {
+                            **row,
+                            "name": "Closing Stock",
+                            "debit": closing_value,
+                            "credit": 0,
+                            "is_ledger": False,
+                            "is_group": False,
+                            "kind": "stock",
+                        }
+                        swapped = True
+
+                if swapped:
+                    total_debit = round(
+                        sum(abs(r.get("debit") or 0) for r in rows), 2
+                    )
+                    total_credit = round(
+                        sum(abs(r.get("credit") or 0) for r in rows), 2
+                    )
+
         # The requested name may itself be a ledger rather than a group
         # (e.g. a Balance Sheet / Trial Balance line such as a loan
         # ledger). Tally has no Group Summary for a ledger - it opens
@@ -276,21 +367,23 @@ async def get_group_summary_report(
             "group_name": report.get("group_name", group),
             "report": rows,
             "resolved_as": resolved_as,
-            "total_debit": report.get("total_debit", 0),
-            "total_credit": report.get("total_credit", 0),
+            "total_debit": total_debit,
+            "total_credit": total_credit,
         }
 
     try:
         cache_res = await _cached_report(
-            # v2: rows are now classified from the real ledger list and
-            # the response carries resolved_as - don't serve v1 entries.
-            report_name="group_summary_v2",
+            # v3: rows are classified from the real ledger list, the
+            # response carries resolved_as, and the stock line can be
+            # the closing value - never serve older cached entries.
+            report_name="group_summary_v3",
             company_name=company_name,
             current_user=current_user,
             params={
                 "group": group,
                 "from_date": from_date.isoformat() if from_date else None,
                 "to_date": to_date.isoformat() if to_date else None,
+                "stock": (stock or "").strip().casefold() or None,
             },
             fetcher=_fetch,
             force_refresh=force_refresh,
@@ -692,7 +785,7 @@ async def get_balance_sheet_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="balance_sheet",
+            report_name="balance_sheet_v2",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -758,7 +851,7 @@ async def export_balance_sheet_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="balance_sheet",
+            report_name="balance_sheet_v2",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -801,6 +894,7 @@ async def export_group_summary_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
+    stock: str | None = Query(default=None),
     current_user: UserContext = Depends(get_current_user),
 ):
     _check_format(file_format)
@@ -810,6 +904,7 @@ async def export_group_summary_report(
         company_name=company_name,
         from_date=from_date,
         to_date=to_date,
+        stock=stock,
         current_user=current_user,
     )
     return _export_response(

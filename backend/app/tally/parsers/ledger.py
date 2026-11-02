@@ -929,6 +929,39 @@ def _voucher_items(voucher):
     return items
 
 
+def _item_ledger_names(voucher):
+    """
+    Ledgers Tally books the stock items to (the Purchase / Sales
+    ledger of an item invoice): the ACCOUNTINGALLOCATIONS under each
+    inventory line. Tally shows them in the voucher header, not among
+    the Particulars.
+    """
+
+    names = set()
+
+    for path in (
+        "./ALLINVENTORYENTRIES.LIST",
+        "./INVENTORYENTRIES.LIST",
+    ):
+        for node in voucher.findall(path):
+            for allocation in node.findall("./ACCOUNTINGALLOCATIONS.LIST"):
+                name = _first_text(allocation, "LEDGERNAME", "LEDGER")
+
+                if name:
+                    names.add(name.strip().casefold())
+
+    return names
+
+
+# Tally's caption for that ledger, per voucher family.
+_ITEM_LEDGER_LABELS = {
+    "purchase": "Purchase ledger",
+    "debit_note": "Purchase ledger",
+    "sales": "Sales ledger",
+    "credit_note": "Sales ledger",
+}
+
+
 def _voucher_base_type(voucher_type: str) -> str:
     """
     Map a (possibly custom-named) voucher type onto the Tally voucher
@@ -1266,6 +1299,22 @@ def parse_voucher_detail(
             party_name=party_name,
         )
 
+        # Item invoice: tag the Purchase / Sales ledger so the page can
+        # show it under the party, as Tally does (with its own current
+        # balance), instead of listing it among the Particulars.
+        item_ledger_label = None
+
+        if layout == "invoice" and _voucher_items(voucher):
+            item_ledgers = _item_ledger_names(voucher)
+
+            for entry in entries:
+                if (
+                    entry["role"] == "particular"
+                    and entry["ledger_name"].strip().casefold() in item_ledgers
+                ):
+                    entry["role"] = "item_ledger"
+                    item_ledger_label = _ITEM_LEDGER_LABELS.get(base_type)
+
         vouchers.append(
             {
                 "date": current_date,
@@ -1286,6 +1335,7 @@ def parse_voucher_detail(
                 #                  (Journal, and anything else)
                 "layout": layout,
                 "base_type": base_type,
+                "item_ledger_label": item_ledger_label,
                 "is_invoice": is_invoice,
                 "items": _voucher_items(
                     voucher

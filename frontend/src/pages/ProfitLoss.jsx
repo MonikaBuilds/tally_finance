@@ -8,14 +8,16 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
-import { formatCurrency, formatDate } from '../utils/format'
+import { formatCurrencyExact, formatDate } from '../utils/format'
 import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
-import { buildQuery } from './trialBalance/tbRouting'
+import { buildQuery, tbPath } from './trialBalance/tbRouting'
 
 // Tally lets you double-click almost any line on the P&L to drill into
 // where it came from. We reproduce that exactly:
-//  - Opening Stock / Closing Stock -> Stock Summary (item-wise, with both
-//    opening and closing quantity/value columns)
+//  - Opening Stock -> Opening Stock Summary (item-wise: quantity, rate
+//    and value of the stock the period opens with)
+//  - Closing Stock -> Stock Summary (item-wise, with both opening and
+//    closing quantity/value columns)
 //  - Direct Expenses, Indirect Expenses, Sales Accounts, Purchase
 //    Accounts (and any other group line) -> Group Summary for that
 //    group, which itself keeps drilling: another sub-group (e.g. Office
@@ -36,7 +38,13 @@ function drillDownPathFor(name, dates) {
 
   const normalized = normalizeParticular(name)
 
-  if (normalized === 'opening stock' || normalized === 'closing stock') {
+  // The Trial Balance's Opening Stock Summary page is Tally's own Opening
+  // Stock Summary screen; reuse it, with this P&L's period.
+  if (normalized === 'opening stock') {
+    return tbPath('/opening-stock', dates)
+  }
+
+  if (normalized === 'closing stock') {
     return '/reports/inventory'
   }
 
@@ -71,7 +79,7 @@ function buildColumns() {
       key: 'amount',
       label: 'Amount',
       align: 'right',
-      render: (row) => (row.is_group ? <strong>{formatCurrency(row.amount)}</strong> : formatCurrency(row.amount)),
+      render: (row) => (row.is_group ? <strong>{formatCurrencyExact(row.amount)}</strong> : formatCurrencyExact(row.amount)),
     },
   ]
 }
@@ -268,7 +276,7 @@ function ProfitLoss() {
           />
           <div className="table-footer">
             <span>Total</span>
-            <span>{formatCurrency(leftTotal)}</span>
+            <span>{formatCurrencyExact(leftTotal)}</span>
           </div>
         </Card>
 
@@ -281,7 +289,7 @@ function ProfitLoss() {
           />
           <div className="table-footer">
             <span>Total</span>
-            <span>{formatCurrency(rightTotal)}</span>
+            <span>{formatCurrencyExact(rightTotal)}</span>
           </div>
         </Card>
       </div>

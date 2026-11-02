@@ -8,6 +8,20 @@ export function formatCurrency(value) {
   }).format(value)
 }
 
+// Same as formatCurrency but keeps the paise (1,05,00,000.00), the way
+// Tally prints statement figures. formatCurrency stays whole-rupee for
+// the summary cards that use it.
+export function formatCurrencyExact(value) {
+  if (value === undefined || value === null || value === '') return '-'
+
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
 export function formatNumber(value) {
   if (value === undefined || value === null) return '-'
 

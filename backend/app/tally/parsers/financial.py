@@ -605,13 +605,15 @@ def parse_profit_loss(xml_text: str):
                 entry["amount"]
             )
 
-    # Carry the gross result into the P&L section.
+    # Carry the gross result into the P&L section. Tally prints the
+    # "Gross Profit/Loss b/f" line first in this section, above
+    # Indirect Expenses / Indirect Incomes - not after them.
     if carry_row is not None:
 
         if carry_side == "right":
-            pl_right.append(carry_row)
+            pl_right.insert(0, carry_row)
         else:
-            pl_left.append(carry_row)
+            pl_left.insert(0, carry_row)
 
     total_pl_left = round(
         sum(
@@ -888,6 +890,27 @@ _BS_ASSET_GROUPS = {
 _BS_DIFFERENCE_NAME = "difference in opening balances"
 
 
+def _bs_display_rank(name):
+    """
+    Where Tally prints a line on its side of the Balance Sheet: the
+    primary groups first (in the order Tally sends them), then
+    "Profit & Loss A/c", then "Difference in opening balances" last.
+    Tally's raw XML feed does not always keep that order (it can send
+    Profit & Loss A/c ahead of Current Assets), so the lines are
+    re-ordered to what Tally shows on screen. sorted() is stable, so
+    every other line keeps the order Tally sent.
+    """
+    key = _bs_key(name)
+
+    if key == _BS_DIFFERENCE_NAME:
+        return 2
+
+    if key.startswith("profit & loss") or key.startswith("profit and loss"):
+        return 1
+
+    return 0
+
+
 def _bs_key(name):
     return re.sub(r"\s+", " ", (name or "").strip()).lower()
 
@@ -1062,6 +1085,9 @@ def parse_balance_sheet_report(xml_text: str):
         else:
             assets.append(derived)
             total_assets = round(total_assets + abs(gap), 2)
+
+    liabilities = sorted(liabilities, key=lambda r: _bs_display_rank(r["name"]))
+    assets = sorted(assets, key=lambda r: _bs_display_rank(r["name"]))
 
     return {
         "success": True,

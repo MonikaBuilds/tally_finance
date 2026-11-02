@@ -2485,6 +2485,23 @@ textarea {
   background: var(--accent-soft);
 }
 
+/* A Bills Pending note: "5 NOS @ 1,00,000.00", kept together as Tally
+   prints it. The quantity is right-aligned so the "@" signs line up. */
+.bill-note-figures {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.bill-note-qty {
+  min-width: 6rem;
+  text-align: right;
+}
+
+.bill-note-rate {
+  min-width: 6rem;
+}
+
 
 /* ==========================================================
    Bills Receivable / Payable drill-down (BillsOutstandingTable)

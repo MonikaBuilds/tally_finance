@@ -25,6 +25,18 @@ const numberFormatter = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 2,
 })
 
+// Tally prints a stock item's rate to the paisa (10,000.00 per NOS).
+const rateFormatter = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+})
+
+function formatRate(value) {
+  if (value === undefined || value === null || value === '') return ''
+
+  return rateFormatter.format(Number(value) || 0)
+}
+
 function formatMoney(value) {
   if (value === undefined || value === null || value === '') {
     return inrFormatter.format(0)
@@ -157,7 +169,16 @@ function VoucherDetail() {
       ) || null
     : entries.find((entry) => entry.is_selected_ledger) || entries[0] || null
 
-  const particularEntries = entries.filter((entry) => entry !== topEntry)
+  // Item invoice: the Purchase / Sales ledger the stock is booked to.
+  // Tally shows it under the party with its own current balance, not
+  // among the Particulars (those are the tax / charge lines).
+  const itemLedgerEntries = entries.filter(
+    (entry) => entry.role === 'item_ledger'
+  )
+
+  const particularEntries = entries.filter(
+    (entry) => entry !== topEntry && entry.role !== 'item_ledger'
+  )
 
   const isInvoice = layout === 'invoice'
 
@@ -284,6 +305,30 @@ function VoucherDetail() {
             </div>
           )}
 
+          {/* Purchase ledger / Sales ledger of an item invoice */}
+          {isInvoice &&
+            itemLedgerEntries.map((entry, index) => (
+              <div className="voucher-account-box" key={`${entry.ledger_name}-${index}`}>
+                <div className="voucher-account-label">
+                  {voucher.item_ledger_label || 'Ledger'}
+                </div>
+
+                <div className="voucher-account-main">
+                  <div className="voucher-account-name">{entry.ledger_name}</div>
+
+                  {balanceText(entry) && (
+                    <div className="voucher-curbal">
+                      Current balance: {balanceText(entry)}
+                    </div>
+                  )}
+                </div>
+
+                <div className="voucher-account-amount">
+                  {formatMoney(entryAmount(entry))} {entrySide(entry)}
+                </div>
+              </div>
+            ))}
+
           {/* Stock items on an item invoice */}
           {isInvoice && items.length > 0 && (
             <div className="voucher-particulars">
@@ -302,7 +347,7 @@ function VoucherDetail() {
                 >
                   <span className="voucher-particular-name">{item.name}</span>
                   <span className="voucher-num">{item.quantity}</span>
-                  <span className="voucher-num">{formatPlain(item.rate)}</span>
+                  <span className="voucher-num">{formatRate(item.rate)}</span>
                   <span>{item.unit}</span>
                   <span className="voucher-num voucher-particular-amount">
                     {formatMoney(item.amount)}
@@ -312,6 +357,9 @@ function VoucherDetail() {
             </div>
           )}
 
+          {(layout === 'double_entry' ||
+            particularEntries.length > 0 ||
+            itemLedgerEntries.length === 0) && (
           <div className="voucher-particulars">
             {layout === 'double_entry' ? (
               <div className="voucher-grid voucher-grid--double voucher-particulars-title">
@@ -400,6 +448,7 @@ function VoucherDetail() {
                 <p className="empty-state">No other ledger lines found.</p>
               )}
           </div>
+          )}
 
           {voucher.narration && (
             <p className="card-note voucher-narration">

@@ -6,24 +6,31 @@ import Loader from '../../components/common/Loader'
 import ErrorMessage from '../../components/common/ErrorMessage'
 import Card from '../../components/common/Card'
 import DataTable from '../../components/common/DataTable'
-import { formatCurrency, formatQuantity } from '../../utils/format'
+import { formatAmount, formatQuantityWithUnit } from '../../utils/stockFormat'
 import { buildQuery, dayBefore, tbPath } from './tbRouting'
 
+// Tally's Opening Stock Summary: Particulars, then the Opening Balance
+// as Quantity, Rate and Value. The unit is printed after the quantity
+// (15 NOS), not in a column of its own.
 const COLUMNS = [
-  { key: 'stock_item', label: 'Stock Item' },
-  { key: 'stock_group', label: 'Stock Group' },
-  { key: 'unit', label: 'Unit' },
+  { key: 'stock_item', label: 'Particulars' },
   {
     key: 'quantity',
-    label: 'Opening Qty',
+    label: 'Quantity',
     align: 'right',
-    render: (row) => formatQuantity(row.quantity),
+    render: (row) => formatQuantityWithUnit(row.quantity, row.unit),
+  },
+  {
+    key: 'rate',
+    label: 'Rate',
+    align: 'right',
+    render: (row) => formatAmount(row.rate),
   },
   {
     key: 'value',
-    label: 'Opening Value',
+    label: 'Value',
     align: 'right',
-    render: (row) => formatCurrency(row.value),
+    render: (row) => formatAmount(row.value),
   },
 ]
 
@@ -83,11 +90,19 @@ function TrialBalanceOpeningStock() {
     .map((item) => {
       const quantity = Number(useClosingAsOn ? item.closing_quantity : item.opening_quantity) || 0
       const value = Number(useClosingAsOn ? item.closing_value : item.opening_value) || 0
+
+      // Rate as Tally prints it: the item's closing rate on the day
+      // before the period, or the opening value per unit.
+      const tallyRate = useClosingAsOn ? Number(item.closing_rate) : 0
+      const rate = Number.isFinite(tallyRate) && tallyRate
+        ? Math.abs(tallyRate)
+        : quantity ? Math.abs(value / quantity) : 0
+
       return {
         stock_item: item.stock_item || item.name || '',
-        stock_group: item.stock_group || item.parent || '',
         unit: item.unit || item.base_units || '',
         quantity,
+        rate,
         value,
       }
     })
@@ -121,10 +136,10 @@ function TrialBalanceOpeningStock() {
         <div className="table-footer">
           {units.size === 1 && (
             <span>
-              Total Quantity: {formatQuantity(totalQuantity)} {[...units][0] || ''}
+              Total Quantity: {formatQuantityWithUnit(totalQuantity, [...units][0])}
             </span>
           )}
-          <span>Total Value: {formatCurrency(totalValue)}</span>
+          <span>Total Value: {formatAmount(totalValue)}</span>
         </div>
       </Card>
     </>

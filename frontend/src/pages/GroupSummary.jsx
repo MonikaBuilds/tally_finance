@@ -16,38 +16,29 @@ import { ledgerMonthlyPath } from './trialBalance/tbRouting'
 // Salary / Travelling Expense (now ledgers). Each row drills further:
 // another group re-enters this same page for that name, a ledger goes
 // to its monthly summary on the Ledger page.
-function buildColumns(navigate, fromDate, toDate) {
-  function drillPath(row) {
-    if (row.is_ledger) {
-      const params = new URLSearchParams({
-        ledger: row.name,
-        view: 'monthly',
-      })
-      if (fromDate) params.set('from_date', fromDate)
-      if (toDate) params.set('to_date', toDate)
-      return `/reports/ledger?${params.toString()}`
-    }
+//
+// Where a row leads: a ledger opens its Monthly Summary, a sub-group
+// re-enters this page. The whole row is the click target (no blue
+// link text), the same as on the Profit & Loss page.
+function drillPath(row, fromDate, toDate) {
+  if (!row?.name) return null
 
-    const params = new URLSearchParams({ group: row.name })
-    if (fromDate) params.set('from_date', fromDate)
-    if (toDate) params.set('to_date', toDate)
-    return `/reports/group-summary?${params.toString()}`
+  if (row.is_ledger) {
+    return ledgerMonthlyPath(row.name, { from_date: fromDate, to_date: toDate })
   }
 
+  const params = new URLSearchParams({ group: row.name })
+  if (fromDate) params.set('from_date', fromDate)
+  if (toDate) params.set('to_date', toDate)
+  return `/reports/group-summary?${params.toString()}`
+}
+
+function buildColumns() {
   return [
     {
       key: 'name',
       label: 'Particulars',
-      render: (row) => (
-        <button
-          type="button"
-          className="link-button"
-          onClick={() => navigate(drillPath(row))}
-          title={row.is_ledger ? 'View ledger monthly summary' : 'View group summary'}
-        >
-          {row.name}
-        </button>
-      ),
+      render: (row) => (row.is_group ? <strong>{row.name}</strong> : row.name),
     },
     {
       key: 'debit',
@@ -146,14 +137,19 @@ function GroupSummary() {
   }
 
   const rows = response.report || []
-  const columns = buildColumns(navigate, fromDate, toDate)
+  const columns = buildColumns()
 
   return (
     <>
       {header}
 
       <Card>
-        <DataTable columns={columns} rows={rows} />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          onRowClick={(row) => navigate(drillPath(row, fromDate, toDate))}
+          isRowClickable={(row) => Boolean(drillPath(row, fromDate, toDate))}
+        />
         <div className="table-footer">
           <span>Total Debit: {formatCurrency(response.total_debit || 0)}</span>
           <span>Total Credit: {formatCurrency(response.total_credit || 0)}</span>
