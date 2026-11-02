@@ -9,7 +9,7 @@ import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import { formatDate } from '../utils/format'
-import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
+import { formatSignedAmount, formatSignedQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
 const COLUMNS = [
   { key: 'date', label: 'Date' },
@@ -56,7 +56,8 @@ function StockItemBillsPending() {
   const details = response?.details || []
   const unit = response?.unit || ''
 
-  const qty = (value) => formatQuantityWithUnit(value, unit)
+  // Tally prints a negative quantity as (-)7 NOS.
+  const qty = (value) => formatSignedQuantityWithUnit(value, unit)
 
   // Tally opens a bill with Enter / double-click: the delivery and
   // return notes it is made of are listed under it.
