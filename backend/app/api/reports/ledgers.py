@@ -35,6 +35,7 @@ from app.tally.service import (
     fetch_ledger_list as _real_fetch_ledger_list,
     fetch_ledger_report as _real_fetch_ledger_report,
     fetch_voucher_detail as _real_fetch_voucher_detail,
+    fetch_day_book as _real_fetch_day_book,
     fetch_companies as _real_fetch_companies,
 )
 from app.tally.parsers.ledger import financial_year_bounds
@@ -55,6 +56,9 @@ async def fetch_ledger_report(*args, **kwargs):
 
 async def fetch_voucher_detail(*args, **kwargs):
     return await _get_fetcher("fetch_voucher_detail", _real_fetch_voucher_detail)(*args, **kwargs)
+
+async def fetch_day_book(*args, **kwargs):
+    return await _get_fetcher("fetch_day_book", _real_fetch_day_book)(*args, **kwargs)
 
 async def fetch_companies(*args, **kwargs):
     return await _get_fetcher("fetch_companies", _real_fetch_companies)(*args, **kwargs)
@@ -490,6 +494,105 @@ async def export_ledger_report(
         ),
     )
 
+
+
+# ============================================================
+# DAY BOOK
+# ============================================================
+
+@router.get("/day-book")
+async def get_day_book_report(
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    current_user: UserContext = Depends(get_current_user),
+    force_refresh: bool = False,
+    refresh: str | int | None = None,
+):
+    """
+    Tally's Day Book: every voucher of the period with its date,
+    particulars, voucher type and number, and debit / credit amount
+    (plus inwards / outwards quantity for stock vouchers).
+    """
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date cannot be later than to_date",
+        )
+
+    async def _fetch():
+        return await fetch_day_book(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+    try:
+        cache_res = await _cached_report(
+            report_name="day_book",
+            company_name=company_name,
+            current_user=current_user,
+            params={
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+            },
+            fetcher=_fetch,
+            force_refresh=force_refresh,
+            refresh=refresh,
+            ttl_name="day_book",
+        )
+
+        data = cache_res.data
+
+        return {
+            "success": True,
+            "source": cache_res.source,
+            "is_stale": cache_res.is_stale,
+            "cached_at": cache_res.cached_at,
+            "report": data.get("rows", []),
+            "count": data.get("count", 0),
+            "total_debit": data.get("total_debit", 0),
+            "total_credit": data.get("total_credit", 0),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error("Day Book error: %r", e)
+
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to fetch the Day Book from Tally",
+        )
+
+
+@router.get("/day-book/export/{file_format}")
+async def export_day_book_report(
+    file_format: str,
+    company_name: str | None = Depends(get_authorized_company),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    current_user: UserContext = Depends(get_current_user),
+):
+    _check_format(file_format)
+    resp = await invoke_endpoint(
+        get_day_book_report,
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+        current_user=current_user,
+    )
+    return _export_response(
+        file_format=file_format,
+        company_name=company_name,
+        filename_base="day_book",
+        spec=specs.day_book_spec(
+            resp,
+            company_name,
+            _period_label(from_date=from_date, to_date=to_date),
+        ),
+    )
 
 
 @router.get("/voucher/export/{file_format}")

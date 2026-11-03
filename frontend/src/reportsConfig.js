@@ -7,6 +7,7 @@ export const ALL_REPORTS = [
   { to: '/reports/profit-loss', label: 'Profit & Loss', description: 'Income and expenditure for the selected period.' },
   { to: '/reports/balance-sheet', label: 'Balance Sheet', description: 'Assets and liabilities as on a given date.' },
   { to: '/reports/trial-balance', label: 'Trial Balance', description: 'Ledger-wise debit and credit closing balances.' },
+  { to: '/reports/day-book', label: 'Day Book', description: 'Every voucher of a period, day by day.' },
   { to: '/reports/ledger', label: 'Ledger', description: 'Voucher-wise entries for any ledger account.' },
   { to: '/reports/receivables', label: 'Receivables', description: 'Bills receivable and ageing by party.' },
   { to: '/reports/payables', label: 'Payables', description: 'Bills payable and ageing by party.' },

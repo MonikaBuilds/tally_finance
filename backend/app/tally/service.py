@@ -87,6 +87,8 @@ from app.tally.parsers.inventory_summary import (
 from app.tally.parsers.financial import (
     parse_balance_sheet_report,
 )
+from app.tally.xml_builders.ledger import build_day_book_request
+from app.tally.parsers.day_book import parse_day_book, build_day_book
 from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
@@ -1155,6 +1157,32 @@ async def _fetch_voucher_detail_raw(
     return vouchers
 
 
+
+
+# ============================================================
+# DAY BOOK
+# ============================================================
+
+async def fetch_day_book(
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    """
+    Every voucher of the period, as Tally's Day Book lists them. Tally
+    returns whole collections, so the period is applied here as well.
+    """
+    response = await client.send_xml(
+        build_day_book_request(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    )
+
+    vouchers = clip_vouchers(parse_day_book(response), from_date, to_date)
+
+    return build_day_book(vouchers)
 
 
 # ============================================================

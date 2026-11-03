@@ -345,6 +345,82 @@ def build_voucher_detail_request(
 
 
 # ============================================================
+# DAY BOOK
+# ============================================================
+
+def build_day_book_request(
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> str:
+    """
+    Every voucher of the period, whatever its type - the data behind
+    Tally's Day Book. Each voucher carries its ledger entries (for the
+    Particulars / Debit / Credit columns) and its stock entries (for the
+    Inwards / Outwards quantity of an inventory voucher).
+    """
+
+    company_xml = build_company_variable(company_name)
+    from_date_xml = _date_variable("SVFROMDATE", from_date)
+    to_date_xml = _date_variable("SVTODATE", to_date)
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Day Book Vouchers</ID>
+    </HEADER>
+
+    <BODY>
+        <DESC>
+
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+
+                {company_xml}
+                {from_date_xml}
+                {to_date_xml}
+
+            </STATICVARIABLES>
+
+            <TDL>
+                <TDLMESSAGE>
+
+                    <COLLECTION NAME="Day Book Vouchers">
+                        <TYPE>Voucher</TYPE>
+
+                        <FETCH>
+                            DATE,
+                            GUID,
+                            VOUCHERTYPENAME,
+                            VOUCHERNUMBER,
+                            REFERENCE,
+                            PARTYLEDGERNAME,
+                            PARTYNAME,
+                            NARRATION,
+                            ISDELETED,
+                            ISCANCELLED,
+                            ISOPTIONAL,
+                            ALLLEDGERENTRIES.*,
+                            LEDGERENTRIES.*,
+                            ALLINVENTORYENTRIES.*,
+                            INVENTORYENTRIES.*
+                        </FETCH>
+
+                    </COLLECTION>
+
+                </TDLMESSAGE>
+            </TDL>
+
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""
+
+
+# ============================================================
 # CHATBOT LEDGER REQUEST
 # ============================================================
 

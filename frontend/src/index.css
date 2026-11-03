@@ -2544,3 +2544,17 @@ textarea {
 .bills-item-name {
   margin-left: 8px;
 }
+
+
+/* ==========================================================
+   Day Book
+   ========================================================== */
+
+/* Inwards / Outwards quantity printed under the amount of a stock
+   voucher, as Tally does. */
+.daybook-qty {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 400;
+}

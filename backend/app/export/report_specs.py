@@ -186,6 +186,34 @@ def trial_balance_spec(rows, company, period):
     }], period=period)
 
 
+def day_book_spec(data, company, period):
+    """Day Book: the rows and Grand Total exactly as the page shows."""
+    columns = [
+        col("date", "Date", "date"),
+        col("particulars", "Particulars"),
+        col("voucher_type", "Vch Type"),
+        col("voucher_number", "Vch No."),
+        col("debit", "Debit Amount", "amount", True),
+        col("credit", "Credit Amount", "amount", True),
+    ]
+
+    rows = []
+    for r in data.get("report", []):
+        row = {**r}
+        if row.get("is_cancelled"):
+            row["particulars"] = f"{row.get('particulars') or ''} (Cancelled)".strip()
+        rows.append(row)
+
+    return spec("Day Book", company, [{
+        "columns": columns,
+        "rows": rows,
+        "totals": [{"date": "Grand Total",
+                    "debit": data.get("total_debit", 0),
+                    "credit": data.get("total_credit", 0)}],
+        "filterable": True,
+    }], period=period)
+
+
 def group_summary_spec(data, group, company, period):
     rows = []
     for r in data.get("report", []):

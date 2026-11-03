@@ -9,6 +9,7 @@ import LedgerMonthDetail from './pages/LedgerMonthDetail'
 import VoucherDetail from './pages/Voucherdetail'
 import ProfitLoss from './pages/ProfitLoss'
 import GroupSummary from './pages/GroupSummary'
+import DayBook from './pages/DayBook'
 import Receivables from './pages/Receivables'
 import Payables from './pages/Payables'
 import PendingInvoices from './pages/PendingInvoices'
@@ -321,6 +322,13 @@ function App() {
         <Route
           path="/reports/trial-balance/purchase-bills-pending"
           element={<TrialBalancePurchaseBillsPending />}
+        />
+
+        {/* Day Book */}
+
+        <Route
+          path="/reports/day-book"
+          element={<DayBook />}
         />
 
         {/* Ledger Reports */}
