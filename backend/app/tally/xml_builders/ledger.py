@@ -403,6 +403,7 @@ def build_day_book_request(
                             ISDELETED,
                             ISCANCELLED,
                             ISOPTIONAL,
+                            ISPOSTDATED,
                             ALLLEDGERENTRIES.*,
                             LEDGERENTRIES.*,
                             ALLINVENTORYENTRIES.*,
@@ -510,3 +511,35 @@ def build_chatbot_ledger_request(
         </BODY>
     </ENVELOPE>
     """
+
+
+def build_voucher_type_order_request(company_name: str | None = None) -> str:
+    """Tally's voucher types with their position (MASTERID): the order
+    its Day Book lists a day's vouchers in."""
+
+    return f"""
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Day Book Voucher Types</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                {build_company_variable(company_name)}
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Day Book Voucher Types">
+                        <TYPE>VoucherType</TYPE>
+                        <FETCH>NAME, PARENT, MASTERID</FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"""

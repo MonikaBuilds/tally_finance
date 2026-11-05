@@ -186,8 +186,32 @@ def trial_balance_spec(rows, company, period):
     }], period=period)
 
 
-def day_book_spec(data, company, period):
-    """Day Book: the rows and Grand Total exactly as the page shows."""
+_DAY_BOOK_VIEW_LABELS = {
+    "optional": "Optional vouchers",
+    "cancelled": "Cancelled vouchers",
+    "postdated": "Post-dated vouchers",
+    "all": "All vouchers (including optional)",
+}
+_DAY_BOOK_BASIS_LABELS = {
+    "accounting": "Accounting entries only",
+    "inventory": "Inventory entries only",
+}
+
+
+def _day_book_cell(amount, qty):
+    """
+    One Debit / Credit cell, as the page prints it: the amount, or - for a
+    stock voucher, which carries a quantity instead - the Inwards /
+    Outwards quantity ("2 NOS"). Blank when there is neither.
+    """
+    if _num(amount):
+        return amount
+    return qty or None
+
+
+def day_book_spec(data, company, period, voucher_type=None, view="regular",
+                  basis="all", search=None):
+    """Day Book: the same columns, rows and Grand Total as the page."""
     columns = [
         col("date", "Date", "date"),
         col("particulars", "Particulars"),
@@ -199,10 +223,33 @@ def day_book_spec(data, company, period):
 
     rows = []
     for r in data.get("report", []):
-        row = {**r}
-        if row.get("is_cancelled"):
-            row["particulars"] = f"{row.get('particulars') or ''} (Cancelled)".strip()
-        rows.append(row)
+        particulars = r.get("particulars") or ""
+        if r.get("is_cancelled"):
+            particulars += " (Cancelled)"
+        if r.get("is_optional"):
+            particulars += " (Optional)"
+        if r.get("is_postdated"):
+            particulars += " (Post-dated)"
+
+        rows.append({
+            "date": r.get("date"),
+            "particulars": particulars.strip(),
+            "voucher_type": r.get("voucher_type"),
+            "voucher_number": r.get("voucher_number"),
+            "debit": _day_book_cell(r.get("debit"), r.get("inwards_qty")),
+            "credit": _day_book_cell(r.get("credit"), r.get("outwards_qty")),
+        })
+
+    # Say which slice of the Day Book this is, like Tally's report header.
+    meta = []
+    if voucher_type:
+        meta.append(("Voucher Type", voucher_type))
+    if view in _DAY_BOOK_VIEW_LABELS:
+        meta.append(("Showing", _DAY_BOOK_VIEW_LABELS[view]))
+    if basis in _DAY_BOOK_BASIS_LABELS:
+        meta.append(("Basis", _DAY_BOOK_BASIS_LABELS[basis]))
+    if search:
+        meta.append(("Search", search))
 
     return spec("Day Book", company, [{
         "columns": columns,
@@ -211,7 +258,7 @@ def day_book_spec(data, company, period):
                     "debit": data.get("total_debit", 0),
                     "credit": data.get("total_credit", 0)}],
         "filterable": True,
-    }], period=period)
+    }], period=period, meta=meta)
 
 
 def group_summary_spec(data, group, company, period):

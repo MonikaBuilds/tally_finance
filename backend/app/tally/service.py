@@ -87,8 +87,16 @@ from app.tally.parsers.inventory_summary import (
 from app.tally.parsers.financial import (
     parse_balance_sheet_report,
 )
-from app.tally.xml_builders.ledger import build_day_book_request
-from app.tally.parsers.day_book import parse_day_book, build_day_book
+from app.tally.xml_builders.ledger import (
+    build_day_book_request,
+    build_voucher_type_order_request,
+)
+from app.tally.parsers.day_book import (
+    parse_day_book,
+    build_day_book,
+    parse_voucher_type_ranks,
+    apply_type_order,
+)
 from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
@@ -1182,7 +1190,27 @@ async def fetch_day_book(
 
     vouchers = clip_vouchers(parse_day_book(response), from_date, to_date)
 
-    return build_day_book(vouchers)
+    # Tally lists each day's vouchers by voucher type (its own voucher-type
+    # order), then by voucher number. If the types cannot be read, the
+    # collection's order stands.
+    order_source = "collection"
+    try:
+        ranks = parse_voucher_type_ranks(
+            await client.send_xml(
+                build_voucher_type_order_request(company_name=company_name)
+            )
+        )
+        if ranks:
+            vouchers = apply_type_order(vouchers, ranks)
+            order_source = "tally_voucher_types"
+        else:
+            _log.warning("Day Book order: no voucher types returned by Tally")
+    except Exception:
+        _log.warning("Day Book order: voucher types unavailable", exc_info=True)
+
+    data = build_day_book(vouchers)
+    data["order_source"] = order_source
+    return data
 
 
 # ============================================================

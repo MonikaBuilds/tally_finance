@@ -39,6 +39,12 @@ from app.tally.service import (
     fetch_companies as _real_fetch_companies,
 )
 from app.tally.parsers.ledger import financial_year_bounds
+from app.tally.parsers.day_book import (
+    filter_day_book,
+    pick_default_day,
+    VIEWS as DAY_BOOK_VIEWS,
+    BASES as DAY_BOOK_BASES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,11 +506,45 @@ async def export_ledger_report(
 # DAY BOOK
 # ============================================================
 
+def _day_book_period_label(resp, from_date, to_date) -> str | None:
+    """The day (or period) the export is for: one date for a single day,
+    as Tally's Day Book prints "For 31-Mar-26"."""
+    start = from_date or (
+        date.fromisoformat(resp["from_date"]) if resp.get("from_date") else None
+    )
+    end = to_date or (
+        date.fromisoformat(resp["to_date"]) if resp.get("to_date") else None
+    )
+
+    if start and end and start == end:
+        return start.strftime("%d-%b-%Y")
+
+    return _period_label(from_date=start, to_date=end)
+
+
+def _check_day_book_options(view: str, basis: str) -> None:
+    if view not in DAY_BOOK_VIEWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"view must be one of: {', '.join(DAY_BOOK_VIEWS)}",
+        )
+
+    if basis not in DAY_BOOK_BASES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"basis must be one of: {', '.join(DAY_BOOK_BASES)}",
+        )
+
+
 @router.get("/day-book")
 async def get_day_book_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = None,
     to_date: date | None = None,
+    voucher_type: str | None = None,
+    view: str = "regular",
+    basis: str = "all",
+    search: str | None = None,
     current_user: UserContext = Depends(get_current_user),
     force_refresh: bool = False,
     refresh: str | int | None = None,
@@ -513,12 +553,19 @@ async def get_day_book_report(
     Tally's Day Book: every voucher of the period with its date,
     particulars, voucher type and number, and debit / credit amount
     (plus inwards / outwards quantity for stock vouchers).
+
+    The period is fetched from Tally once and cached; voucher type (F4),
+    view (regular / optional / cancelled / post-dated), basis of values
+    (Ctrl+B) and search (Ctrl+F) are applied to that cached period, so
+    changing them never needs another round trip to Tally.
     """
     if from_date and to_date and from_date > to_date:
         raise HTTPException(
             status_code=400,
             detail="from_date cannot be later than to_date",
         )
+
+    _check_day_book_options(view, basis)
 
     async def _fetch():
         return await fetch_day_book(
@@ -529,7 +576,8 @@ async def get_day_book_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="day_book",
+            # v2: rows now carry narration, detail lines and flags.
+            report_name="day_book_v5",
             company_name=company_name,
             current_user=current_user,
             params={
@@ -542,17 +590,55 @@ async def get_day_book_report(
             ttl_name="day_book",
         )
 
-        data = cache_res.data
+        raw = cache_res.data
+        shown_from, shown_to = from_date, to_date
+
+        if from_date is None and to_date is None:
+            # No period asked for: open on ONE day, like Tally's Day Book.
+            fy_start, fy_end = await _company_financial_year(
+                company_name, current_user
+            )
+            dates = [
+                r["date"] for r in raw.get("rows", []) if r.get("date")
+            ]
+            latest = date.fromisoformat(max(dates)[:10]) if dates else None
+
+            day = pick_default_day(
+                date.today(), fy_start, fy_end, latest
+            )
+            shown_from = shown_to = day
+            raw = {
+                **raw,
+                "rows": [
+                    r for r in raw.get("rows", [])
+                    if (r.get("date") or "") == day.isoformat()
+                ],
+            }
+
+        data = filter_day_book(
+            raw,
+            voucher_type=voucher_type,
+            view=view,
+            basis=basis,
+            search=search,
+        )
 
         return {
             "success": True,
             "source": cache_res.source,
             "is_stale": cache_res.is_stale,
             "cached_at": cache_res.cached_at,
-            "report": data.get("rows", []),
-            "count": data.get("count", 0),
-            "total_debit": data.get("total_debit", 0),
-            "total_credit": data.get("total_credit", 0),
+            # The period actually shown (the opening day when none was asked).
+            "from_date": shown_from.isoformat() if shown_from else None,
+            "to_date": shown_to.isoformat() if shown_to else None,
+            "report": data["rows"],
+            "count": data["count"],
+            "total_debit": data["total_debit"],
+            "total_credit": data["total_credit"],
+            "voucher_types": data["voucher_types"],
+            "exceptions": data["exceptions"],
+            # "tally_voucher_types" when Tally's voucher-type order was applied.
+            "order_source": raw.get("order_source", "collection"),
         }
 
     except HTTPException:
@@ -573,6 +659,10 @@ async def export_day_book_report(
     company_name: str | None = Depends(get_authorized_company),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
+    voucher_type: str | None = Query(default=None),
+    view: str = Query(default="regular"),
+    basis: str = Query(default="all"),
+    search: str | None = Query(default=None),
     current_user: UserContext = Depends(get_current_user),
 ):
     _check_format(file_format)
@@ -581,6 +671,10 @@ async def export_day_book_report(
         company_name=company_name,
         from_date=from_date,
         to_date=to_date,
+        voucher_type=voucher_type,
+        view=view,
+        basis=basis,
+        search=search,
         current_user=current_user,
     )
     return _export_response(
@@ -590,7 +684,11 @@ async def export_day_book_report(
         spec=specs.day_book_spec(
             resp,
             company_name,
-            _period_label(from_date=from_date, to_date=to_date),
+            _day_book_period_label(resp, from_date, to_date),
+            voucher_type=voucher_type,
+            view=view,
+            basis=basis,
+            search=search,
         ),
     )
 
