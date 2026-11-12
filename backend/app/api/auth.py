@@ -371,11 +371,15 @@ def logout(
             refresh_token
         )
 
+    secure_cookie = is_secure_cookie(
+        request, settings.cookie_secure
+    )
+
     response.delete_cookie(
         key=settings.access_token_cookie_name,
         path=settings.cookie_path,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
     )
 
@@ -383,7 +387,7 @@ def logout(
         key=settings.refresh_token_cookie_name,
         path=settings.refresh_cookie_path,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
     )
 
@@ -393,7 +397,7 @@ def logout(
             key=settings.refresh_token_cookie_name,
             path="/",
             httponly=True,
-            secure=settings.cookie_secure,
+            secure=secure_cookie,
             samesite=settings.cookie_samesite,
         )
 
@@ -401,7 +405,7 @@ def logout(
         key=settings.csrf_cookie_name,
         path=settings.cookie_path,
         httponly=False,
-        secure=settings.cookie_secure,
+        secure=secure_cookie,
         samesite=settings.cookie_samesite,
     )
 

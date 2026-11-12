@@ -94,7 +94,9 @@ function App() {
 
         sessionStorage.removeItem('chat_user')
         sessionStorage.removeItem('selected_company')
-        clearBrowserCache()
+        // Explicitly clear non-HttpOnly CSRF cookie on client side as well
+    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
+    clearBrowserCache()
 
         setCurrentUser(null)
         setIsAuthenticated(false)
@@ -119,7 +121,9 @@ function App() {
       sessionStorage.removeItem('chat_user')
       sessionStorage.removeItem('selected_company')
       sessionStorage.removeItem('tfi.dashboard.date_filter')
-      clearBrowserCache()
+      // Explicitly clear non-HttpOnly CSRF cookie on client side as well
+    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
+    clearBrowserCache()
       setCurrentUser(null)
       setIsAuthenticated(false)
     }
@@ -166,6 +170,8 @@ function App() {
       error
     )
   } finally {
+    // Explicitly clear non-HttpOnly CSRF cookie on client side as well
+    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
     clearBrowserCache()
     sessionStorage.removeItem('chat_user')
     sessionStorage.removeItem('selected_company')

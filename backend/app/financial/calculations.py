@@ -93,15 +93,44 @@ def build_dashboard_financials(
         sales
     )
 
-    total_expenses = (
-        abs(cost_of_sales)
-        + abs(indirect_expenses)
+    # 1. Look for native Tally expenses lines first
+    native_total_expenses = find_report_value(
+        profit_loss,
+        "Total Expenses"
+    )
+    if native_total_expenses:
+        total_expenses = abs(native_total_expenses)
+    else:
+        total_expenses = (
+            abs(cost_of_sales)
+            + abs(indirect_expenses)
+        )
+
+    # 2. Look for native Tally Net Profit / Net Loss lines first
+    native_net_profit = find_report_value(
+        profit_loss,
+        "Net Profit"
+    ) or find_report_value(
+        profit_loss,
+        "Nett Profit"
+    )
+    native_net_loss = find_report_value(
+        profit_loss,
+        "Net Loss"
+    ) or find_report_value(
+        profit_loss,
+        "Nett Loss"
     )
 
-    net_profit = (
-        revenue
-        - total_expenses
-    )
+    if native_net_profit:
+        net_profit = abs(native_net_profit)
+    elif native_net_loss:
+        net_profit = -abs(native_net_loss)
+    else:
+        net_profit = (
+            revenue
+            - total_expenses
+        )
 
     return {
         "revenue": round(

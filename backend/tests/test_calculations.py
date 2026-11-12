@@ -381,3 +381,27 @@ def test_build_pending_invoices_from_reports():
         result["invoices"][1]["type"]
         == "payable"
     )
+
+
+def test_build_dashboard_financials_uses_native_net_profit():
+    from app.financial.calculations import build_dashboard_financials
+
+    # Tally report with native Net Profit row
+    profit_loss = [
+        {"name": "Sales Accounts", "main_amount": 100000.0},
+        {"name": "Cost of Sales", "main_amount": 40000.0},
+        {"name": "Indirect Expenses", "main_amount": 10000.0},
+        {"name": "Net Profit", "main_amount": 55000.0},  # Native figure from Tally includes other incomes
+    ]
+
+    result = build_dashboard_financials(
+        profit_loss=profit_loss,
+        receivables={},
+        payables={},
+        pending_invoices={},
+    )
+
+    # Must prioritize Tally's native 55,000 rather than in-memory 100k - 50k = 50k
+    assert result["net_profit"] == 55000.0
+    assert result["revenue"] == 100000.0
+    assert result["expenses"] == 50000.0

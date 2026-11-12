@@ -39,8 +39,10 @@ async def csrf_protection_middleware(
         return await call_next(request)
 
     # Login occurs before an authenticated browser session
-    # exists, so it must remain exempt.
-    if request.url.path in CSRF_EXEMPT_PATHS:
+    # exists, and logout must cleanly invalidate sessions,
+    # so both remain exempt.
+    normalized_path = request.url.path.rstrip("/")
+    if normalized_path in CSRF_EXEMPT_PATHS or request.url.path in CSRF_EXEMPT_PATHS:
         return await call_next(request)
 
     # CSRF protection is required for cookie-authenticated

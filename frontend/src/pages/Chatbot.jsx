@@ -112,6 +112,7 @@ function Chatbot() {
           intent: response.intent,
           blocked:
             response.intent === 'write_operation',
+          isStale: Boolean(response.is_stale || response.source === 'stale_cache'),
         },
       ])
     } catch (err) {
@@ -158,6 +159,13 @@ function Chatbot() {
                 }
               >
                 {message.content}
+                {message.isStale && (
+                  <div>
+                    <span className="chat-stale-tag" title="Data served from cached fallback while Tally was offline">
+                      Offline Cached Data
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ))}

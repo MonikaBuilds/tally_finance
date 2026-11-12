@@ -1,8 +1,11 @@
+import logging
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
 )
+
+logger = logging.getLogger(__name__)
 
 from app.chatbot.concurrency_limiter import (
     user_concurrency_limiter,
@@ -81,15 +84,8 @@ async def chat(
             requested_company=request.company_name,
         )
 
-        # Resolve the organization only from the authenticated user.
-        resolved_org = get_user_organization_id(current_user.user_id)
-
-        if not resolved_org:
-            raise HTTPException(
-                status_code=500,
-                detail="Unable to resolve user organization.",
-            )
-
+        # Resolve the organization from the validated token (or DB fallback).
+        resolved_org = current_user.organization_id or get_user_organization_id(current_user.user_id) or "default"
         org_id = str(resolved_org)
 
         # Process the user's financial question only after
@@ -123,9 +119,10 @@ async def chat(
         # 401, 403 and 429 responses.
         raise
 
-    except Exception:
+    except Exception as exc:
         # Do not expose internal Tally, Gemini or server errors
-        # directly to the frontend.
+        # directly to the frontend, but record full trace for diagnostics.
+        logger.exception("Unexpected error processing chat request: %s", exc)
         raise HTTPException(
             status_code=500,
             detail=(

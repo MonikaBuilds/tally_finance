@@ -129,3 +129,5 @@ async def test_unauthorized_tool_is_blocked(
     assert result["source"] == "authorization"
     assert result["data"] is None
     assert "not authorized" in result["message"]
+    assert "'Banking'" in result["message"]
+    assert "administrator" in result["message"]
