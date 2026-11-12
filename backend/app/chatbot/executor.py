@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.chatbot.tool_registry import TOOL_FUNCTIONS
-from app.security.permissions import can_execute_tool
+from app.security.permissions import can_execute_tool, get_required_permission
 from app.cache.config import cache_settings
 from app.cache.keys import build_cache_key
 from app.cache.manager import cache_manager
@@ -58,9 +58,6 @@ APPLICATION_AGGREGATION_TOOLS = {
     "get_highest_payable",
     "get_overdue_receivables",
     "get_overdue_payables",
-    "get_revenue",
-    "get_expenses",
-    "get_net_profit",
     "get_financial_summary",
     "get_party_outstanding_summary",
     "get_outstanding_summary",
@@ -86,7 +83,6 @@ APPLICATION_AGGREGATION_TOOLS = {
     "get_input_gst",
     "get_output_gst",
     "get_gst_summary",
-    "get_stock_summary",
     "get_top_stock_items",
     "get_negative_stock_items",
     "get_tds_summary",
@@ -311,12 +307,14 @@ async def execute_tool(
         user_id=user_id,
         tool_name=tool_name,
     ):
+        req_perm = get_required_permission(tool_name)
+        perm_label = f"'{req_perm.title()}'" if req_perm else "this type of financial"
         return {
             "success": False,
             "source": "authorization",
             "message": (
-                "You are not authorized to access "
-                "this type of financial data."
+                f"You are not authorized to access {perm_label} data. "
+                "Please contact your administrator to request access."
             ),
             "data": None,
         }

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 
+from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
@@ -14,6 +15,8 @@ from app.chatbot.tool_registry import TOOL_DEFINITIONS
 logger = logging.getLogger(__name__)
 
 
+_BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(_BACKEND_ENV)
 load_dotenv()
 
 
@@ -27,7 +30,7 @@ FALLBACK_MODEL_NAME = os.getenv("GEMINI_FALLBACK_MODEL")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL",
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/free",
 )
 OPENROUTER_CHAT_COMPLETIONS_URL = (
     "https://openrouter.ai/api/v1/chat/completions"
@@ -36,9 +39,15 @@ OPENROUTER_CHAT_COMPLETIONS_URL = (
 GEMINI_TIMEOUT_SECONDS = 8
 
 
-client = genai.Client(
-    api_key=GEMINI_API_KEY,
-)
+client = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(
+            api_key=GEMINI_API_KEY,
+        )
+    except Exception as exc:
+        logger.warning("Could not initialize genai.Client: %s", exc)
+        client = None
 
 
 SYSTEM_INSTRUCTION = """
@@ -189,6 +198,16 @@ async def _select_tool_with_openrouter(message: str) -> dict | None:
 async def select_tool(
     message: str,
 ) -> dict:
+    if client is None:
+        logger.info("Gemini client is not configured; attempting OpenRouter fallback.")
+        fallback_selection = await _select_tool_with_openrouter(message)
+        if fallback_selection is not None:
+            return fallback_selection
+        return {
+            "tool_name": None,
+            "arguments": {},
+            "error": "authentication",
+        }
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         tools=GEMINI_TOOLS,

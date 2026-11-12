@@ -258,3 +258,18 @@ async def test_unsupported_question_has_no_tool(
     )
 
     assert result["tool_name"] is None
+
+@pytest.mark.asyncio
+async def test_select_tool_when_gemini_client_none_falls_back(monkeypatch):
+    monkeypatch.setattr(gemini_client, "client", None)
+    async def fake_openrouter(msg):
+        return {"tool_name": "get_revenue", "arguments": {}, "error": None}
+
+    monkeypatch.setattr(
+        gemini_client,
+        "_select_tool_with_openrouter",
+        fake_openrouter,
+    )
+
+    result = await gemini_client.select_tool("What is my revenue?")
+    assert result["tool_name"] == "get_revenue"
