@@ -10,6 +10,7 @@ import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
 import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
+import FinancialYearPresets from '../components/common/FinancialYearPresets'
 import { buildQuery } from './trialBalance/tbRouting'
 import { balanceSheetLinePath, balanceSheetChildPath } from './Balancesheet/bsRouting'
 
@@ -134,6 +135,12 @@ function BalanceSheet() {
     setSearchParams({}, { replace: true })
   }
 
+  function applyPreset({ from, to }) {
+    setDateError(null)
+    setDraft({ from: null, to: null })
+    setSearchParams({ from_date: from, to_date: to }, { replace: true })
+  }
+
   const dateFilter = (
     <Card title="Period">
       <form className="ledger-filters" onSubmit={applyDates}>
@@ -160,6 +167,8 @@ function BalanceSheet() {
         <button type="submit" className="btn">
           Apply
         </button>
+
+        <FinancialYearPresets from={fromDate} to={toDate} onSelect={applyPreset} />
 
         {financialYear.from && financialYear.to && (
           <button type="button" className="btn btn-secondary" onClick={resetDates}>

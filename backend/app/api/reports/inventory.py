@@ -614,6 +614,18 @@ async def get_stock_item_monthly_report(
 ):
     _check_period(from_date, to_date)
 
+    # No period asked for: open on the company's current financial year
+    # from Tally's own company data (as Tally's screen does), not on a
+    # year worked out from today's date.
+    if not from_date and not to_date:
+        from app.api.reports.ledgers import _company_financial_year
+
+        fy_start, fy_end = await _company_financial_year(
+            company_name, current_user
+        )
+        if fy_start and fy_end:
+            from_date, to_date = fy_start, fy_end
+
     async def _fetch():
         if godown_name:
             summary = await fetch_godown_item_monthly(
@@ -634,7 +646,7 @@ async def get_stock_item_monthly_report(
 
     try:
         cache_res = await _cached_report(
-            report_name="stock_item_monthly_v4",
+            report_name="stock_item_monthly_v6",
             company_name=company_name,
             current_user=current_user,
             params={

@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
@@ -8,6 +9,7 @@ import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
+import FinancialYearPresets from '../components/common/FinancialYearPresets'
 import { formatMonthKey } from '../utils/format'
 import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/stockFormat'
 
@@ -19,13 +21,16 @@ import { formatSignedAmount, formatQuantityWithUnit, toQuery } from '../utils/st
  * then Inwards / Outwards / Closing for each month. The only things
  * done here are laying the rows out and adding up the Grand Total line.
  *
- * Period: ?from / ?to when given (drill-downs always pass them).
+ * Period: ?from / ?to when given (drill-downs always pass them) and
+ * changeable here with From / To Date or the This FY / Last FY buttons.
  * Otherwise the backend picks the latest financial year that has stock
  * activity in Tally and returns it as from / to.
  */
 function StockItemMonthlySummary() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [draft, setDraft] = useState({ from: null, to: null })
+  const [dateError, setDateError] = useState(null)
   const itemName = searchParams.get('item') || ''
 
   // ?location=<godown> turns this into Tally's Godown Monthly Summary
@@ -45,6 +50,35 @@ function StockItemMonthlySummary() {
 
   const from = response?.from || searchParams.get('from')
   const to = response?.to || searchParams.get('to')
+
+  const inputFrom = draft.from ?? from ?? ''
+  const inputTo = draft.to ?? to ?? ''
+
+  const showPeriod = (nextFrom, nextTo) => {
+    setDateError(null)
+    setDraft({ from: null, to: null })
+
+    const next = new URLSearchParams(searchParams)
+    next.set('from', nextFrom)
+    next.set('to', nextTo)
+    setSearchParams(next, { replace: true })
+  }
+
+  const applyDates = (event) => {
+    event.preventDefault()
+
+    if (!inputFrom || !inputTo) {
+      setDateError('Select both a From Date and a To Date.')
+      return
+    }
+
+    if (inputFrom > inputTo) {
+      setDateError('From Date cannot be later than To Date.')
+      return
+    }
+
+    showPeriod(inputFrom, inputTo)
+  }
 
   const unit = response?.unit
   const months = Array.isArray(response?.report) ? response.report : []
@@ -134,6 +168,47 @@ function StockItemMonthlySummary() {
           />
         }
       />
+
+      {itemName && (
+        <Card title="Period">
+          <form className="ledger-filters" onSubmit={applyDates}>
+            <div className="form-field form-field--date">
+              <label htmlFor="sim-from">From Date</label>
+              <input
+                id="sim-from"
+                type="date"
+                value={inputFrom}
+                onChange={(event) => setDraft((d) => ({ ...d, from: event.target.value }))}
+              />
+            </div>
+
+            <div className="form-field form-field--date">
+              <label htmlFor="sim-to">To Date</label>
+              <input
+                id="sim-to"
+                type="date"
+                value={inputTo}
+                onChange={(event) => setDraft((d) => ({ ...d, to: event.target.value }))}
+              />
+            </div>
+
+            <button type="submit" className="btn">Apply</button>
+
+            <FinancialYearPresets
+              from={from}
+              to={to}
+              onSelect={({ from: f, to: t }) => showPeriod(f, t)}
+            />
+          </form>
+
+          {dateError && (
+            <p className="selection-error">
+              <AlertCircle size={16} />
+              {dateError}
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card>
         {!itemName && <ErrorMessage message="No stock item was specified." />}

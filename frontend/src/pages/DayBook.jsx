@@ -10,6 +10,7 @@ import ExportButtons from '../components/common/ExportButtons'
 import { formatDate } from '../utils/format'
 import { buildQuery } from './trialBalance/tbRouting'
 import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
+import FinancialYearPresets from '../components/common/FinancialYearPresets'
 
 // Tally prints Day Book amounts to the paisa, without a currency sign.
 const amountFormat = new Intl.NumberFormat('en-IN', {
@@ -257,6 +258,13 @@ function DayBook() {
           <button type="button" className="btn btn-secondary" onClick={showCurrentDate}>
             Current date
           </button>
+
+          <FinancialYearPresets
+            from={urlFrom}
+            to={urlTo}
+            className="daybook-nav"
+            onSelect={({ from, to }) => showPeriod(from, to)}
+          />
 
           {financialYear.from && financialYear.to && (
             <button

@@ -1639,10 +1639,18 @@ def _tally_amount(text, *, debit: bool):
     return 0.0 if value == 0 else value
 
 
-def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[dict]:
+def parse_item_monthly_summary(
+    xml_text: str,
+    start_year: int = 2025,
+) -> list[dict]:
     """
     Parse Tally's native Item Monthly Summary XML response.
     Each period node contains exact inward, outward and closing quantities and values.
+
+    Tally names the months but not the years. The first month belongs to
+    `start_year` (the calendar year of the period's from-date); every time the month number drops (December -> January)
+    the year moves on, so a period starting mid-financial-year, or one
+    spanning more than twelve months, is labelled correctly.
     """
     root = parse_xml(xml_text)
     rows = []
@@ -1652,13 +1660,18 @@ def parse_item_monthly_summary(xml_text: str, start_year: int = 2025) -> list[di
 
     import calendar
 
+    year = start_year
+    previous_month = None
+
     for p_node, s_node in zip(periods, stkinfos):
         p_name = (p_node.text or "").strip().lower()
         month_num = MONTH_MAP.get(p_name)
         if not month_num:
             continue
 
-        year = start_year if month_num >= 4 else start_year + 1
+        if previous_month is not None and month_num < previous_month:
+            year += 1
+        previous_month = month_num
         month_str = f"{year}-{month_num:02d}"
 
         in_qty = _stock_quantity_value(_text(s_node, ".//DSPINQTY"))

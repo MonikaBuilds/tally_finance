@@ -11,6 +11,7 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
+import FinancialYearPresets from '../components/common/FinancialYearPresets'
 import { formatCurrency, formatQuantity, financialYearRange } from '../utils/format'
 import { formatAmount } from '../utils/stockFormat'
 
@@ -128,6 +129,17 @@ function RegisterTab({ registerKey }) {
               onChange={(event) => setToDate(event.target.value)}
             />
           </div>
+
+          <FinancialYearPresets
+            from={fromDate}
+            to={toDate}
+            onSelect={({ from, to }) => {
+              const next = new URLSearchParams(searchParams)
+              next.set('from', from)
+              next.set('to', to)
+              setSearchParams(next)
+            }}
+          />
         </div>
 
         <ExportButtons
@@ -206,44 +218,104 @@ const STOCK_SUMMARY_COLUMNS = [
 
 function StockSummaryTab() {
   const navigate = useNavigate()
-  const [toDate, setToDate] = useState('')
-  const [touched, setTouched] = useState(false)
-  const { date: defaultAsOnDate } = useDefaultAsOnDate()
 
-  // Prefill with the end of the company's current financial year (once
-  // we know it) so the report isn't silently run "as on" today's date,
-  // which is often past the end of the period that actually has data.
-  useEffect(() => {
-    if (!touched && defaultAsOnDate && !toDate) {
-      setToDate(defaultAsOnDate)
-    }
-  }, [defaultAsOnDate, touched, toDate])
+  // The period lives in the URL (?from=...&to=...) so Back from a stock
+  // item's monthly summary returns to the same period. With no dates it
+  // is the current financial year, worked out from today's date.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const thisFy = useMemo(() => financialYearRange(0), [])
 
-  // The financial year containing the "as on" date, so Tally computes
-  // opening figures from that year's start rather than its own default.
-  const params = {
-    from_date: toDate ? financialYearRange(0, new Date(toDate)).from : undefined,
-    to_date: toDate || undefined,
+  const fromDate = searchParams.get('from') || thisFy.from
+  const toDate = searchParams.get('to') || thisFy.to
+
+  // Edits made in the date inputs but not applied yet.
+  const [draft, setDraft] = useState({ from: null, to: null })
+  const [dateError, setDateError] = useState(null)
+
+  const inputFrom = draft.from ?? fromDate
+  const inputTo = draft.to ?? toDate
+
+  const showPeriod = (from, to) => {
+    setDateError(null)
+    setDraft({ from: null, to: null })
+
+    const next = new URLSearchParams(searchParams)
+    next.set('from', from)
+    next.set('to', to)
+    setSearchParams(next)
   }
+
+  const applyDates = (event) => {
+    event.preventDefault()
+
+    if (!inputFrom || !inputTo) {
+      setDateError('Select both a From Date and a To Date.')
+      return
+    }
+
+    if (inputFrom > inputTo) {
+      setDateError('From Date cannot be later than To Date.')
+      return
+    }
+
+    showPeriod(inputFrom, inputTo)
+  }
+
+  // Opening = the balance at the start of From Date, Closing = the
+  // balance at the end of To Date; both are worked out by the backend
+  // from Tally.
+  const params = { from_date: fromDate, to_date: toDate }
 
   return (
     <>
       <div className="tab-header-toolbar">
-        <DateFilter
-          label="As on Date"
-          value={toDate}
-          onChange={(value) => {
-            setTouched(true)
-            setToDate(value)
-          }}
-        />
+        <form className="ledger-filters filter-bar" onSubmit={applyDates}>
+          <div className="form-field form-field--date">
+            <label htmlFor="stock-item-from">From Date</label>
+            <input
+              id="stock-item-from"
+              type="date"
+              value={inputFrom}
+              onChange={(event) => setDraft((d) => ({ ...d, from: event.target.value }))}
+            />
+          </div>
+
+          <div className="form-field form-field--date">
+            <label htmlFor="stock-item-to">To Date</label>
+            <input
+              id="stock-item-to"
+              type="date"
+              value={inputTo}
+              onChange={(event) => setDraft((d) => ({ ...d, to: event.target.value }))}
+            />
+          </div>
+
+          <button type="submit" className="btn">Apply</button>
+
+          <FinancialYearPresets
+            from={fromDate}
+            to={toDate}
+            onSelect={({ from, to }) => showPeriod(from, to)}
+          />
+        </form>
+
         <ExportButtons
           basePath="/reports/stock-summary/export"
           params={params}
           filenameBase="stock_summary"
         />
       </div>
-      <p className="table-hint">Click a stock item to view its Stock Monthly Summary.</p>
+
+      {dateError && (
+        <p className="selection-error">
+          <AlertCircle size={16} />
+          {dateError}
+        </p>
+      )}
+
+      <p className="table-hint">
+        Click a stock item to view its Stock Monthly Summary for {fromDate} to {toDate}.
+      </p>
       <ReportBody
         path={`/reports/stock-summary${toQuery(params)}`}
         columns={STOCK_SUMMARY_COLUMNS}
@@ -251,21 +323,16 @@ function StockSummaryTab() {
         exportBasePath="/reports/stock-summary/export"
         exportParams={params}
         filenameBase="stock_summary"
-        onRowClick={(row) => {
-          // Anchor the monthly-summary drill-down to the financial year
-          // that contains the "As on Date" the user actually picked here,
-          // instead of letting that page default to *today's* real-world
-          // financial year (which, once you're past year-end, is a year
-          // with no data at all).
-          const anchor = toDate ? financialYearRange(0, new Date(toDate)) : null
+        onRowClick={(row) =>
+          // The monthly summary opens for the same From / To period.
           navigate(
             `/reports/stock-item-monthly${toQuery({
               item: row.stock_item,
-              from: anchor?.from,
-              to: anchor?.to,
+              from: fromDate,
+              to: toDate,
             })}`
           )
-        }}
+        }
         footer={(rows) => {
           const totalValue = rows.reduce((sum, row) => sum + (Number(row.closing_value) || 0), 0)
           return (

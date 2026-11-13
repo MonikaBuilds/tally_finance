@@ -10,6 +10,7 @@ import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import { formatCurrencyExact, formatDate } from '../utils/format'
 import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
+import FinancialYearPresets from '../components/common/FinancialYearPresets'
 import { buildQuery, tbPath } from './trialBalance/tbRouting'
 
 // Tally lets you double-click almost any line on the P&L to drill into
@@ -166,6 +167,12 @@ function ProfitLoss() {
     setSearchParams({}, { replace: true })
   }
 
+  function applyPreset({ from, to }) {
+    setDateError(null)
+    setDraft({ from: null, to: null })
+    setSearchParams({ from_date: from, to_date: to }, { replace: true })
+  }
+
   const dateFilter = (
     <Card title="Period">
       <form className="ledger-filters" onSubmit={applyDates}>
@@ -192,6 +199,8 @@ function ProfitLoss() {
         <button type="submit" className="btn">
           Apply
         </button>
+
+        <FinancialYearPresets from={fromDate} to={toDate} onSelect={applyPreset} />
 
         {financialYear.from && financialYear.to && (
           <button type="button" className="btn btn-secondary" onClick={resetDates}>

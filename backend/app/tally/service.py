@@ -1835,6 +1835,36 @@ async def _load_item_master(
     return None
 
 
+async def _item_closing_on(
+    stock_item_name: str,
+    company_name: str | None,
+    day: date,
+) -> dict | None:
+    """
+    The item's closing quantity / value on `day`, from Tally's Stock
+    Summary as on that day (the same call that rolls the stock opening
+    forward). The Stock Item collection cannot be used for this: it
+    returns the same balance whatever date it is asked for.
+    """
+    summary = parse_stock_summary(
+        await client.send_xml(
+            build_stock_summary_request(
+                company_name=company_name,
+                to_date=day,
+            ),
+            timeout=STOCK_SUMMARY_TIMEOUT,
+        )
+    )
+
+    target = stock_item_name.strip().casefold()
+
+    for row in summary.get("rows", []):
+        if (row.get("name") or "").strip().casefold() == target:
+            return row
+
+    return None
+
+
 async def fetch_stock_item_monthly(
     stock_item_name: str,
     from_date: date | None,
@@ -1883,14 +1913,25 @@ async def fetch_stock_item_monthly(
             # the closing of the day before it starts, not the master's.
             books_from = await _company_books_from(company_name)
             if books_from and from_date and from_date > books_from:
-                before = await _load_item_master(
+                before = await _item_closing_on(
                     stock_item_name,
                     company_name,
-                    as_on=from_date - timedelta(days=1),
+                    from_date - timedelta(days=1),
+                )
+                _log.info(
+                    "Stock monthly opening for %r from %s: books_from=%s, "
+                    "closing the day before=%s",
+                    stock_item_name, from_date, books_from,
+                    {k: (before or {}).get(k) for k in ("closing_quantity", "closing_value")},
                 )
                 if before:
                     opening_qty = before.get("closing_quantity") or 0.0
                     opening_val = before.get("closing_value") or 0.0
+            else:
+                _log.info(
+                    "Stock monthly opening for %r from %s: master opening kept "
+                    "(books_from=%s)", stock_item_name, from_date, books_from,
+                )
 
             # Tally leaves a month's closing quantity empty when nothing
             # moved in it; carry the running balance instead of showing 0.
