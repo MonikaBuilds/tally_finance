@@ -462,7 +462,11 @@ def get_user_organization_id(
         connection.close()
 
     if row is None:
-        return "default"
+        # The user does not exist (for example a token issued before the
+        # account was deleted). Report that instead of silently placing
+        # the caller in the shared "default" organization, which would
+        # let a stale token read another organization's data.
+        return None
 
     return row["organization_id"] or "default"
 

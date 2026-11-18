@@ -8,6 +8,7 @@ from xml.sax.saxutils import escape
 from app.tally.xml_builders.common import (
     format_tally_date,
     build_company_variable,
+    tdl_string,
     _date_variable,
 )
 
@@ -74,7 +75,7 @@ def build_single_ledger_request(
     company_name: str | None = None,
 ) -> str:
 
-    safe_ledger_name = escape(ledger_name)
+    safe_ledger_name = tdl_string(ledger_name)
     company_xml = build_company_variable(company_name)
 
     return f"""
@@ -265,8 +266,8 @@ def build_voucher_detail_request(
     company_name: str | None = None,
 ) -> str:
 
-    safe_type = escape(voucher_type or "")
-    safe_number = escape(voucher_number or "")
+    safe_type = tdl_string(voucher_type)
+    safe_number = tdl_string(voucher_number)
 
     company_xml = build_company_variable(company_name)
 

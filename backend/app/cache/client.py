@@ -127,7 +127,11 @@ async def init_redis_client() -> Optional[aioredis.Redis]:
         return _redis_client
 
     except AuthenticationError as auth_err:
-        if "Client sent AUTH, but no password is set" in str(auth_err):
+        message = str(auth_err)
+        if (
+            "Client sent AUTH, but no password is set" in message
+            or "without any password configured" in message
+        ):
             # Redis server requires no password, retry without auth
             logger.info("Redis server does not require password. Connecting without AUTH.")
             try:

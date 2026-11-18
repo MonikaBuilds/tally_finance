@@ -998,7 +998,7 @@ def parse_stock_valuation(xml_text: str):
                 ),
 
                 "rate": row.get(
-                    "rate",
+                    "closing_rate",
                     0,
                 ),
 

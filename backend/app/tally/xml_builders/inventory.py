@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 
 from app.tally.xml_builders.common import (
     build_company_variable,
+    tdl_string,
     _date_variable,
 )
 
@@ -113,7 +114,7 @@ def build_stock_item_request(
     filter_xml = ""
 
     if stock_item_name:
-        safe_name = escape(stock_item_name)
+        safe_name = tdl_string(stock_item_name)
 
         filter_xml = f"""
                         <FILTER>StockItemFilter</FILTER>
@@ -420,7 +421,7 @@ def build_inventory_register_request(
     to_date: date | None = None,
 ) -> str:
 
-    safe_voucher_type = escape(voucher_type)
+    safe_voucher_type = tdl_string(voucher_type)
 
     company_xml = build_company_variable(company_name)
     from_date_xml = _date_variable("SVFROMDATE", from_date)
@@ -503,7 +504,7 @@ def build_stock_group_items_request(
     company_xml = build_company_variable(company_name)
     to_date_xml = _date_variable("SVTODATE", to_date)
 
-    safe_group = escape(group_name)
+    safe_group = tdl_string(group_name)
 
     return f"""
 <ENVELOPE>
@@ -631,8 +632,8 @@ def build_inventory_voucher_detail_request(
     so existing Ledger/Voucher behaviour is not changed.
     """
 
-    safe_type = escape(voucher_type or "")
-    safe_number = escape(voucher_number or "")
+    safe_type = tdl_string(voucher_type)
+    safe_number = tdl_string(voucher_number)
 
     company_xml = build_company_variable(company_name)
 
@@ -726,7 +727,7 @@ def build_ledger_balances_request(
     to_date_xml = _date_variable("SVTODATE", as_on)
 
     names = [n for n in dict.fromkeys(ledger_names or []) if n]
-    formula = " OR ".join(f'$Name = "{escape(name)}"' for name in names) or '$Name = ""'
+    formula = " OR ".join(f'$Name = "{tdl_string(name)}"' for name in names) or '$Name = ""'
 
     return f"""
 <ENVELOPE>
@@ -782,7 +783,7 @@ def build_register_vouchers_request(
     existing callers are unchanged.
     """
 
-    safe_voucher_type = escape(voucher_type)
+    safe_voucher_type = tdl_string(voucher_type)
 
     company_xml = build_company_variable(company_name)
     from_date_xml = _date_variable("SVFROMDATE", from_date)

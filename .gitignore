@@ -48,3 +48,6 @@ htmlcov/
 # Local service configs
 *.conf
 *.conf.backup
+
+
+.commandcode/

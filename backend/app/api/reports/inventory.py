@@ -214,14 +214,6 @@ def _summary_response(summary: dict | None, label: str, selected: str | None) ->
     }
 
 
-def _check_period(from_date: date | None, to_date: date | None) -> None:
-    if from_date and to_date and from_date > to_date:
-        raise HTTPException(
-            status_code=400,
-            detail="from_date cannot be later than to_date",
-        )
-
-
 def _stock_movement_row(row: dict) -> dict:
     quantity = row.get("quantity", 0) or 0
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.security.auth import (
     UserContext,
+    get_authorized_company,
     get_current_user,
 )
 from app.tally.client import TallyClient
@@ -144,7 +145,7 @@ async def get_companies(
 
 @router.get("/debug/receivables")
 async def debug_receivables(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
 ):
     """
@@ -155,23 +156,8 @@ async def debug_receivables(
     whether the delay is coming directly from Tally.
     """
     try:
-        # Do not allow a user to query a company that is
-        # outside their permitted company list.
-        if company_name:
-            if "*" not in current_user.allowed_companies:
-                allowed_lookup = {
-                    company.casefold()
-                    for company in current_user.allowed_companies
-                }
-
-                if company_name.casefold() not in allowed_lookup:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=(
-                            "You are not authorized to access "
-                            "this company."
-                        ),
-                    )
+        # company_name has already been checked against the user's
+        # companies (and is required when the user has several).
 
         effective_org_id = _resolve_org_id(current_user)
 
@@ -204,7 +190,7 @@ async def debug_receivables(
         
 @router.get("/debug/bill-allocations")
 async def debug_bill_allocations(
-    company_name: str | None = None,
+    company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
 ):
     """
@@ -212,19 +198,8 @@ async def debug_bill_allocations(
     bill allocation data can be loaded quickly.
     """
     try:
-        # Keep company access protected even for debug endpoints.
-        if company_name:
-            if "*" not in current_user.allowed_companies:
-                allowed_lookup = {
-                    company.casefold()
-                    for company in current_user.allowed_companies
-                }
-
-                if company_name.casefold() not in allowed_lookup:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="You are not authorized to access this company.",
-                    )
+        # company_name has already been checked against the user's
+        # companies (and is required when the user has several).
 
         data = await fetch_bill_allocations(
             company_name=company_name,

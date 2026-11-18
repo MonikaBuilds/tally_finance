@@ -64,6 +64,10 @@ class CacheSettings(BaseSettings):
             "balance_sheet": self.TTL_BALANCE_SHEET,
             "trial_balance": self.TTL_TRIAL_BALANCE,
             "bills_receivable": self.TTL_BILLS_RECEIVABLE,
+            # app/tally/service.py caches receivables under the report
+            # name "receivables"; without this key it fell back to the
+            # default TTL instead of the intended bills TTL.
+            "receivables": self.TTL_BILLS_RECEIVABLE,
             "bills_payable": self.TTL_BILLS_PAYABLE,
             "stock_summary": self.TTL_STOCK_SUMMARY,
             "ledger_list": self.TTL_LEDGER_LIST,
