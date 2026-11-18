@@ -31,11 +31,7 @@ const COLUMNS = [
       const debit = Number(row.debit) || 0
       const credit = Number(row.credit) || 0
       const diff = debit - credit
-      if (Math.abs(diff) < 0.001) {
-        if (debit > 0) return `${formatCurrency(debit)} Dr`
-        if (credit > 0) return `${formatCurrency(credit)} Cr`
-        return '-'
-      }
+      if (Math.abs(diff) < 0.001) return '-'
       return diff > 0
         ? `${formatCurrency(diff)} Dr`
         : `${formatCurrency(Math.abs(diff))} Cr`

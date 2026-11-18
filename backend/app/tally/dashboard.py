@@ -218,7 +218,7 @@ def parse_outstanding_table(raw):
                 'party': party,
                 'reference': row[columns['Ref. No.']],
                 'bill_date': bill_date,
-                'amount': to_optional_float(amount_text),
+                'amount': html_amount(amount_text),
                 'raw': amount_text,
                 'due_date': report_date(row[columns['Due on']]),
                 'days_overdue': int(overdue) if overdue.isdigit() else None,
@@ -228,7 +228,7 @@ def parse_outstanding_table(raw):
             # Never substitute a bill or a Python sum for this report total.
             totals.append(amount_text)
     raw_total = totals[0] if len(totals) == 1 else None
-    return {**report, 'bills': bills, 'total': to_optional_float(raw_total), 'raw_total': raw_total}
+    return {**report, 'bills': bills, 'total': html_amount(raw_total), 'raw_total': raw_total}
 
 
 async def fetch_dashboard_reports(company, start, end):

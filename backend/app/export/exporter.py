@@ -304,6 +304,23 @@ def _excel_value(column: dict, value):
     return value if isinstance(value, (int, float)) else str(value)
 
 
+def _write_cell(sheet, row: int, column: int, value):
+    """Write one value, forcing text to stay text.
+
+    Tally party / ledger names and narrations are free text. When such a
+    value begins with "=", openpyxl stores it as a formula (<f>), so a
+    downloaded workbook would evaluate it on open - the CSV/spreadsheet
+    injection vector. Marking the cell as a string writes it as an
+    inline string instead and keeps the original text exactly.
+    """
+    cell = sheet.cell(row=row, column=column, value=value)
+
+    if isinstance(value, str):
+        cell.data_type = "s"
+
+    return cell
+
+
 def _font(style: str, base_color: str = TEXT, size: int = 10) -> Font:
     bold = style in ("bold", "total", "heading")
     italic = style in ("italic",)
@@ -375,7 +392,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
     def banner(text, font, fill, height):
         nonlocal row
         sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=span)
-        cell = sheet.cell(row=row, column=1, value=text)
+        cell = _write_cell(sheet, row, 1, text)
         cell.font = font
         cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         for col in range(1, span + 1):
@@ -402,7 +419,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
                 continue
             # One cell per line: the text spills across the empty cells to
             # its right, so a long label is never cut off by a narrow column.
-            line = sheet.cell(row=row, column=1, value=f"{label}:  {value}")
+            line = _write_cell(sheet, row, 1, f"{label}:  {value}")
             line.font = Font(name=_FONT, size=10, bold=True, color=TEXT)
             line.alignment = Alignment(horizontal="left")
             row += 1
@@ -418,7 +435,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
         row += 1
 
         if section.get("heading"):
-            cell = sheet.cell(row=row, column=1, value=section["heading"])
+            cell = _write_cell(sheet, row, 1, section["heading"])
             cell.font = Font(name=_FONT, size=12, bold=True, color=NAVY)
             for col in range(1, max(len(columns), 1) + 1):
                 sheet.cell(row=row, column=col).border = Border(
@@ -435,7 +452,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
             first_header_row = header_row
             sheet.freeze_panes = f"A{header_row + 1}"
         for index, column in enumerate(columns, start=1):
-            cell = sheet.cell(row=row, column=index, value=column["label"])
+            cell = _write_cell(sheet, row, index, column["label"])
             cell.font = Font(name=_FONT, size=10, bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", start_color=NAVY, end_color=NAVY)
             cell.alignment = Alignment(
@@ -462,7 +479,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
                 zebra_index = 0
             for index, column in enumerate(columns, start=1):
                 value = _excel_value(column, data.get(column["key"]))
-                cell = sheet.cell(row=row, column=index, value=value)
+                cell = _write_cell(sheet, row, index, value)
                 cell_style = _style_of(data, column["key"])
                 cell.font = _font(cell_style)
                 cell.border = _HAIR_BORDER
@@ -493,7 +510,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
         for total in totals:
             for index, column in enumerate(columns, start=1):
                 value = _excel_value(column, total.get(column["key"]))
-                cell = sheet.cell(row=row, column=index, value=value)
+                cell = _write_cell(sheet, row, index, value)
                 cell.font = Font(name=_FONT, size=10, bold=True, color=NAVY)
                 cell.fill = PatternFill("solid", start_color=TOTAL_FILL, end_color=TOTAL_FILL)
                 cell.border = Border(
@@ -510,7 +527,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
             row += 1
 
         if section.get("note"):
-            cell = sheet.cell(row=row, column=1, value=section["note"])
+            cell = _write_cell(sheet, row, 1, section["note"])
             cell.font = Font(name=_FONT, size=9, italic=True, color=MUTED)
             row += 1
 
@@ -526,7 +543,7 @@ def _write_sheet(workbook, info: dict, spec: dict, first: bool) -> None:
 
     for notes in spec.get("notes") or []:
         row += 1
-        cell = sheet.cell(row=row, column=1, value=notes)
+        cell = _write_cell(sheet, row, 1, notes)
         cell.font = Font(name=_FONT, size=9, italic=True, color=MUTED)
 
     for index, width in enumerate(widths, start=1):
