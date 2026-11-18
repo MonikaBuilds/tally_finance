@@ -87,10 +87,28 @@ def _current_quarter_start(
 def _normalize_text(
     message: str
 ) -> str:
+    cleaned = message.lower().strip()
+    cleaned = cleaned.replace("–", "-").replace("—", "-")
     return re.sub(
         r"\s+",
         " ",
-        message.lower().strip()
+        cleaned
+    )
+
+
+def get_current_financial_year_range(
+    today: date | None = None
+) -> DateRange:
+    """
+    Get the DateRange for the current Indian financial year
+    (1 April to current date).
+    """
+    current_date = today or date.today()
+    fy_start = _financial_year_start(current_date)
+    return DateRange(
+        from_date=fy_start,
+        to_date=current_date,
+        label="this financial year",
     )
 
 
@@ -115,30 +133,35 @@ def resolve_date_range(
     )
 
     # --------------------------------------------------
-    # Explicit date range
-        #
-        # Examples:
-        # "from 01-07-2026 to 11-09-2026"
-        # "01-07-2026 to 11-09-2026"
-        # --------------------------------------------------
+    # 1. Explicit date range with digits
+    #
+    # Examples:
+    # "from 01-07-2026 to 11-09-2026"
+    # "01-07-2026 to 11-09-2026"
+    # "between 01-04-2026 and 30-09-2026"
+    # "from 01/04/2026 to 30/09/2026"
+    # --------------------------------------------------
 
     explicit_range_match = re.search(
-        r"(?:from\s+)?"
-        r"(\d{1,2}-\d{1,2}-\d{4})"
-        r"\s+(?:to|until|till)\s+"
-        r"(\d{1,2}-\d{1,2}-\d{4})",
+        r"(?:between\s+|from\s+)?"
+        r"(\d{1,2}[-/]\d{1,2}[-/]\d{4})"
+        r"\s+(?:to|and|until|till)\s+"
+        r"(\d{1,2}[-/]\d{1,2}[-/]\d{4})",
         text,
     )
 
     if explicit_range_match:
         try:
+            d1_str = explicit_range_match.group(1).replace("/", "-")
+            d2_str = explicit_range_match.group(2).replace("/", "-")
+
             from_date = datetime.strptime(
-                explicit_range_match.group(1),
+                d1_str,
                 "%d-%m-%Y",
             ).date()
 
             to_date = datetime.strptime(
-                explicit_range_match.group(2),
+                d2_str,
                 "%d-%m-%Y",
             ).date()
 
@@ -152,7 +175,125 @@ def resolve_date_range(
             )
 
         except ValueError:
-            return None
+            pass
+
+    # Also support ISO format (YYYY-MM-DD to YYYY-MM-DD)
+    iso_range_match = re.search(
+        r"(?:between\s+|from\s+)?"
+        r"(\d{4}-\d{2}-\d{2})"
+        r"\s+(?:to|and|until|till)\s+"
+        r"(\d{4}-\d{2}-\d{2})",
+        text,
+    )
+    if iso_range_match:
+        try:
+            from_date = datetime.strptime(
+                iso_range_match.group(1),
+                "%Y-%m-%d",
+            ).date()
+            to_date = datetime.strptime(
+                iso_range_match.group(2),
+                "%Y-%m-%d",
+            ).date()
+            if from_date <= to_date:
+                return DateRange(
+                    from_date=from_date,
+                    to_date=to_date,
+                    label="custom date range",
+                )
+        except ValueError:
+            pass
+
+    # --------------------------------------------------
+    # 1b. Explicit date range with day + month name + optional year
+    #
+    # Examples:
+    # "between 1 April 2026 and 30 September 2026"
+    # "from 1st April to 30th September"
+    # --------------------------------------------------
+    months_pattern_str = "|".join(MONTHS.keys())
+    day_month_range = re.search(
+        r"(?:between\s+|from\s+)?"
+        r"(\d{1,2})(?:st|nd|rd|th)?\s+(" + months_pattern_str + r")(?:\s+(\d{4}))?"
+        r"\s+(?:to|and|until|till)\s+"
+        r"(\d{1,2})(?:st|nd|rd|th)?\s+(" + months_pattern_str + r")(?:\s+(\d{4}))?",
+        text,
+    )
+    if day_month_range:
+        try:
+            d1 = int(day_month_range.group(1))
+            m1 = MONTHS[day_month_range.group(2)]
+            y1_str = day_month_range.group(3)
+            d2 = int(day_month_range.group(4))
+            m2 = MONTHS[day_month_range.group(5)]
+            y2_str = day_month_range.group(6)
+
+            yr2 = int(y2_str) if y2_str else (int(y1_str) if y1_str else current_date.year)
+            yr1 = int(y1_str) if y1_str else yr2
+
+            from_date = date(yr1, m1, d1)
+            to_date = date(yr2, m2, d2)
+            if from_date <= to_date:
+                return DateRange(
+                    from_date=from_date,
+                    to_date=to_date,
+                    label="custom date range",
+                )
+        except (ValueError, TypeError):
+            pass
+
+    # --------------------------------------------------
+    # 2. Explicit Financial Year
+    #
+    # Examples:
+    # "FY 2025-26", "FY 2026-27", "FY 2026-2027", "FY 25-26"
+    # "financial year 2025-26", "2025-26 financial year"
+    # --------------------------------------------------
+    fy_match = re.search(
+        r"\b(?:fy\s*|f\.y\.\s*|financial\s+year\s+)?(\d{2,4})\s*[-/]\s*(\d{2,4})(?:\s+financial\s+year|\s+fy)?\b",
+        text,
+    )
+    if fy_match:
+        g1, g2 = fy_match.group(1), fy_match.group(2)
+        y1 = int(g1) if len(g1) == 4 else (2000 + int(g1))
+        y2 = int(g2) if len(g2) == 4 else ((y1 // 100) * 100 + int(g2))
+        if y2 == y1 + 1:
+            from_date = date(y1, 4, 1)
+            to_date = date(y2, 3, 31)
+            return DateRange(
+                from_date=from_date,
+                to_date=to_date,
+                label=f"FY {y1}-{str(y2)[-2:]}",
+            )
+
+    # --------------------------------------------------
+    # 3. Month to Month range
+    #
+    # Examples:
+    # "from April to September"
+    # "between April and September"
+    # "April to September 2026"
+    # --------------------------------------------------
+    month_range_match = re.search(
+        r"(?:between\s+|from\s+)?\b(" + months_pattern_str + r")\s+(?:to|and|until|till)\s+(" + months_pattern_str + r")(?:\s+(\d{4}))?\b",
+        text,
+    )
+    if month_range_match:
+        m1_name = month_range_match.group(1)
+        m2_name = month_range_match.group(2)
+        yr_str = month_range_match.group(3)
+        m1 = MONTHS[m1_name]
+        m2 = MONTHS[m2_name]
+        yr = int(yr_str) if yr_str else current_date.year
+        from_date = date(yr, m1, 1)
+        last_day = monthrange(yr, m2)[1]
+        to_date = date(yr, m2, last_day)
+        yr_suffix = f" {yr}" if yr_str else ""
+        return DateRange(
+            from_date=from_date,
+            to_date=to_date,
+            label=f"{m1_name.title()} to {m2_name.title()}{yr_suffix}",
+        )
     # --------------------------------------------------
     # Today
     # --------------------------------------------------

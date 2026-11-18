@@ -1,3 +1,24 @@
+from datetime import datetime
+
+
+def _format_period(from_date: str | None, to_date: str | None) -> str:
+    def _display_date(d_str: str) -> str:
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(d_str, fmt).strftime("%d-%m-%Y")
+            except ValueError:
+                pass
+        return d_str
+
+    if from_date and to_date:
+        return f" for the period {_display_date(from_date)} to {_display_date(to_date)}"
+    if from_date:
+        return f" from {_display_date(from_date)}"
+    if to_date:
+        return f" up to {_display_date(to_date)}"
+    return ""
+
+
 def format_indian_currency(value) -> str:
     try:
         amount = float(value or 0)
@@ -190,9 +211,13 @@ def format_tool_response(
             "revenue",
             0
         )
+        period_str = _format_period(
+            data.get("from_date"),
+            data.get("to_date"),
+        )
 
         return (
-            f"Your revenue is "
+            f"Your revenue{period_str} is "
             f"{format_indian_currency(revenue)}."
         )
 
@@ -201,9 +226,13 @@ def format_tool_response(
             "expenses",
             0
         )
+        period_str = _format_period(
+            data.get("from_date"),
+            data.get("to_date"),
+        )
 
         return (
-            f"Your total expenses are "
+            f"Your total expenses{period_str} are "
             f"{format_indian_currency(expenses)}."
         )
 
@@ -216,53 +245,128 @@ def format_tool_response(
             "amount",
             0
         )
+        period_str = _format_period(
+            data.get("from_date"),
+            data.get("to_date"),
+        )
 
         if result_type == "loss":
             return (
-                f"You currently have a net loss of "
+                f"You currently have a net loss{period_str} of "
                 f"{format_indian_currency(amount)}."
             )
 
         return (
-            f"You currently have a net profit of "
+            f"You currently have a net profit{period_str} of "
             f"{format_indian_currency(amount)}."
         )
 
     if tool_name == "get_profit_loss":
-        count = data.get(
-            "count",
-            0
-        )
+        report = data.get("report") or {}
+        left_rows = data.get("left") or report.get("left", [])
+        right_rows = data.get("right") or report.get("right", [])
+        summary = data.get("summary") or report.get("summary", {})
+        total_left = data.get("total_left") if data.get("total_left") is not None else report.get("total_left")
+        total_right = data.get("total_right") if data.get("total_right") is not None else report.get("total_right")
+        from_date = data.get("from_date")
+        to_date = data.get("to_date")
 
-        return (
-            f"The Profit & Loss report was retrieved "
-            f"successfully from Tally with "
-            f"{count} item(s)."
-        )
+        lines = ["Profit & Loss Statement (from Tally)"]
+        if from_date and to_date:
+            lines.append(f"Period: {from_date} to {to_date}")
+        elif to_date:
+            lines.append(f"As of: {to_date}")
+
+        named_incomes = [r for r in right_rows if r.get("name") and not r.get("is_subtotal")]
+        if named_incomes:
+            lines.append("\n--- Income & Revenue ---")
+            for item in named_incomes:
+                lines.append(f"• {item['name']}: {format_indian_currency(item.get('amount', 0.0))}")
+
+        named_expenses = [r for r in left_rows if r.get("name") and not r.get("is_subtotal")]
+        if named_expenses:
+            lines.append("\n--- Expenses & Cost of Sales ---")
+            for item in named_expenses:
+                lines.append(f"• {item['name']}: {format_indian_currency(item.get('amount', 0.0))}")
+
+        gross_res = summary.get("gross_result")
+        net_res = summary.get("net_result")
+
+        lines.append("\n--- Summary ---")
+        if gross_res is not None:
+            if isinstance(gross_res, dict):
+                gross_amt = gross_res.get("amount", 0.0)
+                gross_type = gross_res.get("type", "profit")
+                lines.append(f"Gross {gross_type.capitalize()}: {format_indian_currency(gross_amt)}")
+            else:
+                lines.append(f"Gross Profit / Loss: {format_indian_currency(gross_res)}")
+
+        if net_res is not None:
+            if isinstance(net_res, dict):
+                net_amt = net_res.get("amount", 0.0)
+                net_type = net_res.get("type", "profit")
+                lines.append(f"Net {net_type.capitalize()}: {format_indian_currency(net_amt)}")
+            else:
+                lines.append(f"Net Profit / Loss: {format_indian_currency(net_res)}")
+
+        if total_left is not None and total_right is not None:
+            lines.append(f"Total Debits: {format_indian_currency(total_left)} | Total Credits: {format_indian_currency(total_right)}")
+
+        return "\n".join(lines)
 
     if tool_name == "get_trial_balance":
-        count = data.get(
-            "count",
-            0
-        )
+        report = data.get("report") or {}
+        rows = data.get("rows") or report.get("rows", [])
+        to_date = data.get("to_date")
 
-        return (
-            f"The Trial Balance was retrieved "
-            f"successfully from Tally with "
-            f"{count} item(s)."
-        )
+        if not rows:
+            return "The Trial Balance contains no entries in Tally for the specified period."
+
+        lines = ["Trial Balance (from Tally)"]
+        if to_date:
+            lines.append(f"As of: {to_date}")
+
+        lines.append("\nParticulars | Debit | Credit")
+        lines.append("-" * 45)
+
+        total_dr = 0.0
+        total_cr = 0.0
+
+        for r in rows:
+            name = r.get("name", "")
+            dr = r.get("debit", 0.0) or 0.0
+            cr = r.get("credit", 0.0) or 0.0
+            total_dr += dr
+            total_cr += cr
+
+            dr_str = format_indian_currency(dr) if dr else "-"
+            cr_str = format_indian_currency(cr) if cr else "-"
+            lines.append(f"• {name}: Debit {dr_str} | Credit {cr_str}")
+
+        lines.append("-" * 45)
+        lines.append(f"Total Debit: {format_indian_currency(total_dr)} | Total Credit: {format_indian_currency(total_cr)}")
+        return "\n".join(lines)
 
     if tool_name == "get_balance_sheet":
-        count = data.get(
-            "count",
-            0
-        )
+        report = data.get("report") or {}
+        rows = data.get("rows") or report.get("rows", [])
+        to_date = data.get("to_date")
 
-        return (
-            f"The Balance Sheet was retrieved "
-            f"successfully from Tally with "
-            f"{count} item(s)."
-        )
+        if not rows:
+            return "The Balance Sheet contains no entries in Tally for the specified period."
+
+        lines = ["Balance Sheet (from Tally)"]
+        if to_date:
+            lines.append(f"As of: {to_date}")
+
+        lines.append("\n--- Particulars & Balances ---")
+        for r in rows:
+            name = r.get("name", "")
+            amt = r.get("amount")
+            amt_str = format_indian_currency(amt) if amt is not None else "-"
+            lines.append(f"• {name}: {amt_str}")
+
+        return "\n".join(lines)
 
     if tool_name == "get_party_outstanding_summary":
         party = data.get(

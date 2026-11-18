@@ -5,6 +5,11 @@ from app.chatbot.gemini_client import select_tool
 from app.chatbot.date_resolver import (
     resolve_date_range,
     resolve_comparison_ranges,
+    get_current_financial_year_range,
+)
+from app.chatbot.session_store import (
+    get_session_state,
+    save_session_state,
 )
 from app.chatbot.logging_utils import (
     create_request_id,
@@ -127,6 +132,7 @@ async def process_chat_message(
     user_id: str | None = None,
     org_id: str = "default",
     force_refresh: bool = False,
+    session_id: str | None = None,
 ) -> dict:
     """
     Process a chatbot message and return financial data
@@ -156,6 +162,7 @@ async def process_chat_message(
             "intent": "invalid_request",
             "answer": "Please enter a financial question.",
             "data": None,
+            "session_id": session_id,
         }
 
     # The chatbot is read-only.
@@ -173,6 +180,7 @@ async def process_chat_message(
             "intent": "write_operation",
             "answer": READ_ONLY_MESSAGE,
             "data": None,
+            "session_id": session_id,
         }
 
     try:
@@ -182,7 +190,72 @@ async def process_chat_message(
             cleaned_message
         )
 
-        if isinstance(local_intent, dict):
+        if local_intent == "follow_up_show_all_items":
+            session = await get_session_state(user_id, company_name, session_id)
+            if session and session.get("last_data") and session.get("last_tool") in ("get_profit_loss", "get_trial_balance", "get_balance_sheet"):
+                tool_name = session["last_tool"]
+                answer = format_tool_response(tool_name, {"success": True, "source": "tally", "data": session["last_data"]})
+                return {
+                    "success": True,
+                    "source": "tally",
+                    "intent": tool_name,
+                    "answer": answer,
+                    "data": session["last_data"],
+                    "session_id": session_id,
+                }
+            elif session and session.get("last_tool"):
+                selection = {
+                    "tool_name": session["last_tool"],
+                    "arguments": session.get("last_arguments", {}),
+                    "error": None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "source": None,
+                    "intent": "follow_up",
+                    "answer": "There is no previous financial report in this session to display items from. Please ask for a report first.",
+                    "data": None,
+                    "session_id": session_id,
+                }
+
+        elif local_intent == "follow_up_entity_transactions":
+            session = await get_session_state(user_id, company_name, session_id)
+            if session and session.get("last_entity"):
+                selection = {
+                    "tool_name": "get_ledger_transactions",
+                    "arguments": {"ledger_name": session["last_entity"]},
+                    "error": None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "source": None,
+                    "intent": "follow_up",
+                    "answer": "Please specify which account or ledger transactions you would like to view.",
+                    "data": None,
+                    "session_id": session_id,
+                }
+
+        elif local_intent == "follow_up_entity_balance":
+            session = await get_session_state(user_id, company_name, session_id)
+            if session and session.get("last_entity"):
+                selection = {
+                    "tool_name": "get_ledger_balance",
+                    "arguments": {"ledger_name": session["last_entity"]},
+                    "error": None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "source": None,
+                    "intent": "follow_up",
+                    "answer": "Please specify which account or ledger balance you would like to view.",
+                    "data": None,
+                    "session_id": session_id,
+                }
+
+        elif isinstance(local_intent, dict):
             # Some local queries also contain values needed by the tool.
             # Example: customer statement with a customer name.
             selection = {
@@ -374,6 +447,18 @@ async def process_chat_message(
                     "%d-%m-%Y"
                 )
             )
+        elif tool_name in {"get_revenue", "get_expenses", "get_net_profit", "get_profit_loss"}:
+            current_fy = get_current_financial_year_range()
+            arguments["from_date"] = (
+                current_fy.from_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+            arguments["to_date"] = (
+                current_fy.to_date.strftime(
+                    "%d-%m-%Y"
+                )
+            )
 
     # Comparison queries need two separate periods,
     # so they use four date arguments.
@@ -562,6 +647,37 @@ async def process_chat_message(
         source=tool_result.get("source", "tally"),
     )
 
+    entity = None
+    if "ledger_name" in arguments:
+        entity = arguments["ledger_name"]
+    elif "customer_name" in arguments:
+        entity = arguments["customer_name"]
+    elif "supplier_name" in arguments:
+        entity = arguments["supplier_name"]
+    elif "item_name" in arguments:
+        entity = arguments["item_name"]
+
+    try:
+        await save_session_state(
+            user_id=user_id,
+            company=company_name,
+            session_id=session_id,
+            state_data={
+                "last_tool": tool_name,
+                "last_intent": tool_name,
+                "last_data": tool_result.get("data"),
+                "last_arguments": arguments,
+                "last_entity": entity,
+                "last_period": {
+                    "from_date": arguments.get("from_date"),
+                    "to_date": arguments.get("to_date"),
+                },
+                "last_answer": answer,
+            },
+        )
+    except Exception:
+        pass
+
     return {
         "success": True,
         "source": tool_result.get("source", "tally"),
@@ -574,4 +690,5 @@ async def process_chat_message(
         "calculation_method": calculation_method,
         "cached_at": tool_result.get("cached_at"),
         "is_stale": tool_result.get("is_stale", False),
+        "session_id": session_id,
     }

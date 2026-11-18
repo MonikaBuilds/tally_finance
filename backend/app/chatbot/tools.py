@@ -863,9 +863,18 @@ async def get_profit_loss_tool(
         company_name=company_name
     )
 
+    left_rows = report.get("left", [])
+    right_rows = report.get("right", [])
+    total_count = len(left_rows) + len(right_rows)
+
     return _success({
         "report": report,
-        "count": len(report),
+        "left": left_rows,
+        "right": right_rows,
+        "total_left": report.get("total_left"),
+        "total_right": report.get("total_right"),
+        "summary": report.get("summary", {}),
+        "count": total_count,
         "from_date": (
             from_date.isoformat()
             if from_date
@@ -888,9 +897,12 @@ async def get_trial_balance_tool(
         to_date=to_date
     )
 
+    rows = report.get("rows", [])
+
     return _success({
         "report": report,
-        "count": len(report),
+        "rows": rows,
+        "count": len(rows),
         "to_date": (
             to_date.isoformat()
             if to_date
@@ -908,9 +920,12 @@ async def get_balance_sheet_tool(
         to_date=to_date
     )
 
+    rows = report.get("rows", [])
+
     return _success({
         "report": report,
-        "count": len(report),
+        "rows": rows,
+        "count": len(rows),
         "to_date": (
             to_date.isoformat()
             if to_date
@@ -4393,17 +4408,24 @@ async def get_ledger_balance_tool(
         company_name=company_name
     )
 
+    available_ledger_names = [
+        ledger["name"]
+        for ledger in ledgers
+        if ledger.get("name")
+    ]
+
+    resolution = resolve_name(
+        requested_name=ledger_name,
+        available_names=available_ledger_names,
+    )
+
     matched_ledger = None
-
-    for ledger in ledgers:
-        name = (
-            ledger.get("name")
-            or ""
-        ).strip()
-
-        if name.lower() == ledger_name.lower():
-            matched_ledger = ledger
-            break
+    if resolution.status == "resolved" and resolution.value:
+        target_name_lower = resolution.value.lower()
+        for ledger in ledgers:
+            if (ledger.get("name") or "").strip().lower() == target_name_lower:
+                matched_ledger = ledger
+                break
 
     if not matched_ledger:
         return _no_data(
@@ -4463,17 +4485,20 @@ async def get_ledger_transactions_tool(
         company_name=company_name
     )
 
+    available_ledger_names = [
+        ledger["name"]
+        for ledger in ledgers
+        if ledger.get("name")
+    ]
+
+    resolution = resolve_name(
+        requested_name=ledger_name,
+        available_names=available_ledger_names,
+    )
+
     matched_name = None
-
-    for ledger in ledgers:
-        name = (
-            ledger.get("name")
-            or ""
-        ).strip()
-
-        if name.lower() == ledger_name.lower():
-            matched_name = name
-            break
+    if resolution.status == "resolved" and resolution.value:
+        matched_name = resolution.value
 
     if not matched_name:
         return _no_data(
@@ -4500,14 +4525,14 @@ async def get_ledger_transactions_tool(
         "opening_balance": float(
             report.get(
                 "opening_balance",
-            )
+                0.0,
+            ) or 0.0
         ),
         "closing_balance": float(
             report.get(
                 "closing_balance",
-            
-            )
-
+                0.0,
+            ) or 0.0
         ),
         "count": len(entries),
         "transactions": entries,
