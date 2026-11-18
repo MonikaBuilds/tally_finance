@@ -25,6 +25,34 @@ COMPLEX_QUERY_KEYWORDS = {
     "party",
 }
 
+# Words and time period expressions that must never be mistaken for ledger names.
+INVALID_LEDGER_NAMES = {
+    "this financial year",
+    "last financial year",
+    "current financial year",
+    "previous financial year",
+    "this fy",
+    "last fy",
+    "current fy",
+    "previous fy",
+    "this year",
+    "last year",
+    "current year",
+    "previous year",
+    "this month",
+    "last month",
+    "current month",
+    "previous month",
+    "today",
+    "yesterday",
+    "statement",
+    "profit and loss",
+    "profit and loss statement",
+    "p&l",
+    "balance sheet",
+    "trial balance",
+}
+
 
 def detect_local_intent(
     message: str,
@@ -46,6 +74,55 @@ def detect_local_intent(
 
     if not text:
         return None
+
+    # --------------------------------------------------
+    # CORE FINANCIAL REPORTS (P&L, Balance Sheet, Trial Balance)
+    # --------------------------------------------------
+    # Core financial statements must be matched before generic
+    # ledger or transaction regexes so queries like
+    # "Show me the Profit and Loss statement for this financial year"
+    # are never intercepted as ledger lookups.
+    if re.search(
+        r"\b(profit\s+and\s+loss|profit\s*&\s*loss|\bp&l\b|p\s+and\s+l)\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return "get_profit_loss"
+
+    if re.search(
+        r"\bbalance\s+sheet\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return "get_balance_sheet"
+
+    if re.search(
+        r"\btrial\s+balance\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return "get_trial_balance"
+
+    # --------------------------------------------------
+    # CONVERSATIONAL FOLLOW-UP QUERIES
+    # --------------------------------------------------
+    if re.search(
+        r"^(?:show|list|display)\s+(?:me\s+)?(?:all\s+)?(?:\d+\s+)?items(?:\s+(?:from|in|of)\s+(?:the\s+)?report)?(?:\s+please)?[.?]?$",
+        text,
+    ):
+        return "follow_up_show_all_items"
+
+    if re.search(
+        r"^(?:show|what\s+are|what\s+is|get)\s+(?:its|the)\s+transactions(?:\s+please)?[.?]?$",
+        text,
+    ):
+        return "follow_up_entity_transactions"
+
+    if re.search(
+        r"^(?:what\s+is|show)\s+(?:its|the)\s+(?:closing\s+)?balance(?:\s+please)?[.?]?$",
+        text,
+    ):
+        return "follow_up_entity_balance"
 
     if re.search(
         r"\b(inventory\s+valuation|stock\s+valuation|"
@@ -437,26 +514,47 @@ def detect_local_intent(
         return "get_overdue_invoices"
     
     # Stock item details are deterministic when the user
-    # provides the product or stock item name.
+    # explicitly provides the product or stock item name.
     stock_details_match = re.search(
-        r"\b(?:show\s+)?(?:details?\s+(?:of|for)|"
-        r"stock\s+(?:item\s+)?details?\s+(?:of|for))\s+(.+?)\s*$",
+        r"\b(?:show\s+)?(?:stock\s+(?:item\s+)?details?\s+(?:of|for)|"
+        r"item\s+details?\s+(?:of|for)|"
+        r"product\s+details?\s+(?:of|for))\s+(.+?)\s*$",
         message,
         flags=re.IGNORECASE,
     )
 
     if stock_details_match:
-        stock_item_name = stock_details_match.group(1).strip()
+        item_name = stock_details_match.group(1).strip().rstrip(". ?")
 
-        if stock_item_name:
+        if item_name and item_name.lower() not in INVALID_LEDGER_NAMES:
             return {
                 "tool_name": "get_stock_item_details",
                 "arguments": {
-                    "stock_item_name": stock_item_name,
+                    "item_name": item_name,
                 },
             }
-    
-    
+
+    # General ledger / account / bank details query.
+    # Example:
+    # "Show me the complete details of HDFC Bank"
+    # "Show details of Office Rent"
+    ledger_details_match = re.search(
+        r"\b(?:show\s+(?:me\s+)?)?(?:complete\s+)?(?:details?\s+(?:of|for)|"
+        r"(?:ledger|account|bank)\s+details?\s+(?:of|for))\s+(.+?)\??\s*$",
+        message,
+        flags=re.IGNORECASE,
+    )
+
+    if ledger_details_match:
+        target_name = ledger_details_match.group(1).strip().rstrip(". ?")
+        if target_name and target_name.lower() not in INVALID_LEDGER_NAMES:
+            return {
+                "tool_name": "get_ledger_report",
+                "arguments": {
+                    "ledger_name": target_name,
+                },
+            }
+
     # Generic ledger transaction queries.
     # Example:
     # "Show transactions of Office Rent Exp"
@@ -478,16 +576,16 @@ def detect_local_intent(
             ledger_transactions_match
             .group(1)
             .strip()
+            .rstrip(". ?")
         )
 
-        if ledger_name:
+        if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {
                 "tool_name": "get_ledger_transactions",
                 "arguments": {
                     "ledger_name": ledger_name,
                 },
             }
-
 
     # Also understand wording where the user says
     # "ledger statement" after the ledger name.
@@ -513,16 +611,16 @@ def detect_local_intent(
             ledger_statement_match
             .group(1)
             .strip()
+            .rstrip(". ?")
         )
 
-        if ledger_name:
+        if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {
                 "tool_name": "get_ledger_transactions",
                 "arguments": {
                     "ledger_name": ledger_name,
                 },
             }
-
 
     # Generic balance queries for any ledger.
     # Example:
@@ -542,9 +640,10 @@ def detect_local_intent(
             ledger_balance_match
             .group(1)
             .strip()
+            .rstrip(". ?")
         )
 
-        if ledger_name:
+        if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {
                 "tool_name": "get_ledger_balance",
                 "arguments": {
@@ -1113,11 +1212,16 @@ def detect_local_intent(
             "get_bank_balance",
         ),
 
-        # Net profit
+        # Net profit / earnings
         (
             r"\b("
             r"net profit|"
-            r"net income"
+            r"net income|"
+            r"how much did (?:i|we) (?:earn|make)|"
+            r"how much (?:i|we) earned|"
+            r"total earnings|"
+            r"my earnings|"
+            r"our earnings"
             r")\b",
             "get_net_profit",
         ),
@@ -1127,7 +1231,9 @@ def detect_local_intent(
             r"\b("
             r"revenue|"
             r"sales revenue|"
-            r"total sales"
+            r"total sales|"
+            r"my revenue|"
+            r"our revenue"
             r")\b",
             "get_revenue",
         ),

@@ -97,6 +97,7 @@ async def chat(
             user_id=current_user.user_id,
             org_id=org_id,
             force_refresh=getattr(request, "force_refresh", False),
+            session_id=request.session_id,
         )
 
         return ChatResponse(
@@ -113,6 +114,7 @@ async def chat(
             data=result.get("data"),
             cached_at=result.get("cached_at"),
             is_stale=result.get("is_stale", False),
+            session_id=result.get("session_id") or request.session_id,
         )
     except HTTPException:
         # Preserve expected API errors such as

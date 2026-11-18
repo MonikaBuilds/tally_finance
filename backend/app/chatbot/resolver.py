@@ -24,13 +24,16 @@ def normalize_name(value: str | None) -> str:
 
     normalized = value.strip().lower()
 
-    # Common business suffixes that users may omit.
+    # Common business and accounting suffixes that users may omit.
     suffix_patterns = (
         r"\bpvt\.?\b",
         r"\bprivate\b",
         r"\bltd\.?\b",
         r"\blimited\b",
         r"\bllp\b",
+        r"\ba/?c\b",
+        r"\bacc\b",
+        r"\baccounts?\b",
     )
 
     for pattern in suffix_patterns:

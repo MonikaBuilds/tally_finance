@@ -74,9 +74,15 @@ def build_dashboard_financials(
     the existing dashboard API response.
     """
 
-    sales = find_report_value(
-        profit_loss,
-        "Sales Accounts"
+    sales = (
+        find_report_value(profit_loss, "Sales Accounts")
+        or find_report_value(profit_loss, "Sales Account")
+        or find_report_value(profit_loss, "Sales")
+        or find_report_value(profit_loss, "Revenue from Operations")
+    )
+    direct_incomes = (
+        find_report_value(profit_loss, "Direct Incomes")
+        or find_report_value(profit_loss, "Direct Income")
     )
 
     cost_of_sales = find_report_value(
@@ -89,9 +95,7 @@ def build_dashboard_financials(
         "Indirect Expenses"
     )
 
-    revenue = abs(
-        sales
-    )
+    revenue = abs(sales) + (abs(direct_incomes) if direct_incomes else 0.0)
 
     # 1. Look for native Tally expenses lines first
     native_total_expenses = find_report_value(

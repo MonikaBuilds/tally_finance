@@ -58,6 +58,15 @@ function Chatbot() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [sessionId] = useState(() => {
+    try {
+      return typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `sess_${Date.now()}`
+    } catch {
+      return `sess_${Date.now()}`
+    }
+  })
 
   const bottomRef = useRef(null)
 
@@ -101,6 +110,7 @@ function Chatbot() {
         {
           message: trimmed,
           company_name: companyName,
+          session_id: sessionId,
         },
       )
 

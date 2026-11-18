@@ -18,6 +18,11 @@ class ChatRequest(BaseModel):
         default=False
     )
 
+    session_id: str | None = Field(
+        default=None,
+        max_length=100
+    )
+
 
 class ChatResponse(BaseModel):
     success: bool
@@ -27,3 +32,4 @@ class ChatResponse(BaseModel):
     data: dict[str, Any] | None = None
     cached_at: str | None = None
     is_stale: bool = False
+    session_id: str | None = None
