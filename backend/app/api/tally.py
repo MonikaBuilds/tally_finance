@@ -1,3 +1,7 @@
+import logging
+import os
+
+from app.security.permissions import require_permission
 from datetime import date
 from typing import Any
 
@@ -20,6 +24,19 @@ from app.tally.service import (
 from app.cache.config import is_force_refresh
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _debug_endpoints_enabled() -> None:
+    """
+    Development-only diagnostics. They return raw Tally data, so they
+    are hidden (404) unless TALLY_DEBUG_ENDPOINTS=true is set.
+    """
+    if os.getenv("TALLY_DEBUG_ENDPOINTS", "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        raise HTTPException(status_code=404, detail="Not Found")
+
 
 tally_client = TallyClient()
 
@@ -143,7 +160,13 @@ async def get_companies(
         )
 
 
-@router.get("/debug/receivables")
+@router.get(
+    "/debug/receivables",
+    dependencies=[
+        Depends(_debug_endpoints_enabled),
+        Depends(require_permission("financial")),
+    ],
+)
 async def debug_receivables(
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
@@ -177,10 +200,10 @@ async def debug_receivables(
     except Exception as exc:
         # Keep the actual error in the backend terminal
         # while we diagnose the Tally response-time issue.
-        print(
-            "RECEIVABLE DEBUG ERROR:",
+        logger.warning(
+            "Receivables debug endpoint failed: %s: %s",
             type(exc).__name__,
-            str(exc),
+            exc,
         )
 
         raise HTTPException(
@@ -188,7 +211,13 @@ async def debug_receivables(
             detail="Unable to fetch receivables from Tally",
         )
         
-@router.get("/debug/bill-allocations")
+@router.get(
+    "/debug/bill-allocations",
+    dependencies=[
+        Depends(_debug_endpoints_enabled),
+        Depends(require_permission("financial")),
+    ],
+)
 async def debug_bill_allocations(
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
@@ -215,10 +244,10 @@ async def debug_bill_allocations(
         raise
 
     except Exception as exc:
-        print(
-            "BILL ALLOCATION DEBUG ERROR:",
+        logger.warning(
+            "Bill allocations debug endpoint failed: %s: %s",
             type(exc).__name__,
-            str(exc),
+            exc,
         )
 
         raise HTTPException(

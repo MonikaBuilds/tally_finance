@@ -1,9 +1,11 @@
 from fastapi import Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from app.security.auth import (
     UserContext,
     get_current_user,
 )
+from app.security.config import get_auth_settings
 from app.security.db import get_connection
 
 
@@ -106,16 +108,53 @@ async def require_admin(
     Authentication is handled by get_current_user().
     Admin authorization is resolved dynamically from MySQL.
     """
-    if not (
-        is_superadmin(current_user.user_id)
-        or is_admin(current_user.user_id)
-    ):
+    def _is_manager(user_id: str) -> bool:
+        return is_superadmin(user_id) or is_admin(user_id)
+
+    if not await run_in_threadpool(_is_manager, current_user.user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrator access required.",
         )
 
     return current_user
+
+def require_permission(permission_code: str):
+    """
+    Route dependency: the user must hold `permission_code`
+    (financial, inventory, banking or tax). Superadmin passes.
+
+    Company access is checked separately by get_authorized_company; this
+    adds the report-category check that the chatbot already enforced but
+    the report, dashboard and export APIs did not.
+    """
+
+    async def _dependency(
+        current_user: UserContext = Depends(get_current_user),
+    ) -> UserContext:
+        if not get_auth_settings().auth_enabled:
+            return current_user
+
+        allowed = await run_in_threadpool(
+            user_has_permission,
+            current_user.user_id,
+            permission_code,
+        )
+
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"You do not have the '{permission_code}' "
+                    "permission required for this information."
+                ),
+            )
+
+        return current_user
+
+    _dependency.__name__ = f"require_{permission_code}_permission"
+    return _dependency
+
 
 def get_all_permissions() -> list[dict]:
     """
@@ -634,6 +673,7 @@ DEFAULT_TOOL_PERMISSIONS: dict[str, str] = {
     "get_credit_note_transactions": "financial",
     "get_customer_profitability": "financial",
     "get_customer_statement": "financial",
+    "get_day_book": "financial",
     "get_debit_note_transactions": "financial",
     "get_expenses": "financial",
     "get_financial_summary": "financial",

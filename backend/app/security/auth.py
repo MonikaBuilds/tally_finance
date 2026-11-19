@@ -1,8 +1,11 @@
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
+from starlette.concurrency import run_in_threadpool
 
 from app.security.config import get_auth_settings
 
@@ -12,6 +15,50 @@ class UserContext:
     user_id: str
     allowed_companies: tuple[str, ...]
     organization_id: str = "default"
+
+
+# Every authenticated request re-checks the account against MySQL so that a
+# deactivated user, or a user whose company access was removed, loses
+# access at once instead of when the 60-minute token expires. The lookup is
+# one query, cached briefly per user and cleared on every account change.
+LIVE_USER_CHECK = True
+
+USER_STATE_TTL_SECONDS = float(
+    os.getenv("AUTH_USER_STATE_TTL_SECONDS", "15") or 15
+)
+
+_user_state_cache: dict[str, tuple[float, object]] = {}
+
+
+def invalidate_user_state(user_id: str | None = None) -> None:
+    """Forget cached account state (one user, or everyone)."""
+    if user_id is None:
+        _user_state_cache.clear()
+    else:
+        _user_state_cache.pop(str(user_id), None)
+
+
+def _fetch_user_state(user_id: str):
+    from app.security.user_store import get_user_access_state
+
+    return get_user_access_state(user_id)
+
+
+async def _get_user_state(user_id: str):
+    now = time.monotonic()
+    cached = _user_state_cache.get(user_id)
+
+    if cached and cached[0] > now:
+        return cached[1]
+
+    # MySQL calls are blocking; keep them off the event loop.
+    state = await run_in_threadpool(_fetch_user_state, user_id)
+
+    if len(_user_state_cache) > 10_000:
+        _user_state_cache.clear()
+
+    _user_state_cache[user_id] = (now + USER_STATE_TTL_SECONDS, state)
+    return state
 
 
 def _auth_enabled() -> bool:
@@ -171,13 +218,30 @@ async def get_current_user(
 
     org = payload.get("org") or "default"
 
+    if not LIVE_USER_CHECK:
+        return UserContext(
+            user_id=str(user_id),
+            allowed_companies=tuple(
+                str(company)
+                for company in companies
+            ),
+            organization_id=str(org),
+        )
+
+    state = await _get_user_state(str(user_id))
+
+    if state is None or not state.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is unavailable.",
+        )
+
+    # MySQL is authoritative for company access; the token's list may be
+    # out of date after an administrator changed it.
     return UserContext(
         user_id=str(user_id),
-        allowed_companies=tuple(
-            str(company)
-            for company in companies
-        ),
-        organization_id=str(org),
+        allowed_companies=tuple(state.companies),
+        organization_id=str(state.organization_id or org),
     )
 
 

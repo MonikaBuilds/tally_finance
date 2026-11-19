@@ -101,6 +101,15 @@ from app.tally.parsers.ledger import (
     _parse_custom_voucher_ledger_rows,
 )
 
+
+_debug_logger = __import__("logging").getLogger(__name__)
+
+
+def _debug_print(*parts, **_ignored) -> None:
+    """Former print() diagnostics: DEBUG level only, never stdout."""
+    if _debug_logger.isEnabledFor(10):
+        _debug_logger.debug(" ".join(str(part) for part in parts))
+
 _log = logging.getLogger(__name__)
 
 
@@ -387,7 +396,7 @@ async def _add_profit_loss_sublines(
         )
 
     except Exception as e:
-        print(
+        _debug_print(
             "Balance Sheet: could not add Profit & Loss sub-lines:",
             repr(e),
         )
@@ -638,11 +647,11 @@ async def fetch_ledger_report(
             )
 
     except Exception as exc:
-        print(
+        _debug_print(
             f"WARNING: Unable to fetch ledger master: {exc}"
         )
 
-    print(
+    _debug_print(
         f"Ledger opening balance: {opening_balance}"
     )
 
@@ -659,7 +668,7 @@ async def fetch_ledger_report(
             anchor
         )
 
-    print(
+    _debug_print(
         f"Ledger query from date: {query_from_date}"
     )
 
@@ -701,27 +710,27 @@ async def fetch_ledger_report(
             [],
         )
 
-        print(
+        _debug_print(
             f"Native ledger entries found: "
             f"{len(native_entries)}"
         )
 
         if native_entries:
-            print(
+            _debug_print(
                 "Native Tally ledger report returned "
                 "usable entries."
             )
             return report
 
-        print(
+        _debug_print(
             "Native ledger report returned no entries."
         )
-        print(
+        _debug_print(
             "Trying voucher collection fallback..."
         )
 
     except Exception as exc:
-        print(
+        _debug_print(
             f"WARNING: Native ledger report failed: "
             f"{exc}"
         )
@@ -731,9 +740,9 @@ async def fetch_ledger_report(
     # --------------------------------------------------------
 
     try:
-        print("\n==============================================")
-        print("       LEDGER VOUCHER FALLBACK")
-        print("==============================================")
+        _debug_print("\n==============================================")
+        _debug_print("       LEDGER VOUCHER FALLBACK")
+        _debug_print("==============================================")
 
         voucher_request = (
             build_ledger_voucher_collection_request(
@@ -755,7 +764,7 @@ async def fetch_ledger_report(
             )
         )
 
-        print(
+        _debug_print(
             f"Voucher fallback rows parsed: "
             f"{len(voucher_rows)}"
         )
@@ -831,7 +840,7 @@ async def fetch_ledger_report(
             key=lambda row: row.get("date") or ""
         )
 
-        print(
+        _debug_print(
             f"Rows after date filtering: "
             f"{len(filtered_rows)}"
         )
@@ -927,41 +936,41 @@ async def fetch_ledger_report(
             ),
         }
 
-        print(
+        _debug_print(
             "\n=============================================="
         )
-        print(
+        _debug_print(
             "       LEDGER FALLBACK SUCCESS"
         )
-        print(
+        _debug_print(
             "=============================================="
         )
-        print(
+        _debug_print(
             f"Ledger       : {ledger_name}"
         )
-        print(
+        _debug_print(
             f"Entries      : {len(filtered_rows)}"
         )
-        print(
+        _debug_print(
             f"Total Debit  : {total_debit}"
         )
-        print(
+        _debug_print(
             f"Total Credit : {total_credit}"
         )
-        print(
+        _debug_print(
             f"Opening      : {opening_balance}"
         )
-        print(
+        _debug_print(
             f"Closing      : {calculated_closing_balance}"
         )
-        print(
+        _debug_print(
             "==============================================\n"
         )
 
         return report
 
     except Exception as exc:
-        print(
+        _debug_print(
             f"LEDGER FALLBACK FAILED: {exc}"
         )
 

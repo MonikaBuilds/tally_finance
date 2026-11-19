@@ -2,8 +2,8 @@ import asyncio
 from datetime import date
 
 from app.tally.service import client
-from app.tally.parser import parse_ledger_list
-from app.tally.xml_builder import format_tally_date
+from app.tally.parsers import parse_ledger_list
+from app.tally.xml_builders import format_tally_date
 
 
 async def main():

@@ -3,8 +3,8 @@ from datetime import date
 from urllib import response
 
 from app.tally.service import client
-from app.tally.parser import parse_xml
-from app.tally.xml_builder import (
+from app.tally.parsers.common import parse_xml
+from app.tally.xml_builders import (
     build_company_variable,
     format_tally_date,
 )

@@ -32,6 +32,9 @@ from app.cache import (
 )
 from app.security.config import AuthSettings
 
+# Synthetic test users: see tests/conftest.py
+pytestmark = pytest.mark.usefixtures("token_only_auth")
+
 
 TEST_SECRET = "test-secret-key-that-is-long-enough-32-chars-min"
 

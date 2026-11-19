@@ -53,6 +53,12 @@ htmlcov/
 # names, ledger balances and voucher amounts and must not be committed.
 backend/*_raw.xml
 backend/query
+backend/tally_balance_mapping_search.txt
 
+# One-off local debugging scripts (not part of the application)
+backend/dump_voucher_xml.py
+backend/inspect_material_in.py
+backend/save_native_day_book.py
 
+# Local tool folders
 .commandcode/

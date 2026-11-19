@@ -26,7 +26,7 @@ async def test_revenue_period_comparison(monkeypatch):
 
     monkeypatch.setattr(
         tools,
-        "_load_financial_summary",
+        "_load_profit_loss_summary",
         fake_load_financial_summary
     )
 
@@ -71,7 +71,7 @@ async def test_expenses_period_comparison(monkeypatch):
 
     monkeypatch.setattr(
         tools,
-        "_load_financial_summary",
+        "_load_profit_loss_summary",
         fake_load_financial_summary
     )
 
@@ -113,7 +113,7 @@ async def test_net_profit_period_comparison(monkeypatch):
 
     monkeypatch.setattr(
         tools,
-        "_load_financial_summary",
+        "_load_profit_loss_summary",
         fake_load_financial_summary
     )
 
@@ -155,7 +155,7 @@ async def test_comparison_when_previous_value_is_zero(monkeypatch):
 
     monkeypatch.setattr(
         tools,
-        "_load_financial_summary",
+        "_load_profit_loss_summary",
         fake_load_financial_summary
     )
 

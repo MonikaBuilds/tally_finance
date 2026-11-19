@@ -6,7 +6,9 @@ Reports API package modularized into domain routers:
 - inventory: Stock Summary, Godowns, Groups, Categories, Movement, Registers
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.security.permissions import require_permission
 
 # Re-export all common helpers, constants, and column definitions
 from app.api.reports.common import (
@@ -80,11 +82,16 @@ from app.api.reports.outstandings import router as outstandings_router
 from app.api.reports.inventory import router as inventory_router
 
 # Unified reports router for main application inclusion
+# Every report also needs the matching permission category, not only
+# access to the company (RBAC was previously enforced only in the chatbot).
+_financial = [Depends(require_permission("financial"))]
+_inventory = [Depends(require_permission("inventory"))]
+
 router = APIRouter()
-router.include_router(financial_router)
-router.include_router(ledgers_router)
-router.include_router(outstandings_router)
-router.include_router(inventory_router)
+router.include_router(financial_router, dependencies=_financial)
+router.include_router(ledgers_router, dependencies=_financial)
+router.include_router(outstandings_router, dependencies=_financial)
+router.include_router(inventory_router, dependencies=_inventory)
 
 __all__ = [
     "router",

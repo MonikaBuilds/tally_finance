@@ -15,6 +15,32 @@ logger = logging.getLogger(__name__)
 
 _refresher_task: Optional[asyncio.Task] = None
 
+# Dashboards opened by real users: (org_id, company, start, end) -> last seen.
+RECENT_ACCESS_WINDOW_SECONDS = 2 * 3600
+MAX_TRACKED_DASHBOARDS = 20
+_recent_dashboards: dict[tuple, float] = {}
+
+
+def note_dashboard_access(org_id, company, start, end) -> None:
+    """Record that a user opened this dashboard (called by the API)."""
+    import time
+
+    if not org_id or not company or start is None or end is None:
+        return
+    _recent_dashboards[(str(org_id), company, start, end)] = time.monotonic()
+    if len(_recent_dashboards) > MAX_TRACKED_DASHBOARDS:
+        oldest = min(_recent_dashboards, key=_recent_dashboards.get)
+        _recent_dashboards.pop(oldest, None)
+
+
+def recent_dashboard_targets() -> list[tuple]:
+    import time
+
+    cutoff = time.monotonic() - RECENT_ACCESS_WINDOW_SECONDS
+    for key in [k for k, seen in _recent_dashboards.items() if seen < cutoff]:
+        _recent_dashboards.pop(key, None)
+    return sorted(_recent_dashboards, key=_recent_dashboards.get, reverse=True)
+
 
 class TallyBackgroundRefresher:
     """
@@ -43,93 +69,67 @@ class TallyBackgroundRefresher:
 
     async def run_refresh_cycle(self) -> None:
         """
-        Execute a single refresh cycle for high-value reports.
-        Uses delayed execution between requests to preserve Tally responsiveness.
+        Refresh only the dashboards real users opened recently, under their
+        real organization. With no recent activity this makes no Tally
+        request at all (the previous version warmed an organization and
+        company no user was reading, every 10 minutes, all day).
         """
-        from app.tally.service import fetch_companies
+        targets = recent_dashboard_targets()
 
-        logger.info("Starting background cache refresh cycle...")
+        if not targets:
+            logger.debug("No recently used dashboards; skipping background refresh.")
+            return
 
-        # 1. Pre-flight check: don't attempt if Tally is offline
         if not await self._is_tally_reachable():
             logger.info("Tally server unreachable; skipping background refresh cycle.")
             return
 
-        try:
-            # 2. Refresh loaded companies list (force_refresh=True)
-            companies = await fetch_companies(force_refresh=True, org_id=self._org_id)
-            logger.info("Background refreshed companies: %d loaded.", len(companies))
+        from app.api.dashboard_mapper import map_dashboard_summary
+        from app.cache.keys import build_cache_key
+        from app.cache.manager import cache_manager
+        from app.tally.dashboard import fetch_dashboard_reports
+        from datetime import datetime, timezone
 
-            if not companies:
-                return
+        for org_id, company, start, end in targets:
+            cache_key = build_cache_key(
+                report_name="dashboard_summary",
+                company_name=company,
+                org_id=org_id,
+                params={
+                    "from_date": start.isoformat(),
+                    "to_date": end.isoformat(),
+                },
+            )
 
-            # Short polite pause between Tally requests
-            await asyncio.sleep(2.0)
+            async def _refresh(company=company, start=start, end=end):
+                reports, errors = await fetch_dashboard_reports(company, start, end)
+                if not reports:
+                    raise RuntimeError(f"No dashboard reports returned for {company}")
+                summary = map_dashboard_summary(reports, start, end, company)
+                summary["report_errors"] = errors
+                summary["fetched_at"] = datetime.now(timezone.utc).isoformat()
+                return summary
 
-            # 3. Refresh primary loaded company dashboard summary
-            from app.tally.dashboard import fetch_dashboard_reports
-            from app.cache.keys import build_cache_key
-            from app.cache.manager import cache_manager
-
-            today = date.today()
-            # Default financial year start (April 1st)
-            start_year = today.year if today.month >= 4 else today.year - 1
-            default_start = date(start_year, 4, 1)
-            default_end = today
-
-            primary_company = companies[0].get("name")
-            if primary_company:
-                dashboard_key = build_cache_key(
-                    report_name="dashboard_summary",
-                    company_name=primary_company,
-                    org_id=self._org_id,
-                    params={
-                        "from_date": default_start.isoformat(),
-                        "to_date": default_end.isoformat(),
-                    },
-                )
-
-                async def _refresh_dashboard():
-                    from app.api.dashboard_mapper import map_dashboard_summary
-                    from datetime import datetime, timezone
-
-                    reports, errors = await fetch_dashboard_reports(
-                        primary_company,
-                        default_start,
-                        default_end,
-                    )
-                    if not reports:
-                        raise RuntimeError(f"No dashboard reports returned for {primary_company}")
-                    summary = map_dashboard_summary(
-                        reports,
-                        default_start,
-                        default_end,
-                        primary_company,
-                    )
-                    summary['report_errors'] = errors
-                    summary['fetched_at'] = datetime.now(timezone.utc).isoformat()
-                    return summary
-
+            try:
                 await cache_manager.get_or_fetch(
-                    cache_key=dashboard_key,
-                    fetcher=_refresh_dashboard,
+                    cache_key=cache_key,
+                    fetcher=_refresh,
                     fresh_ttl=cache_settings.get_fresh_ttl("dashboard_summary"),
                     force_refresh=True,
                     metadata={
                         "report": "dashboard_summary",
-                        "company": primary_company,
-                        "org_id": self._org_id,
+                        "company": company,
+                        "org_id": org_id,
                     },
                 )
-                logger.info(
-                    "Background refreshed dashboard summary for primary company '%s'.",
-                    primary_company,
-                )
+                logger.info("Background refreshed dashboard for '%s'.", company)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Background refresh failed for '%s': %s", company, exc)
 
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("Error during background cache refresh cycle: %s", exc)
+            # Short polite pause so user requests are not starved.
+            await asyncio.sleep(2.0)
 
     async def start(self) -> None:
         """Main loop of the background refresher task."""

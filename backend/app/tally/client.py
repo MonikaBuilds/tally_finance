@@ -13,6 +13,15 @@ from app.cache.errors import (
 )
 
 
+_debug_logger = __import__("logging").getLogger(__name__)
+
+
+def _debug_print(*parts, **_ignored) -> None:
+    """Former print() diagnostics: DEBUG level only, never stdout."""
+    if _debug_logger.isEnabledFor(10):
+        _debug_logger.debug(" ".join(str(part) for part in parts))
+
+
 class TallyClient:
     _shared_client: httpx.AsyncClient | None = None
     _unavailable_until = 0.0
@@ -239,7 +248,7 @@ class TallyClient:
             # This starts after the lock is acquired, so queue wait is excluded.
             start_time = time.perf_counter()
 
-            print(
+            _debug_print(
                 f"TALLY DEBUG: starting report={report_name}"
             )
 
@@ -283,7 +292,7 @@ class TallyClient:
 
                 duration = time.perf_counter() - start_time
 
-                print(
+                _debug_print(
                     f"TALLY DEBUG: completed report={report_name} "
                     f"in {duration:.2f}s"
                 )
@@ -293,7 +302,7 @@ class TallyClient:
             except asyncio.CancelledError:
                 duration = time.perf_counter() - start_time
 
-                print(
+                _debug_print(
                     f"TALLY DEBUG: cancelled report={report_name} "
                     f"after {duration:.2f}s"
                 )
@@ -308,7 +317,7 @@ class TallyClient:
 
                 duration = time.perf_counter() - start_time
 
-                print(
+                _debug_print(
                     f"TALLY DEBUG: failed report={report_name} "
                     f"after {duration:.2f}s -> "
                     f"{type(exc).__name__}: {exc}"

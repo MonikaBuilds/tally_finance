@@ -3,7 +3,7 @@ from datetime import date
 from xml.sax.saxutils import escape
 
 from app.tally.client import TallyClient
-from app.tally.xml_builder import format_tally_date
+from app.tally.xml_builders import format_tally_date
 
 # This script is a manual test to fetch ledger vouchers from Tally for a specific ledger and date range
 async def main():

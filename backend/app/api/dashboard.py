@@ -295,6 +295,12 @@ async def get_dashboard_summary(
 
         is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
 
+        # Let the background refresher keep exactly this dashboard warm
+        # (it previously warmed an organization no user belonged to).
+        from app.cache.refresher import note_dashboard_access
+
+        note_dashboard_access(effective_org_id, company_name, start, end)
+
         async def _fetch_from_tally():
             reports, errors = await fetch_dashboard_reports(
                 company_name,

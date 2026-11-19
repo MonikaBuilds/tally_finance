@@ -94,6 +94,69 @@ DATE_AWARE_TOOLS = {
 # handled separately from normal date-aware tools.
 COMPARISON_TOOL = "get_period_comparison"
 
+SESSION_REDISPLAY_TOOLS = {
+    "get_profit_loss",
+    "get_trial_balance",
+    "get_balance_sheet",
+}
+
+# Tool-selection cache: the same question needs the same tool, so a repeat
+# question skips the model call. Dates are always resolved locally for the
+# current day, so selections whose arguments contain dates are not cached.
+TOOL_SELECTION_CACHE_TTL = 86400
+_SELECTION_DATE_KEYS = {
+    "from_date", "to_date", "first_from_date", "first_to_date",
+    "second_from_date", "second_to_date", "current_from_date",
+    "current_to_date", "previous_from_date", "previous_to_date",
+}
+
+
+def _selection_cache_key(message: str) -> str:
+    import hashlib
+
+    normalized = " ".join(message.casefold().split())
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"chat:toolsel:v1:{digest}"
+
+
+async def _cached_select_tool(message: str) -> dict:
+    from app.cache.manager import cache_manager
+
+    key = _selection_cache_key(message)
+
+    try:
+        cached, _state, _at = await cache_manager.get_entry(key)
+        if isinstance(cached, dict) and "tool_name" in cached:
+            return {
+                "tool_name": cached.get("tool_name"),
+                "arguments": dict(cached.get("arguments") or {}),
+                "error": None,
+            }
+    except Exception:
+        pass
+
+    selection = await select_tool(message)
+
+    arguments = selection.get("arguments") or {}
+    if (
+        selection.get("error") is None
+        and not (_SELECTION_DATE_KEYS & set(arguments))
+    ):
+        try:
+            await cache_manager.set_entry(
+                key=key,
+                data={
+                    "tool_name": selection.get("tool_name"),
+                    "arguments": arguments,
+                },
+                fresh_ttl=TOOL_SELECTION_CACHE_TTL,
+                retention_ttl=TOOL_SELECTION_CACHE_TTL,
+            )
+        except Exception:
+            pass
+
+    return selection
+
 
 def _extract_allowed_companies(
     message: str,
@@ -282,7 +345,7 @@ async def process_chat_message(
         else:
             # Use Gemini only when the local router
             # cannot confidently understand the request.
-            selection = await select_tool(
+            selection = await _cached_select_tool(
                 cleaned_message
             )
 
@@ -631,9 +694,8 @@ async def process_chat_message(
     calculation_method = tool_result.get("calculation_method")
     if calculation_method == "application_aggregation":
         answer = (
-            "These figures are aggregated by the application from "
-            "Tally report data. They are not totals returned as-is by "
-            "a native Tally report.\n\n"
+            "Derived figure: worked out from Tally report data; "
+            "Tally does not print this as a single total.\n\n"
             + answer
         )
 
@@ -662,7 +724,14 @@ async def process_chat_message(
             state_data={
                 "last_tool": tool_name,
                 "last_intent": tool_name,
-                "last_data": tool_result.get("data"),
+                # Only the three statements are re-displayed from memory
+                # ("show all items"); other tools re-run, so storing their
+                # full data would only waste Redis and process memory.
+                "last_data": (
+                    tool_result.get("data")
+                    if tool_name in SESSION_REDISPLAY_TOOLS
+                    else None
+                ),
                 "last_arguments": arguments,
                 "last_entity": entity,
                 "last_period": {

@@ -10,11 +10,14 @@ from fastapi.testclient import TestClient
 
 from app.api import dashboard
 from app.api.dashboard_mapper import map_dashboard_summary
-from app.security.auth import get_authorized_company
+from app.security.auth import get_authorized_company, get_current_user
 from app.tally.dashboard import (
     collection_request, parse_balances, parse_native_table,
     parse_outstanding_table, parse_profit_loss_rows,
 )
+
+# Synthetic test users: see tests/conftest.py
+pytestmark = pytest.mark.usefixtures("signed_in_superadmin")
 
 
 START, END = date(2025, 4, 1), date(2026, 3, 31)
@@ -181,10 +184,11 @@ def test_monthly_failure_preserves_gap(monkeypatch):
     assert result[0]['status'] == 'unavailable'
 
 
-def test_api_preserves_purchase_and_validates_dates(monkeypatch):
+def test_api_preserves_purchase_and_validates_dates(monkeypatch, signed_in_superadmin):
     app = FastAPI()
     app.include_router(dashboard.router)
     app.dependency_overrides[get_authorized_company] = lambda: 'Example company'
+    app.dependency_overrides[get_current_user] = lambda: signed_in_superadmin
 
     async def fetch(company, start, end):
         assert company == 'Example company'
@@ -270,10 +274,11 @@ def test_missing_outstanding_report_is_not_described_as_a_date_mismatch():
     assert result['metric_sources']['payables']['message'].startswith('Tally did not return')
 
 
-def test_summary_and_monthly_are_separate_endpoints(monkeypatch):
+def test_summary_and_monthly_are_separate_endpoints(monkeypatch, signed_in_superadmin):
     app = FastAPI()
     app.include_router(dashboard.router)
     app.dependency_overrides[get_authorized_company] = lambda: 'Example company'
+    app.dependency_overrides[get_current_user] = lambda: signed_in_superadmin
 
     async def fetch(company, start, end):
         return reports(), {}

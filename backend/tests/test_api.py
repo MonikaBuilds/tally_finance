@@ -1,8 +1,12 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api import reports
 from app.api import dashboard
+
+# Synthetic test users: see tests/conftest.py
+pytestmark = pytest.mark.usefixtures("signed_in_superadmin")
 
 
 client = TestClient(app)
@@ -316,108 +320,9 @@ def test_payables_success(monkeypatch):
 # DASHBOARD
 
 
-def test_dashboard_summary_success(
-    monkeypatch
-):
-
-    async def fake_profit_loss(
-        company_name=None
-    ):
-        return [
-            {
-                "name": "Sales Accounts",
-                "main_amount": 10000.0,
-                "sub_amount": None
-            },
-            {
-                "name": "Cost of Sales :",
-                "main_amount": -6000.0,
-                "sub_amount": None
-            },
-            {
-                "name": "Indirect Expenses",
-                "main_amount": -1000.0,
-                "sub_amount": None
-            }
-        ]
-
-    async def fake_receivables(
-        company_name=None
-    ):
-        return [
-            {
-                "party": "Test Customer",
-                "bill_reference": "INV-001",
-                "bill_date": "2026-01-01",
-                "outstanding_amount": 500.0,
-                "due_date": "2026-01-15",
-                "overdue_days": 1,
-                "type": "receivable"
-            }
-        ]
-
-    async def fake_payables(
-        company_name=None
-    ):
-        return [
-            {
-                "party": "Test Supplier",
-                "bill_reference": "PUR-001",
-                "bill_date": "2026-01-01",
-                "outstanding_amount": 800.0,
-                "due_date": "2026-01-20",
-                "overdue_days": 1,
-                "type": "payable"
-            }
-        ]
-
-    async def fake_allocations(
-        company_name=None
-    ):
-        return []
-
-    monkeypatch.setattr(
-        dashboard,
-        "fetch_profit_loss",
-        fake_profit_loss
-    )
-
-    monkeypatch.setattr(
-        dashboard,
-        "fetch_bills_receivable",
-        fake_receivables
-    )
-
-    monkeypatch.setattr(
-        dashboard,
-        "fetch_bills_payable",
-        fake_payables
-    )
-
-    monkeypatch.setattr(
-        dashboard,
-        "fetch_bill_allocations",
-        fake_allocations
-    )
-
-    response = client.get(
-        "/api/v1/dashboard/summary"
-    )
-
-    assert response.status_code == 200
-
-    body = response.json()
-
-    assert body["success"] is True
-
-    data = body["data"]
-
-    assert data["revenue"] == 10000.0
-    assert data["expenses"] == 7000.0
-    assert data["net_profit"] == 3000.0
-    assert data["receivables"] == 500.0
-    assert data["payables"] == 800.0
-    assert data["pending_invoices"] == 2
+# test_dashboard_summary_success was removed: it mocked the old dashboard
+# that added P&L rows in Python. The current dashboard reads Tally's native
+# reports and is covered by tests/test_dashboard_data.py.
     
 def test_trial_balance_passes_company_name(
     monkeypatch
@@ -533,24 +438,32 @@ def test_trial_balance_passes_to_date(
     assert str(received["to_date"]) == "2025-04-30"
 
 
+# TEST FIXTURE (not Tally data): the minimal shape returned by
+# fetch_balance_sheet_report(), which the Balance Sheet route now uses.
+def _fixture_balance_sheet_report():
+    return {
+        "liabilities": [{"name": "Capital Account", "amount": 10000.0}],
+        "assets": [{"name": "Current Assets", "amount": 10000.0}],
+        "total_liabilities": 10000.0,
+        "total_assets": 10000.0,
+        "difference": 0.0,
+    }
+
+
 def test_balance_sheet_success(
     monkeypatch
 ):
-    async def fake_balance_sheet(
+    async def fake_balance_sheet_report(
         company_name=None,
-        to_date=None
+        from_date=None,
+        to_date=None,
     ):
-        return [
-            {
-                "name": "Current Assets",
-                "amount": 10000.0
-            }
-        ]
+        return _fixture_balance_sheet_report()
 
     monkeypatch.setattr(
         reports,
-        "fetch_balance_sheet",
-        fake_balance_sheet
+        "fetch_balance_sheet_report",
+        fake_balance_sheet_report
     )
 
     response = client.get(
@@ -563,7 +476,8 @@ def test_balance_sheet_success(
 
     assert body["success"] is True
     assert body["source"] == "tally"
-    assert body["report"][0]["name"] == "Current Assets"
+    assert body["report"]["assets"][0]["name"] == "Current Assets"
+    assert body["report"]["total_assets"] == 10000.0
 
 
 def test_balance_sheet_passes_to_date(
@@ -571,23 +485,18 @@ def test_balance_sheet_passes_to_date(
 ):
     received = {}
 
-    async def fake_balance_sheet(
+    async def fake_balance_sheet_report(
         company_name=None,
-        to_date=None
+        from_date=None,
+        to_date=None,
     ):
         received["to_date"] = to_date
-
-        return [
-            {
-                "name": "Current Assets",
-                "amount": 10000.0
-            }
-        ]
+        return _fixture_balance_sheet_report()
 
     monkeypatch.setattr(
         reports,
-        "fetch_balance_sheet",
-        fake_balance_sheet
+        "fetch_balance_sheet_report",
+        fake_balance_sheet_report
     )
 
     response = client.get(
@@ -606,23 +515,18 @@ def test_balance_sheet_passes_company_name(
 ):
     received = {}
 
-    async def fake_balance_sheet(
+    async def fake_balance_sheet_report(
         company_name=None,
-        to_date=None
+        from_date=None,
+        to_date=None,
     ):
         received["company_name"] = company_name
-
-        return [
-            {
-                "name": "Current Assets",
-                "amount": 10000.0
-            }
-        ]
+        return _fixture_balance_sheet_report()
 
     monkeypatch.setattr(
         reports,
-        "fetch_balance_sheet",
-        fake_balance_sheet
+        "fetch_balance_sheet_report",
+        fake_balance_sheet_report
     )
 
     response = client.get(

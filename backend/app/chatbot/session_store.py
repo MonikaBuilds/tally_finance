@@ -21,6 +21,7 @@ from app.cache.manager import cache_manager
 logger = logging.getLogger(__name__)
 
 SESSION_TTL_SECONDS = 3600  # 1 hour session TTL
+MAX_LOCAL_SESSIONS = 2000
 
 _local_session_memory: dict[str, dict[str, Any]] = {}
 
@@ -66,15 +67,23 @@ async def save_session_state(
     session_id: str | None = None,
 ) -> None:
     key = build_session_key(user_id, company, session_id)
+    stored_in_redis = False
     try:
-        await cache_manager.set_entry(
-            key=key,
-            data=state_data,
-            fresh_ttl=SESSION_TTL_SECONDS,
-            retention_ttl=SESSION_TTL_SECONDS,
+        stored_in_redis = bool(
+            await cache_manager.set_entry(
+                key=key,
+                data=state_data,
+                fresh_ttl=SESSION_TTL_SECONDS,
+                retention_ttl=SESSION_TTL_SECONDS,
+            )
         )
     except Exception as exc:
         logger.debug("Error saving session to cache_manager: %s", exc)
+
+    if stored_in_redis:
+        # Redis holds it; do not keep a second copy in process memory.
+        _local_session_memory.pop(key, None)
+        return
 
     # Local fallback (used when Redis is unavailable). Expired entries are
     # only dropped for a key when that same key is read again, so prune the
@@ -89,6 +98,14 @@ async def save_session_state(
 
     for expired_key in expired_keys:
         _local_session_memory.pop(expired_key, None)
+
+    # Hard cap so a long Redis outage cannot grow memory without limit.
+    while len(_local_session_memory) >= MAX_LOCAL_SESSIONS:
+        oldest = min(
+            _local_session_memory,
+            key=lambda name: _local_session_memory[name].get("_timestamp", 0),
+        )
+        _local_session_memory.pop(oldest, None)
 
     _local_session_memory[key] = {
         "data": state_data,

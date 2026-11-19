@@ -33,7 +33,12 @@ from app.cache import (
 )
 
 
-from app.security.permissions import initialize_rbac_store
+from fastapi import Depends
+
+from app.security.permissions import (
+    initialize_rbac_store,
+    require_permission,
+)
 
 
 configure_logging()
@@ -106,12 +111,14 @@ app.include_router(
     dashboard_router,
     prefix="/api/v1/dashboard",
     tags=["Dashboard"],
+    dependencies=[Depends(require_permission("financial"))],
 )
 
 app.include_router(
     dashboard_export_router,
     prefix="/api/v1/dashboard",
     tags=["Dashboard"],
+    dependencies=[Depends(require_permission("financial"))],
 )
 
 app.include_router(
