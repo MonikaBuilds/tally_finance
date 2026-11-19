@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import os
 
@@ -66,7 +67,6 @@ APPLICATION_AGGREGATION_TOOLS = {
     "get_cash_balance",
     "get_bank_balance",
     "get_bank_transactions",
-    "get_ledger_transactions",
     "get_customer_statement",
     "get_supplier_statement",
     "get_cash_transactions",
@@ -335,12 +335,26 @@ async def execute_tool(
             ]
         )
 
+        sig = inspect.signature(tool_function)
+        has_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+        filtered_arguments = (
+            prepared_arguments
+            if has_var_kwargs
+            else {
+                k: v for k, v in prepared_arguments.items()
+                if k in sig.parameters
+            }
+        )
+
         # ---------------------------------------------
         # 4. PREPARE CACHE KEY
         # ---------------------------------------------
-        company_name = prepared_arguments.get("company_name")
+        company_name = filtered_arguments.get("company_name")
         cache_params = {
-            k: v for k, v in prepared_arguments.items()
+            k: v for k, v in filtered_arguments.items()
             if k != "company_name"
         }
         cache_key = build_cache_key(
@@ -365,7 +379,7 @@ async def execute_tool(
             try:
                 raw_result = await asyncio.wait_for(
                     tool_function(
-                        **prepared_arguments
+                        **filtered_arguments
                     ),
                     timeout=CHATBOT_TOOL_TIMEOUT,
                 )

@@ -51,7 +51,35 @@ INVALID_LEDGER_NAMES = {
     "p&l",
     "balance sheet",
     "trial balance",
+    "day book",
+    "daybook",
+    "dairy",
+    "diary",
 }
+
+
+def _clean_ledger_name(name: str) -> str:
+    if not name:
+        return ""
+    # Strip instructions like 'with date, voucher type...', 'with details...', 'ledger'
+    name = re.sub(
+        r"\s+with\s+(?:date|voucher|amount|details|entries).*$",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = re.sub(
+        r"\s+ledger$",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = name.strip()
+    if name.endswith("?"):
+        name = name[:-1].strip()
+    if name.endswith(".") and not name.lower().endswith(("ltd.", "pvt.", "inc.", "corp.", "co.")):
+        name = name[:-1].strip()
+    return name
 
 
 def detect_local_intent(
@@ -103,6 +131,14 @@ def detect_local_intent(
     ):
         return "get_trial_balance"
 
+    # Day Book / Daybook / Day book dairy / Day book diary
+    if re.search(
+        r"\b(day\s*book|daybook|day\s*book\s*dairy|day\s*book\s*diary|daily\s*dairy|daily\s*diary)\b",
+        message,
+        flags=re.IGNORECASE,
+    ) or re.search(r"\b(?:dairy|diary)\b", message, flags=re.IGNORECASE):
+        return "get_day_book"
+
     # --------------------------------------------------
     # CONVERSATIONAL FOLLOW-UP QUERIES
     # --------------------------------------------------
@@ -125,15 +161,24 @@ def detect_local_intent(
         return "follow_up_entity_balance"
 
     if re.search(
-        r"\b(inventory\s+valuation|stock\s+valuation|"
-        r"stock\s+value|inventory\s+value)\b",
+        r"\b(inventory\s+valuation|stock\s+valuation)\b",
         message,
         flags=re.IGNORECASE,
     ):
         return {
             "tool_name": "get_stock_summary",
-            "arguments": {"valuation_only": True},
+            "arguments": {
+                "valuation_only": True,
+            },
         }
+
+    if re.search(
+        r"\b(closing\s+stock|closing\s+inventory|stock\s+summary|inventory\s+summary|"
+        r"stock\s+value|inventory\s+value)\b",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return "get_stock_summary"
 
     # --------------------------------------------------
     # CUSTOMER STATEMENT
@@ -546,12 +591,34 @@ def detect_local_intent(
     )
 
     if ledger_details_match:
-        target_name = ledger_details_match.group(1).strip().rstrip(". ?")
+        target_name = _clean_ledger_name(ledger_details_match.group(1))
         if target_name and target_name.lower() not in INVALID_LEDGER_NAMES:
             return {
                 "tool_name": "get_ledger_report",
                 "arguments": {
                     "ledger_name": target_name,
+                },
+            }
+
+    # Explicit voucher / transaction listing
+    # Example:
+    # "List the 10 vouchers in the Eagle Paradise Pvt. Ltd. ledger"
+    # "Show the voucher-wise entries of Eagle Paradise Pvt. Ltd. with date, voucher type, voucher number and amount"
+    # "Show all transactions of Eagle Paradise Pvt. Ltd."
+    voucher_entries_match = re.search(
+        r"\b(?:show|list|get|display)\s+(?:the\s+)?(?:\d+\s+)?(?:all\s+)?(?:voucher-wise\s+entries|vouchers?|entries|transactions?|statement)\s+"
+        r"(?:in|of|for)\s+(?:the\s+)?(.+?)\s*$",
+        message,
+        flags=re.IGNORECASE,
+    )
+
+    if voucher_entries_match:
+        ledger_name = _clean_ledger_name(voucher_entries_match.group(1))
+        if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
+            return {
+                "tool_name": "get_ledger_transactions",
+                "arguments": {
+                    "ledger_name": ledger_name,
                 },
             }
 
@@ -572,12 +639,7 @@ def detect_local_intent(
     )
 
     if ledger_transactions_match:
-        ledger_name = (
-            ledger_transactions_match
-            .group(1)
-            .strip()
-            .rstrip(". ?")
-        )
+        ledger_name = _clean_ledger_name(ledger_transactions_match.group(1))
 
         if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {
@@ -607,12 +669,7 @@ def detect_local_intent(
     )
 
     if ledger_statement_match:
-        ledger_name = (
-            ledger_statement_match
-            .group(1)
-            .strip()
-            .rstrip(". ?")
-        )
+        ledger_name = _clean_ledger_name(ledger_statement_match.group(1))
 
         if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {
@@ -636,12 +693,7 @@ def detect_local_intent(
     )
 
     if ledger_balance_match:
-        ledger_name = (
-            ledger_balance_match
-            .group(1)
-            .strip()
-            .rstrip(". ?")
-        )
+        ledger_name = _clean_ledger_name(ledger_balance_match.group(1))
 
         if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
             return {

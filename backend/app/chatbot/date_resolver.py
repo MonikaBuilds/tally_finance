@@ -590,6 +590,57 @@ def resolve_date_range(
             )
         )
 
+    # --------------------------------------------------
+    # Single date
+    #
+    # Examples:
+    # "for 01-04-2025", "on 01-04-2025", "as on 31-03-2026", "01-04-2025"
+    # "on 15th August 2025", "for 1 April 2025"
+    # --------------------------------------------------
+    single_date_match = re.search(
+        r"\b(?:on|for|as\s+on|as\s+of)?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\b",
+        text,
+    )
+    if single_date_match:
+        d_str = single_date_match.group(1).replace("/", "-")
+        try:
+            target_date = datetime.strptime(
+                d_str,
+                "%d-%m-%Y",
+            ).date()
+            return DateRange(
+                from_date=target_date,
+                to_date=target_date,
+                label=target_date.strftime("%d-%m-%Y"),
+            )
+        except ValueError:
+            pass
+
+    months_pattern_str = "|".join(MONTHS.keys())
+    single_natural_date_match = re.search(
+        r"\b(?:on|for|as\s+on|as\s+of)?\s*(\d{1,2})(?:st|nd|rd|th)?\s+("
+        + months_pattern_str
+        + r")(?:\s+(\d{4}))?\b",
+        text,
+    )
+    if single_natural_date_match:
+        try:
+            d_val = int(single_natural_date_match.group(1))
+            m_val = MONTHS[single_natural_date_match.group(2).lower()]
+            y_val = (
+                int(single_natural_date_match.group(3))
+                if single_natural_date_match.group(3)
+                else current_date.year
+            )
+            target_date = date(y_val, m_val, d_val)
+            return DateRange(
+                from_date=target_date,
+                to_date=target_date,
+                label=target_date.strftime("%d-%m-%Y"),
+            )
+        except (ValueError, TypeError):
+            pass
+
     return None
 
 

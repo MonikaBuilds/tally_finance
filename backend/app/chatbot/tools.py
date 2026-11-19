@@ -20,7 +20,8 @@ from app.tally.service import (
     fetch_bills_receivable,
     fetch_bills_payable,
     fetch_ledger_list,
-    fetch_ledger_report
+    fetch_ledger_report,
+    fetch_day_book,
 )
 
 from app.financial.service import (
@@ -1134,6 +1135,46 @@ async def get_ledger_report_tool(
             else None
         )
     })
+
+
+async def get_day_book_tool(
+    company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    voucher_type: str | None = None,
+) -> dict:
+    """
+    Return Day Book entries (vouchers) from Tally for the requested date or period.
+    """
+    raw = await fetch_day_book(
+        company_name=company_name,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    rows = raw.get("rows", [])
+    if voucher_type:
+        clean_vt = voucher_type.strip().casefold()
+        rows = [
+            r for r in rows
+            if (r.get("voucher_type") or "").casefold() == clean_vt
+        ]
+
+    return _success({
+        "rows": rows,
+        "count": len(rows),
+        "from_date": (
+            from_date.isoformat()
+            if from_date
+            else None
+        ),
+        "to_date": (
+            to_date.isoformat()
+            if to_date
+            else None
+        ),
+        "voucher_type": voucher_type,
+    })
+
 
 async def get_bank_transactions_tool(
     ledger_name: str,
