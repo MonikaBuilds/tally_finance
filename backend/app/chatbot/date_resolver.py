@@ -177,6 +177,42 @@ def resolve_date_range(
         except ValueError:
             pass
 
+    # --------------------------------------------------
+    # 1a. Explicit start date with a relative end
+    #
+    # Examples:
+    # "from 01-04-2026 till today"
+    # "01-04-2026 to now"
+    # --------------------------------------------------
+
+    open_range_match = re.search(
+        r"(?:between\s+|from\s+)?"
+        r"(\d{1,2}[-/]\d{1,2}[-/]\d{4})"
+        r"\s+(?:to|and|until|till)\s+"
+        r"(today|now)\b",
+        text,
+    )
+
+    if open_range_match:
+        try:
+            from_date = datetime.strptime(
+                open_range_match.group(1).replace("/", "-"),
+                "%d-%m-%Y",
+            ).date()
+        except ValueError:
+            from_date = None
+
+        if from_date is not None:
+            # Never produce a range that ends before it starts.
+            if from_date > current_date:
+                return None
+
+            return DateRange(
+                from_date=from_date,
+                to_date=current_date,
+                label="custom date range",
+            )
+
     # Also support ISO format (YYYY-MM-DD to YYYY-MM-DD)
     iso_range_match = re.search(
         r"(?:between\s+|from\s+)?"
@@ -557,6 +593,18 @@ def resolve_date_range(
         text
     )
 
+    # "may" is also the modal verb ("what may be my receivables").
+    # Treat it as the month only when it is used as one: followed by a
+    # year, or preceded by a date preposition / "this"/"last"/"next".
+    if month_match and month_match.group(1) == "may":
+        preceded_by_marker = re.search(
+            r"(?:in|during|for|of|since|until|till|from)\s+"
+            r"(?:the\s+)?(?:this\s+|last\s+|next\s+)?may\b",
+            text,
+        )
+        if not month_match.group(2) and not preceded_by_marker:
+            month_match = None
+
     if month_match:
         month_name = (
             month_match.group(1)
@@ -580,6 +628,16 @@ def resolve_date_range(
             year,
             month_number
         )
+
+        # A month named without a year is meant as the most recent one
+        # that has already started - "sales in December" asked in
+        # October means last December, not a future month with no data.
+        if not supplied_year and start > current_date:
+            year -= 1
+            start, end = _month_range(
+                year,
+                month_number
+            )
 
         return DateRange(
             from_date=start,

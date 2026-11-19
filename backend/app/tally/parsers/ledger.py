@@ -2076,24 +2076,4 @@ def parse_ledger_report(
         ),
     }
 
-    # DEBUG: not a logic change - just prints what this function is
-    # about to return, so a ledger showing wrong data (reported for
-    # Input CGST / Output CGST / Cost of Sub-Contracting / Office Exp
-    # / Domestic Professional Services, while Bajaj Finance is fine)
-    # can be compared entry-by-entry against Tally's own screen
-    # instead of guessing where the mismatch is.
-    print(f"\n========== LEDGER REPORT PARSED: {ledger_name!r} ==========")
-    print(f"native_rows={len(native_rows)}  custom_rows={len(custom_rows)}")
-    print(f"opening_balance={period_opening}  closing_balance={period_closing}")
-    print(f"total_debit={total_debit}  total_credit={total_credit}")
-    for row in final_rows[:15]:
-        print(
-            f'  {row.get("date")}  {row.get("particulars")!r}  '
-            f'debit={row.get("debit")}  credit={row.get("credit")}  '
-            f'running_balance={row.get("running_balance")}'
-        )
-    if len(final_rows) > 15:
-        print(f"  ... and {len(final_rows) - 15} more entries")
-    print("========== END LEDGER REPORT PARSED ==========\n")
-
     return result

@@ -25,6 +25,9 @@ class CacheSettings(BaseSettings):
     REDIS_UNAVAILABLE_COOLDOWN_SECONDS: float = 30.0  # Cooldown when Redis is offline
     TALLY_UNAVAILABLE_COOLDOWN_SECONDS: int = 30
     TALLY_CONNECT_TIMEOUT: float = 2.5
+    # How long a request may wait for the single Tally request lock before
+    # it gives up and lets the cache layer serve retained data.
+    TALLY_LOCK_TIMEOUT_SECONDS: float = 20.0
 
     # Specific report freshness TTLs (in seconds)
     TTL_COMPANIES: int = 600
@@ -71,6 +74,30 @@ class CacheSettings(BaseSettings):
             "bills_payable": self.TTL_BILLS_PAYABLE,
             "stock_summary": self.TTL_STOCK_SUMMARY,
             "ledger_list": self.TTL_LEDGER_LIST,
+            # Report names used by the routers that had no entry and so
+            # silently took the 300s default. Keep each one at the TTL of
+            # the data it serves.
+            "ledger_report": self.TTL_LEDGER_LIST,
+            "group_summary": self.TTL_PROFIT_LOSS,
+            "day_book": self.TTL_LEDGER_LIST,
+            "voucher_detail": self.TTL_LEDGER_LIST,
+            "stock_movement": self.TTL_STOCK_SUMMARY,
+            "stock_item": self.TTL_STOCK_SUMMARY,
+            "stock_item_monthly": self.TTL_STOCK_SUMMARY,
+            "stock_group_summary": self.TTL_STOCK_SUMMARY,
+            "stock_category_summary": self.TTL_STOCK_SUMMARY,
+            "godown_summary": self.TTL_STOCK_SUMMARY,
+            "stock_group_items": self.TTL_STOCK_SUMMARY,
+            "stock_groups": self.TTL_STOCK_SUMMARY,
+            "stock_categories": self.TTL_STOCK_SUMMARY,
+            "godowns": self.TTL_STOCK_SUMMARY,
+            "stock_valuation": self.TTL_STOCK_SUMMARY,
+            "negative_stock": self.TTL_STOCK_SUMMARY,
+            "inventory_register": self.TTL_STOCK_SUMMARY,
+            "inventory_voucher": self.TTL_STOCK_SUMMARY,
+            "bill_allocations": self.TTL_BILLS_PAYABLE,
+            "pending_invoices": self.TTL_BILLS_PAYABLE,
+            "purchase_bills_pending": self.TTL_STOCK_SUMMARY,
         }
         return mapping.get(report_name, self.REDIS_CACHE_DEFAULT_FRESH_TTL)
 

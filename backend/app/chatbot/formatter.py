@@ -3168,35 +3168,20 @@ def format_tool_response(
                 "Unknown Company",
             )
 
-            revenue = float(
-                company.get(
-                    "revenue",
-                    0,
-                )
-                or 0
-            )
-
-            total_expenses = float(
-                company.get(
-                    "total_expenses",
-                    0,
-                )
-                or 0
-            )
-
-            net_profit = float(
-                company.get(
-                    "net_profit",
-                    0,
-                )
-                or 0
-            )
+            # The comparison tool returns None for a lookup that failed,
+            # so a company whose data could not be read is reported as
+            # unavailable instead of as a genuine zero.
+            def _figure(key):
+                value = company.get(key)
+                if value is None:
+                    return "not available"
+                return f"₹{float(value):,.2f}"
 
             lines.extend([
                 company_name,
-                f"Revenue: ₹{revenue:,.2f}",
-                f"Total Expenses: ₹{total_expenses:,.2f}",
-                f"Net Profit: ₹{net_profit:,.2f}",
+                f"Revenue: {_figure('revenue')}",
+                f"Total Expenses: {_figure('total_expenses')}",
+                f"Net Profit: {_figure('net_profit')}",
                 "",
             ])
 

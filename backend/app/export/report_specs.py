@@ -790,7 +790,13 @@ def voucher_spec(voucher, company):
 
 def inventory_voucher_spec(voucher, company):
     voucher = voucher or {}
-    entries = voucher.get("entries", []) or []
+    # The inventory parser emits the stock lines under "inventory_entries"
+    # ("entries" belongs to the accounting voucher parser).
+    entries = (
+        voucher.get("inventory_entries")
+        or voucher.get("entries")
+        or []
+    )
     transfer = bool(voucher.get("is_transfer"))
 
     meta = [
@@ -895,12 +901,26 @@ def ledger_list_spec(ledgers, company):
 
 
 def bill_allocations_spec(bills, company):
-    columns = [col("date", "Date", "date"), col("party_ledger_name", "Party Ledger"),
-               col("party_name", "Party"), col("voucher_type", "Voucher Type"),
-               col("voucher_number", "Voucher No."), col("reference", "Reference"),
-               col("narration", "Narration")]
-    return spec("Purchase Bill", company, [{"columns": columns, "rows": bills,
-                                            "filterable": True}])
+    # Columns must match what parse_bill_allocations() actually emits:
+    # party, bill_reference, bill_date, voucher_date, voucher_type,
+    # voucher_number, bill_type, amount, guid.
+    columns = [
+        col("party", "Party"),
+        col("bill_reference", "Bill Reference"),
+        col("bill_type", "Bill Type"),
+        col("bill_date", "Bill Date", "date"),
+        col("voucher_date", "Voucher Date", "date"),
+        col("voucher_type", "Voucher Type"),
+        col("voucher_number", "Voucher No."),
+        col("amount", "Amount", "amount"),
+    ]
+    total = sum(_num(b.get("amount")) for b in (bills or []))
+    return spec("Purchase Bill", company, [{
+        "columns": columns,
+        "rows": bills,
+        "totals": [{"party": "Total", "amount": total}] if bills else [],
+        "filterable": True,
+    }])
 
 
 # ----------------------------------------------------------------------
@@ -934,11 +954,37 @@ def dashboard_spec(summary, monthly, company, period):
 
     accounts = summary.get("cash_bank_accounts") or []
     if accounts:
+        # Dashboard balances keep Tally's own sign (negative = Dr), which
+        # is the opposite of the ledger reports' convention - so the
+        # Dr/Cr label is built here instead of going through the shared
+        # "balance" column type.
+        def _account_row(account):
+            amount = _num(account.get("balance"))
+            if account.get("balance") is None:
+                text = ""
+            elif round(amount, 2) == 0:
+                text = "0.00"
+            else:
+                text = (
+                    f"{_fmt(abs(amount))} "
+                    f"{'Dr' if amount < 0 else 'Cr'}"
+                )
+            return {
+                "name": account.get("name"),
+                "category": account.get("category"),
+                "balance_text": text,
+            }
+
         sections.append({
             "sheet": "Overview", "heading": "Cash & Bank",
             "columns": [col("name", "Account"), col("category", "Type"),
-                        col("balance", "Closing Balance", "balance")],
-            "rows": sorted(accounts, key=lambda a: -abs(_num(a.get("balance")))),
+                        col("balance_text", "Closing Balance")],
+            "rows": [
+                _account_row(a)
+                for a in sorted(
+                    accounts, key=lambda a: -abs(_num(a.get("balance")))
+                )
+            ],
         })
 
     for title, key in (("Sales Breakdown", "sales_breakdown"),

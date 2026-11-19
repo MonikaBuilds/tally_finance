@@ -46,7 +46,7 @@ function drillDownPathFor(name, dates) {
   }
 
   if (normalized === 'closing stock') {
-    return '/reports/inventory'
+    return `/reports/closing-stock${buildQuery(dates)}`
   }
 
   if (/gross (profit|loss)|nett? (profit|loss)/i.test(normalized)) {

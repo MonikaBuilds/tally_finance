@@ -240,7 +240,9 @@ def build_voucher_bills_request(
                             NARRATION,
                             ISINVOICE,
                             ISDELETED,
-                            ALLLEDGERENTRIES.*
+                            ISCANCELLED,
+                            ALLLEDGERENTRIES.*,
+                            ALLLEDGERENTRIES.BILLALLOCATIONS.*
                         </FETCH>
 
                     </COLLECTION>

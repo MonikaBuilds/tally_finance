@@ -1,4 +1,7 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
+from mysql.connector import IntegrityError
 from pydantic import BaseModel, Field
 
 from app.security.auth import UserContext
@@ -33,6 +36,7 @@ from app.security.user_store import (
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def ensure_same_organization(
@@ -448,6 +452,9 @@ def create_admin_user(
         )
 
         if not role_assigned:
+            # create_user() already committed, so without this the account
+            # would be left behind with no role and no way to use it.
+            delete_user(user_id)
             raise HTTPException(
                 status_code=500,
                 detail="Unable to assign role to user.",
@@ -456,6 +463,15 @@ def create_admin_user(
         if request.role_name in ("admin", "superadmin"):
             for perm in ("financial", "inventory", "banking", "tax"):
                 assign_permission_to_user(user_id, perm)
+
+    except IntegrityError as exc:
+        # Duplicate username / user id: the schema's UNIQUE constraint
+        # rejected the insert. That is a client error, not a 500.
+        logger.warning("User creation rejected by a database constraint: %s", exc)
+        raise HTTPException(
+            status_code=409,
+            detail="A user with this username already exists.",
+        ) from exc
 
     except ValueError as exc:
         raise HTTPException(

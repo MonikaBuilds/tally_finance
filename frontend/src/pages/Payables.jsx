@@ -20,7 +20,7 @@ function Payables() {
   if (error) return <ErrorMessage message={error} />
   if (!response.success) return <ErrorMessage message={response.error || response.message} />
 
-  const { total_payable, bills } = response.data
+  const { total_payable, bills } = response.data || {}
 
   return (
     <>

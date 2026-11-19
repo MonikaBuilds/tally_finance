@@ -79,20 +79,26 @@ export function useDefaultAsOnDate() {
         )) ||
       companies[0]
 
-    const date = financialYearEnd(company?.books_from)
+    // starting_from is where the company's CURRENT period begins in
+    // Tally; books_from is only the first day of the books ever. Using
+    // books_from alone defaulted older companies to their first
+    // financial year, so the report showed a long-stale stock position.
+    const date = financialYearEnd(
+      company?.starting_from || company?.books_from
+    )
 
     if (!date) {
       return {
         date: null,
-        debug: `Company "${company?.name}" has no usable books_from (got: ${JSON.stringify(
-          company?.books_from
+        debug: `Company "${company?.name}" has no usable starting_from / books_from (got: ${JSON.stringify(
+          company?.starting_from || company?.books_from
         )}). Raw company record: ${JSON.stringify(company)}`,
       }
     }
 
     return {
       date,
-      debug: `Defaulted from company "${company.name}" (books_from ${company.books_from}) -> ${date}`,
+      debug: `Defaulted from company "${company.name}" (starting_from ${company.starting_from}, books_from ${company.books_from}) -> ${date}`,
     }
   }, [data, loading, error])
 }

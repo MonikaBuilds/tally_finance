@@ -207,8 +207,26 @@ class TallyClient:
         )
 
         # Serialize requests so Tally only ever handles one at a time
-        # (see the comment on _lock above).
-        async with self._lock:
+        # (see the comment on _lock above). The wait itself is bounded:
+        # without a timeout a queue of heavy reports could make one user
+        # wait indefinitely behind everyone else's requests.
+        lock_timeout = max(
+            1.0, cache_settings.TALLY_LOCK_TIMEOUT_SECONDS
+        )
+
+        try:
+            await asyncio.wait_for(
+                self._lock.acquire(),
+                timeout=lock_timeout,
+            )
+        except asyncio.TimeoutError:
+            # Fail as a connectivity-style error so the cache layer can
+            # serve retained data, instead of hanging the request.
+            raise httpx.ReadTimeout(
+                f"Waited {lock_timeout:.0f}s for the Tally request queue"
+            )
+
+        try:
             # Once any request or health check has confirmed an outage,
             # fail queued reports quickly so their cache layer can serve
             # retained data instead of waiting through another read timeout.
@@ -297,3 +315,9 @@ class TallyClient:
                 )
 
                 raise
+
+        finally:
+            # Manual acquire above, so the lock must be released on every
+            # exit path - success, error, or cancellation.
+            if self._lock.locked():
+                self._lock.release()

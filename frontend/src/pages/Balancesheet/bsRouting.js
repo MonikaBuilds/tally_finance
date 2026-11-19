@@ -44,7 +44,7 @@ export function balanceSheetLinePath(row, dates) {
   const name = row?.name
   if (!name || isNonDrillable(name)) return null
 
-  if (isProfitLoss(name)) return PROFIT_LOSS_PATH
+  if (isProfitLoss(name)) return `${PROFIT_LOSS_PATH}${buildQuery(dates)}`
 
   return bsPath('/group', { group: name, ...dates })
 }
@@ -52,9 +52,9 @@ export function balanceSheetLinePath(row, dates) {
 // The sub-lines Tally prints under Profit & Loss A/c ("Opening Balance",
 // "Current Period"). "Current Period" is the P&L result for the period,
 // so it opens the Profit & Loss report; the opening balance does not.
-export function balanceSheetChildPath(child, parent) {
+export function balanceSheetChildPath(child, parent, dates = {}) {
   if (isProfitLoss(parent?.name) && /^current period$/i.test((child?.name || '').trim())) {
-    return PROFIT_LOSS_PATH
+    return `${PROFIT_LOSS_PATH}${buildQuery(dates)}`
   }
   return null
 }

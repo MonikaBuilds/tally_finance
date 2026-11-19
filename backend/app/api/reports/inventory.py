@@ -130,23 +130,6 @@ async def fetch_register_voucher_list(*args, **kwargs):
 async def fetch_godown_item_monthly(*args, **kwargs):
     return await _get_fetcher("fetch_godown_item_monthly", _real_fetch_godown_item_monthly)(*args, **kwargs)
 
-# ============================================================
-# STOCK & INVENTORY
-# ============================================================
-#
-# These endpoints back the "Stock" section of the app:
-#   Stock -> Stock Summary
-#   Inventory:
-#     1. Stock Item     -> List of Stock Items -> Stock Monthly Summary
-#     2. Location        -> Select Location -> Location Summary
-#                            -> Location Monthly Summary
-#     3. Stock Group     -> Stock Group Summary -> Stock Monthly Summary
-#
-# All data is fetched live from the Tally server via app.tally.service
-# (which in turn uses the same TallyClient/XML pipeline as every other
-# report in this file) - nothing here is hardcoded.
-
-
 def _stock_summary_row(row: dict) -> dict:
     """
     Normalize one Stock Summary row.
@@ -1099,7 +1082,7 @@ async def export_stock_group_items_report(
         columns=STOCK_SUMMARY_COLUMNS,
         rows=rows,
         company_name=company_name,
-        filename_base=f"stock_group_{group.strip().replace(' ', '_')}",
+        filename_base=_safe_name(group, "stock_group"),
         period=_period_label(to_date=to_date),
     )
 

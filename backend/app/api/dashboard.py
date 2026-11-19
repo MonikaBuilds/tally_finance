@@ -225,6 +225,16 @@ def _resolve_org_id(current_user: UserContext) -> str:
     )
 
     if not organization_id:
+        # Development mode (auth disabled) authenticates as
+        # "development-user", which does not exist in MySQL.
+        from app.security.config import get_auth_settings
+
+        if (
+            not get_auth_settings().auth_enabled
+            or current_user.user_id == "development-user"
+        ):
+            return "default"
+
         raise HTTPException(
             status_code=500,
             detail="Unable to resolve user organization.",

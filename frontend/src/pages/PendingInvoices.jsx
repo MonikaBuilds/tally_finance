@@ -37,7 +37,7 @@ function PendingInvoices() {
       />
 
       <Card>
-        <DataTable columns={COLUMNS} rows={response.data.invoices} />
+        <DataTable columns={COLUMNS} rows={response.data?.invoices || []} />
       </Card>
     </>
   )

@@ -85,7 +85,13 @@ function Chatbot() {
 
     const companyName = getSelectedCompany()
 
-    if (!companyName) {
+    // A cross-company comparison does not need one active company:
+    // the question names the companies itself and the backend
+    // authorizes them against the user's own access.
+    const isComparisonQuery =
+      /\b(compare|comparison|versus|vs\.?)\b/i.test(trimmed)
+
+    if (!companyName && !isComparisonQuery) {
       setError(
         'Please select a company before using the AI Assistant.',
       )

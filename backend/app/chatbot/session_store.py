@@ -76,8 +76,21 @@ async def save_session_state(
     except Exception as exc:
         logger.debug("Error saving session to cache_manager: %s", exc)
 
-    # Local fallback
+    # Local fallback (used when Redis is unavailable). Expired entries are
+    # only dropped for a key when that same key is read again, so prune the
+    # dict here as well - otherwise it grows for the life of the process.
+    now = time.time()
+
+    expired_keys = [
+        key_name
+        for key_name, entry in _local_session_memory.items()
+        if now - entry.get("_timestamp", 0) >= SESSION_TTL_SECONDS
+    ]
+
+    for expired_key in expired_keys:
+        _local_session_memory.pop(expired_key, None)
+
     _local_session_memory[key] = {
         "data": state_data,
-        "_timestamp": time.time(),
+        "_timestamp": now,
     }
