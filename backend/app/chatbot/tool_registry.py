@@ -168,8 +168,6 @@ TOOL_FUNCTIONS = {
     "get_company_comparison": get_company_comparison_tool,
     "get_cost_centre_analysis": get_cost_centre_analysis_tool,
     "get_party_statement": get_party_statement_tool,
-    "get_invoice_status": get_invoice_status_tool,
-    "get_bank_transactions": get_bank_transactions_tool
 }
 
 

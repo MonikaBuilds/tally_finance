@@ -167,6 +167,15 @@ async function handleResponse(response) {
 // they could attempt to rotate the same refresh token.
 let refreshPromise = null;
 
+// Methods that carry the CSRF header. A retry after a token refresh
+// must rebuild these headers, because refresh rotates the CSRF cookie.
+const MUTATING_METHODS = new Set([
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+]);
+
 
 function isAuthPath(path) {
   return (
@@ -260,10 +269,29 @@ async function authenticatedFetch(
   // Attempt one refresh and then retry the original request once.
   await refreshAuthentication();
 
+  // The refresh rotated the CSRF cookie, so a state-changing request
+  // must be rebuilt with the new token instead of reusing the old
+  // headers - otherwise the retry fails CSRF validation.
+  const retryOptions = MUTATING_METHODS.has(
+    (options.method || "GET").toUpperCase()
+  )
+    ? {
+        ...options,
+        headers: buildCsrfHeaders(
+          Object.fromEntries(
+            Object.entries(options.headers || {}).filter(
+              ([name]) => name.toLowerCase() !== "x-csrf-token"
+                    && name.toLowerCase() !== "content-type"
+            )
+          )
+        ),
+      }
+    : options;
+
   return fetch(
     `${API_BASE_URL}${path}`,
     {
-      ...options,
+      ...retryOptions,
       credentials: "include",
     }
   );

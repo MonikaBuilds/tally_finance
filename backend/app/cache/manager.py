@@ -83,6 +83,7 @@ class TallyCacheManager:
     def __init__(self):
         # Per-key in-flight locks to prevent cache stampedes
         self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_users: dict[str, int] = {}
         self._locks_mutex = asyncio.Lock()
         # Avoid repeating a known-failing Tally request for a stale key.
         self._connectivity_failures: dict[str, float] = {}
@@ -98,14 +99,23 @@ class TallyCacheManager:
         async with self._locks_mutex:
             if key not in self._locks:
                 self._locks[key] = asyncio.Lock()
+            # Count this caller. A lock is only released once nobody can
+            # still be waiting on it - otherwise a coroutine that already
+            # holds the lock object could end up racing a newly created one.
+            self._lock_users[key] = self._lock_users.get(key, 0) + 1
             return self._locks[key]
 
     async def _cleanup_lock(self, key: str) -> None:
-        """Remove lock entry if no coroutines are waiting."""
+        """Drop the lock entry once no coroutine is using it any more."""
         async with self._locks_mutex:
-            lock = self._locks.get(key)
-            if lock and not lock.locked():
-                self._locks.pop(key, None)
+            remaining = self._lock_users.get(key, 1) - 1
+
+            if remaining > 0:
+                self._lock_users[key] = remaining
+                return
+
+            self._lock_users.pop(key, None)
+            self._locks.pop(key, None)
 
     async def get_entry(self, key: str) -> tuple[Optional[Any], CacheState, Optional[str]]:
         """

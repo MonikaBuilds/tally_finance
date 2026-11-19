@@ -32,6 +32,37 @@ mysql_cursor = mysql_connection.cursor()
 
 
 try:
+    # MySQL requires users.organization_id (NOT NULL, foreign key to
+    # organizations), which the old SQLite schema never had. Make sure a
+    # default organization row exists to migrate every user into.
+    default_organization_id = (
+        os.getenv("INITIAL_ADMIN_ORG_ID")
+        or "e7747b1f-36c9-4ea1-85d9-965f5c55d679"
+    ).strip()
+
+    mysql_cursor.execute(
+        """
+        SELECT organization_id
+        FROM organizations
+        WHERE organization_id = %s
+        LIMIT 1
+        """,
+        (default_organization_id,),
+    )
+
+    if mysql_cursor.fetchone() is None:
+        mysql_cursor.execute(
+            """
+            INSERT INTO organizations (
+                organization_id,
+                organization_name,
+                is_active
+            )
+            VALUES (%s, %s, 1)
+            """,
+            (default_organization_id, "Migrated Organization"),
+        )
+
     # Read existing users from SQLite
     users = sqlite_connection.execute(
         """
@@ -52,15 +83,17 @@ try:
                 user_id,
                 username,
                 password_hash,
-                is_active
+                is_active,
+                organization_id
             )
-            VALUES (%s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (
                 user["user_id"],
                 user["username"],
                 user["password_hash"],
                 user["is_active"],
+                default_organization_id,
             ),
         )
 

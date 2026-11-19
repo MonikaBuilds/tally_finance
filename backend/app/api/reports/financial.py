@@ -153,6 +153,8 @@ async def export_profit_loss_report(
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
 ):
+    _check_period(from_date, to_date)
+
     async def _fetch():
         return await fetch_profit_loss(
             from_date=from_date,
@@ -173,6 +175,9 @@ async def export_profit_loss_report(
             ttl_name="profit_loss",
         )
         report = cache_res.data
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         logger.error("Profit & Loss export error: %r", e)

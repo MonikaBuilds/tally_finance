@@ -1099,7 +1099,7 @@ async def export_stock_group_items_report(
         columns=STOCK_SUMMARY_COLUMNS,
         rows=rows,
         company_name=company_name,
-        filename_base=f"stock_group_{group.strip().replace(' ', '_')}",
+        filename_base=_safe_name(group, "stock_group"),
         period=_period_label(to_date=to_date),
     )
 

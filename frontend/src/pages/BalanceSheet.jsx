@@ -214,7 +214,7 @@ function BalanceSheet() {
 
     const rowPath = (row) =>
       row._kind === 'child'
-        ? balanceSheetChildPath(row, row._parent)
+        ? balanceSheetChildPath(row, row._parent, dates)
         : balanceSheetLinePath(row, dates)
 
     const table = (rows) => (

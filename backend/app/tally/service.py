@@ -171,15 +171,7 @@ async def fetch_profit_loss(
         company_name=company_name,
     )
 
-    print("\n========== PROFIT & LOSS REQUEST ==========")
-    print(request_xml)
-    print("========== END PROFIT & LOSS REQUEST ==========\n")
-
     response = await client.send_xml(request_xml)
-
-    print("\n========== PROFIT & LOSS RESPONSE ==========")
-    print(response)
-    print("========== END PROFIT & LOSS RESPONSE ==========\n")
 
     return parse_profit_loss(response)
 
@@ -201,15 +193,7 @@ async def fetch_group_summary(
         company_name=company_name,
     )
 
-    print("\n========== GROUP SUMMARY REQUEST ==========")
-    print(request_xml)
-    print("========== END GROUP SUMMARY REQUEST ==========\n")
-
     response = await client.send_xml(request_xml)
-
-    print("\n========== GROUP SUMMARY RESPONSE ==========")
-    print(response)
-    print("========== END GROUP SUMMARY RESPONSE ==========\n")
 
     return parse_group_summary(
         response,
@@ -274,10 +258,6 @@ async def fetch_balance_sheet_report(
         from_date=from_date,
         to_date=to_date,
     )
-
-    print("\n========== BALANCE SHEET REQUEST ==========")
-    print(request_xml)
-    print("========== END BALANCE SHEET REQUEST ==========\n")
 
     response = await client.send_xml(request_xml)
 
@@ -626,15 +606,6 @@ async def fetch_ledger_report(
     6. Calculate running balance from actual debit/credit values.
     """
 
-    print("\n==============================================")
-    print("           LEDGER REPORT REQUEST")
-    print("==============================================")
-    print(f"Ledger    : {ledger_name}")
-    print(f"Company   : {company_name}")
-    print(f"From Date : {from_date}")
-    print(f"To Date   : {to_date}")
-    print("==============================================\n")
-
     # --------------------------------------------------------
     # 1. Get THIS ledger's master information
     # --------------------------------------------------------
@@ -704,24 +675,8 @@ async def fetch_ledger_report(
             company_name=company_name,
         )
 
-        print(
-            "\n========== LEDGER NATIVE REQUEST =========="
-        )
-        print(request_xml)
-        print(
-            "========== END LEDGER NATIVE REQUEST ==========\n"
-        )
-
         response = await client.send_xml(
             request_xml
-        )
-
-        print(
-            "\n========== LEDGER NATIVE RESPONSE =========="
-        )
-        print(response)
-        print(
-            "========== END LEDGER NATIVE RESPONSE ==========\n"
         )
 
         report = parse_ledger_report(
@@ -789,24 +744,8 @@ async def fetch_ledger_report(
             )
         )
 
-        print(
-            "\n========== LEDGER FALLBACK REQUEST =========="
-        )
-        print(voucher_request)
-        print(
-            "========== END LEDGER FALLBACK REQUEST ==========\n"
-        )
-
         voucher_response = await client.send_xml(
             voucher_request
-        )
-
-        print(
-            "\n========== LEDGER FALLBACK RESPONSE =========="
-        )
-        print(voucher_response)
-        print(
-            "========== END LEDGER FALLBACK RESPONSE ==========\n"
         )
 
         voucher_rows = (
@@ -1107,23 +1046,7 @@ async def _fetch_voucher_detail_raw(
         company_name=company_name,
     )
 
-    print(
-        "\n========== VOUCHER DETAIL REQUEST =========="
-    )
-    print(request_xml)
-    print(
-        "========== END VOUCHER DETAIL REQUEST ==========\n"
-    )
-
     response = await client.send_xml(request_xml)
-
-    print(
-        "\n========== VOUCHER DETAIL RESPONSE =========="
-    )
-    print(response)
-    print(
-        "========== END VOUCHER DETAIL RESPONSE ==========\n"
-    )
 
     vouchers = parse_voucher_detail(
         response,

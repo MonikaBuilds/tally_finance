@@ -139,7 +139,7 @@ async def get_companies(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Unable to fetch companies from Tally: {exc}",
+            detail="Unable to fetch companies from Tally",
         )
 
 

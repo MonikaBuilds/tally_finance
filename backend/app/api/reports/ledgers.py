@@ -248,10 +248,7 @@ async def get_ledger_report(
 
         raise HTTPException(
             status_code=502,
-            detail=(
-                f"Unable to fetch ledger "
-                f"'{ledger_name}' from Tally: {str(e)}"
-            ),
+            detail="Unable to fetch the ledger report from Tally",
         )
 
 
@@ -304,10 +301,7 @@ async def _legacy_export_ledger_report(
 
         raise HTTPException(
             status_code=502,
-            detail=(
-                f"Unable to fetch ledger "
-                f"'{ledger_name}' from Tally: {str(e)}"
-            ),
+            detail="Unable to fetch the ledger export from Tally",
         )
 
     opening_balance = report.get(
@@ -458,10 +452,7 @@ async def get_voucher_detail(
 
         raise HTTPException(
             status_code=502,
-            detail=(
-                f"Unable to fetch voucher "
-                f"'{voucher_type} {voucher_number}' from Tally: {str(e)}"
-            ),
+            detail="Unable to fetch the voucher from Tally",
         )
 
 
