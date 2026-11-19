@@ -632,10 +632,29 @@ async def get_trial_balance_purchase_bills_pending(
             if not tracking_number or not stock_item:
                 continue
 
+            # A cancelled or optional voucher does not affect stock in
+            # Tally, so it must not count as goods received or billed.
+            if row.get("is_cancelled") or row.get("is_optional"):
+                continue
+
             key = (stock_item, tracking_number)
 
             quantity = row.get("quantity", 0) or 0
             amount = row.get("amount", 0) or 0
+
+            # ACTUALQTY is unsigned in Tally; ISDEEMEDPOSITIVE says
+            # whether the entry brought stock in (Yes) or took it out
+            # (No). Without this sign, a Purchase voucher against a
+            # Receipt Note added to the pending quantity instead of
+            # cancelling it, so fully billed orders stayed "pending".
+            deemed = row.get("is_deemed_positive")
+
+            if deemed is True:
+                quantity = abs(quantity)
+                amount = abs(amount)
+            elif deemed is False:
+                quantity = -abs(quantity)
+                amount = -abs(amount)
 
             if key not in groups:
                 groups[key] = {
@@ -651,10 +670,10 @@ async def get_trial_balance_purchase_bills_pending(
 
             group = groups[key]
 
-            # The largest single movement against a tracking number is
-            # the original goods-received quantity; later, smaller
-            # movements are partial billings against it.
-            if abs(quantity) > abs(group["initial_quantity"]):
+            # The largest single inward movement against a tracking
+            # number is the original goods-received quantity; later,
+            # smaller movements are partial billings against it.
+            if quantity > group["initial_quantity"]:
                 group["initial_quantity"] = quantity
                 group["date"] = row.get("date")
                 group["party"] = row.get("party") or group["party"]

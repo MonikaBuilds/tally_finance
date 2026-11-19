@@ -20,6 +20,7 @@ from app.security.auth import (
 )
 from app.security.config import get_auth_settings
 from app.security.csrf import generate_csrf_token
+from app.security.login_limiter import login_rate_limiter
 from app.security.passwords import verify_password
 from app.security.permissions import get_user_access
 from app.security.user_store import (
@@ -97,7 +98,29 @@ def login(
         request.password,
     )
 
+    # Brute-force protection: refuse once this address+username has used
+    # up its failed attempts inside the configured window.
+    client_host = (
+        http_request.client.host if http_request.client else ""
+    )
+
+    if login_rate_limiter.is_blocked(client_host, request.username):
+        logger.warning(
+            "Authentication throttled: too many failed attempts for username '%s'.",
+            request.username,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Too many failed login attempts. "
+                "Please wait and try again."
+            ),
+        )
+
     if result is None:
+        login_rate_limiter.register_failure(
+            client_host, request.username
+        )
         logger.warning(
             "Authentication failed: Invalid credentials for username '%s'.",
             request.username,
@@ -106,6 +129,9 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
         )
+
+    # A correct password clears the counters for this key.
+    login_rate_limiter.reset(client_host, request.username)
 
     user, companies = result
 

@@ -49,5 +49,10 @@ htmlcov/
 *.conf
 *.conf.backup
 
+# Raw Tally XML dumps captured for debugging - they contain real customer
+# names, ledger balances and voucher amounts and must not be committed.
+backend/*_raw.xml
+backend/query
+
 
 .commandcode/

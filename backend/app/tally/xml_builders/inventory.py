@@ -395,6 +395,7 @@ def build_stock_movement_request(
                             ISCANCELLED,
                             ISOPTIONAL,
                             ALLINVENTORYENTRIES.*,
+                            ALLINVENTORYENTRIES.BATCHALLOCATIONS.*,
                             INVENTORYENTRIESIN.*,
                             INVENTORYENTRIESOUT.*
                         </FETCH>

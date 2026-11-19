@@ -70,6 +70,10 @@ function Login({ onLogin }) {
                 JSON.stringify(currentUser),
             )
 
+            // A previous session's cached reports belong to another
+            // company, so they must not survive the sign-in.
+            clearBrowserCache()
+
             if (
                 Array.isArray(currentUser.companies) &&
                 currentUser.companies.length === 1

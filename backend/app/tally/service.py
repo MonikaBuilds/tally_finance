@@ -766,6 +766,11 @@ async def fetch_ledger_report(
 
         filtered_rows = []
 
+        # Vouchers before from_date are fetched (the query starts at the
+        # financial year) but are not part of the period. Their net
+        # movement still belongs in the opening balance, otherwise a
+        # mid-year range starts from the master's opening and is off by
+        # everything that happened between then and from_date.
         for row in voucher_rows:
             row_date = row.get("date")
 
@@ -801,6 +806,11 @@ async def fetch_ledger_report(
                 from_date is not None
                 and current_date < from_date
             ):
+                opening_balance += float(
+                    row.get("debit", 0) or 0
+                ) - float(
+                    row.get("credit", 0) or 0
+                )
                 continue
 
             if (

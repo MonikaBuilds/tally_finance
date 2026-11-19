@@ -275,6 +275,7 @@ async def _load_profit_loss_summary(
         receivables={},
         payables={},
         pending_invoices={},
+        tally_summary=profit_loss.get("summary"),
     )
 
 async def _load_financial_summary(
@@ -312,7 +313,8 @@ async def _load_financial_summary(
         profit_loss=profit_loss_rows,
         receivables=receivables,
         payables=payables,
-        pending_invoices=pending_invoices
+        pending_invoices=pending_invoices,
+        tally_summary=profit_loss.get("summary"),
     )
 
 def _build_aging_summary(
@@ -1941,7 +1943,13 @@ async def get_company_comparison_tool(
         total_expenses = 0.0
         net_profit = 0.0
 
-        if revenue_result.get("success"):
+        # Which of the three lookups actually succeeded. A failed lookup
+        # must not be presented as a genuine ₹0 figure.
+        revenue_available = bool(revenue_result.get("success"))
+        expenses_available = bool(expense_result.get("success"))
+        profit_available = bool(profit_result.get("success"))
+
+        if revenue_available:
             revenue = float(
                 revenue_result.get("data", {}).get(
                     "revenue",
@@ -1950,7 +1958,7 @@ async def get_company_comparison_tool(
                 or 0
             )
 
-        if expense_result.get("success"):
+        if expenses_available:
             total_expenses = float(
                 expense_result.get("data", {}).get(
                     "expenses",
@@ -1959,7 +1967,7 @@ async def get_company_comparison_tool(
                 or 0
             )
 
-        if profit_result.get("success"):
+        if profit_available:
             net_profit = float(
                 profit_result.get("data", {}).get(
                     "net_profit",
@@ -1970,14 +1978,17 @@ async def get_company_comparison_tool(
 
         companies.append({
             "company_name": company_name,
-            "revenue": round(revenue, 2),
-            "total_expenses": round(
-                total_expenses,
-                2,
+            # None means "could not be read", which the formatter shows
+            # as unavailable rather than as a real zero.
+            "revenue": round(revenue, 2) if revenue_available else None,
+            "total_expenses": (
+                round(total_expenses, 2) if expenses_available else None
             ),
-            "net_profit": round(
-                net_profit,
-                2,
+            "net_profit": round(net_profit, 2) if profit_available else None,
+            "available": bool(
+                revenue_available
+                or expenses_available
+                or profit_available
             ),
         })
 

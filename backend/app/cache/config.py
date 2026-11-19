@@ -25,6 +25,9 @@ class CacheSettings(BaseSettings):
     REDIS_UNAVAILABLE_COOLDOWN_SECONDS: float = 30.0  # Cooldown when Redis is offline
     TALLY_UNAVAILABLE_COOLDOWN_SECONDS: int = 30
     TALLY_CONNECT_TIMEOUT: float = 2.5
+    # How long a request may wait for the single Tally request lock before
+    # it gives up and lets the cache layer serve retained data.
+    TALLY_LOCK_TIMEOUT_SECONDS: float = 20.0
 
     # Specific report freshness TTLs (in seconds)
     TTL_COMPANIES: int = 600

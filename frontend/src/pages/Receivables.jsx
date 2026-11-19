@@ -20,7 +20,7 @@ function Receivables() {
   if (error) return <ErrorMessage message={error} />
   if (!response.success) return <ErrorMessage message={response.error || response.message} />
 
-  const { total_receivable, bills } = response.data
+  const { total_receivable, bills } = response.data || {}
 
   return (
     <>

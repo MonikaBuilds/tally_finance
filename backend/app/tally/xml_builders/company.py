@@ -33,7 +33,9 @@ def build_company_request() -> str:
                             NAME,
                             GUID,
                             BOOKSFROM,
-                            STARTINGFROM
+                            STARTINGFROM,
+                            GSTREGISTRATIONTYPE,
+                            GSTIN
                         </FETCH>
                     </COLLECTION>
 

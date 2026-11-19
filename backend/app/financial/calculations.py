@@ -67,11 +67,17 @@ def build_dashboard_financials(
     profit_loss,
     receivables,
     payables,
-    pending_invoices
+    pending_invoices,
+    tally_summary=None,
 ):
     """
     Build the financial values required by
     the existing dashboard API response.
+
+    `tally_summary` is the Profit & Loss parser's own ``summary`` block
+    (computed from the Tally response). When it is supplied its figures
+    are used directly, so the totals are the ones Tally itself reports
+    rather than a partial reconstruction from individual lines.
     """
 
     sales = (
@@ -135,6 +141,21 @@ def build_dashboard_financials(
             revenue
             - total_expenses
         )
+
+    # 3. Tally's own summary block wins over any reconstruction above.
+    if isinstance(tally_summary, dict):
+        if tally_summary.get("trading_income_total") is not None:
+            revenue = abs(
+                float(tally_summary["trading_income_total"])
+            )
+
+        if tally_summary.get("trading_expense_total") is not None:
+            total_expenses = abs(
+                float(tally_summary["trading_expense_total"])
+            )
+
+        if tally_summary.get("net_result") is not None:
+            net_profit = float(tally_summary["net_result"])
 
     return {
         "revenue": round(
