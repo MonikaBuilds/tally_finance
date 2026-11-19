@@ -882,13 +882,41 @@ def format_tool_response(
                 f"{_format_tally_balance(closing_balance)}."
             )
 
-        return (
+        lines = [
             f"{ledger_name}: opening balance "
             f"{_format_tally_balance(opening_balance)}, "
             f"{entry_count} transaction(s) found in the selected period, "
             f"closing balance "
             f"{_format_tally_balance(closing_balance)}."
-        )
+        ]
+
+        entries = data.get("entries") or data.get("transactions") or []
+        if entries:
+            lines.append("")
+            lines.append("Transactions:")
+            display_limit = 25
+            for tx in entries[:display_limit]:
+                tx_date = tx.get("date") or ""
+                v_type = tx.get("voucher_type") or "Voucher"
+                v_no = tx.get("voucher_number") or ""
+                particulars = tx.get("particulars") or ""
+                debit = float(tx.get("debit") or 0.0)
+                credit = float(tx.get("credit") or 0.0)
+
+                amount_parts = []
+                if debit > 0:
+                    amount_parts.append(f"{format_indian_currency(debit)} Dr")
+                if credit > 0:
+                    amount_parts.append(f"{format_indian_currency(credit)} Cr")
+                amount_str = ", ".join(amount_parts) if amount_parts else "₹0"
+
+                v_str = f"{v_type}" + (f" #{v_no}" if v_no else "")
+                lines.append(f"• {tx_date} | {v_str} | {particulars} | {amount_str}")
+
+            if len(entries) > display_limit:
+                lines.append(f"... and {len(entries) - display_limit} more transactions.")
+
+        return "\n".join(lines)
         
     if tool_name == "get_cash_balance":
         ledger_name = data.get(
@@ -2088,7 +2116,7 @@ def format_tool_response(
             data.get("total_stock_value", 0) or 0
         )
 
-        return "\n".join([
+        lines = [
             "Stock Summary:",
             f"Total Stock Items: {total_items}",
             f"Items with Stock: {items_with_stock}",
@@ -2096,7 +2124,34 @@ def format_tool_response(
                 "Stock Value: "
                 f"{format_indian_currency(abs(total_stock_value))}"
             ),
-        ])
+        ]
+
+        items = data.get("items") or []
+        if items:
+            lines.append("")
+            lines.append("Items Breakdown:")
+            display_limit = 25
+            for item in items[:display_limit]:
+                name = item.get("name") or "Stock Item"
+                closing_bal = item.get("closing_balance") or "0"
+                closing_rate = item.get("closing_rate") or ""
+                closing_val = item.get("closing_value") or ""
+
+                val_text = ""
+                if closing_val:
+                    try:
+                        clean_v = float(str(closing_val).replace(",", "").strip())
+                        val_text = f" | Value: {format_indian_currency(clean_v)}"
+                    except ValueError:
+                        val_text = f" | Value: {closing_val}"
+
+                rate_text = f" @ {closing_rate}" if closing_rate else ""
+                lines.append(f"• {name}: {closing_bal}{rate_text}{val_text}")
+
+            if len(items) > display_limit:
+                lines.append(f"... and {len(items) - display_limit} more items.")
+
+        return "\n".join(lines)
 
 
     if tool_name == "get_stock_item_details":
@@ -2462,25 +2517,46 @@ def format_tool_response(
             0,
         )
 
-        closing_balance = data.get(
-            "closing_balance"
-        )
+        opening_balance = data.get("opening_balance")
+        closing_balance = data.get("closing_balance")
 
-        if closing_balance is None:
-            closing_balance_text = (
-                "not available in the Tally response"
-            )
+        lines = [
+            f"{ledger_name} Transactions (from Tally):",
+        ]
+        if opening_balance is not None:
+            lines.append(f"Opening Balance: {format_indian_currency(opening_balance)}")
+        if closing_balance is not None:
+            lines.append(f"Closing Balance: {format_indian_currency(closing_balance)}")
+        lines.append(f"Total Transactions: {count}")
+
+        transactions = data.get("transactions") or data.get("entries") or []
+        if not transactions:
+            lines.append("\nNo transactions found for the requested period.")
         else:
-            closing_balance_text = (
-                f"₹{closing_balance:,.2f}"
-            )
+            lines.append("")
+            display_limit = 30
+            for tx in transactions[:display_limit]:
+                tx_date = tx.get("date") or ""
+                v_type = tx.get("voucher_type") or "Voucher"
+                v_no = tx.get("voucher_number") or ""
+                particulars = tx.get("particulars") or ""
+                debit = float(tx.get("debit") or 0.0)
+                credit = float(tx.get("credit") or 0.0)
 
-        return (
-            f"{ledger_name} has {count} transaction(s) "
-            f"for the requested period. "
-            f"Closing balance is "
-            f"{closing_balance_text}."
-        )
+                amount_parts = []
+                if debit > 0:
+                    amount_parts.append(f"{format_indian_currency(debit)} Dr")
+                if credit > 0:
+                    amount_parts.append(f"{format_indian_currency(credit)} Cr")
+                amount_str = ", ".join(amount_parts) if amount_parts else "₹0"
+
+                v_str = f"{v_type}" + (f" #{v_no}" if v_no else "")
+                lines.append(f"• {tx_date} | {v_str} | {particulars} | {amount_str}")
+
+            if len(transactions) > display_limit:
+                lines.append(f"\n... and {len(transactions) - display_limit} more transactions.")
+
+        return "\n".join(lines)
 
     if tool_name == "get_sales_by_customer":
         customers = data.get(
@@ -3473,6 +3549,66 @@ def format_tool_response(
         ]
 
         return "\n".join(lines)
+
+    if tool_name == "get_day_book":
+        rows = data.get("rows", [])
+        count = data.get("count", len(rows))
+        from_d = data.get("from_date")
+        to_d = data.get("to_date")
+
+        if from_d and to_d:
+            if from_d == to_d:
+                period_str = f"for {from_d}"
+            else:
+                period_str = f"from {from_d} to {to_d}"
+        elif to_d:
+            period_str = f"as of {to_d}"
+        elif from_d:
+            period_str = f"from {from_d}"
+        else:
+            period_str = ""
+
+        header = f"Day Book (from Tally){(' ' + period_str) if period_str else ''}:"
+
+        if not rows:
+            return f"No vouchers found in Day Book {period_str}.".strip()
+
+        lines = [header, f"Total Vouchers: {count}", ""]
+
+        display_limit = 35
+        for row in rows[:display_limit]:
+            r_date = row.get("date") or ""
+            v_type = row.get("voucher_type") or "Voucher"
+            v_no = row.get("voucher_number") or ""
+            particulars = row.get("particulars") or ""
+            debit = float(row.get("debit") or 0.0)
+            credit = float(row.get("credit") or 0.0)
+            inwards = row.get("inwards_qty")
+            outwards = row.get("outwards_qty")
+            is_cancelled = row.get("is_cancelled")
+
+            if is_cancelled:
+                amount_str = "(Cancelled)"
+            else:
+                amount_parts = []
+                if debit > 0:
+                    amount_parts.append(f"{format_indian_currency(debit)} Dr")
+                if credit > 0:
+                    amount_parts.append(f"{format_indian_currency(credit)} Cr")
+                if inwards:
+                    amount_parts.append(f"In: {inwards}")
+                if outwards:
+                    amount_parts.append(f"Out: {outwards}")
+                amount_str = ", ".join(amount_parts) if amount_parts else "₹0"
+
+            v_str = f"{v_type}" + (f" #{v_no}" if v_no else "")
+            lines.append(f"• {r_date} | {v_str} | {particulars} | {amount_str}")
+
+        if len(rows) > display_limit:
+            lines.append(f"\n... and {len(rows) - display_limit} more vouchers.")
+
+        return "\n".join(lines)
+
     # Keep this fallback at the end.
     # It is used only when no specific formatter exists for the tool.
     return (

@@ -159,7 +159,7 @@ async def test_process_chat_revenue_applies_default_current_fy():
 
     with patch("app.chatbot.service.execute_tool", AsyncMock(return_value=mock_revenue)) as mock_exec:
         res = await process_chat_message(
-            "What is my revenue?",
+            "What is my revenue for this financial year?",
             company_name="BC Pvt Ltd",
             allowed_companies=["BC Pvt Ltd"],
             user_id="test_user",

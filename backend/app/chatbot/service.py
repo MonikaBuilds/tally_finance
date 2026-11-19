@@ -32,6 +32,7 @@ UNSUPPORTED_MESSAGE = (
 # These tools can understand date ranges such as
 # today, this month, last month or a custom period.
 DATE_AWARE_TOOLS = {
+    "get_day_book",
     "get_revenue",
     "get_expenses",
     "get_net_profit",
@@ -63,6 +64,7 @@ DATE_AWARE_TOOLS = {
     
     # Any ledger can also be queried for a period.
     "get_ledger_report",
+    "get_stock_summary",
     
     "get_sales_by_customer",
     "get_purchases_by_supplier",
@@ -447,18 +449,6 @@ async def process_chat_message(
                     "%d-%m-%Y"
                 )
             )
-        elif tool_name in {"get_revenue", "get_expenses", "get_net_profit", "get_profit_loss"}:
-            current_fy = get_current_financial_year_range()
-            arguments["from_date"] = (
-                current_fy.from_date.strftime(
-                    "%d-%m-%Y"
-                )
-            )
-            arguments["to_date"] = (
-                current_fy.to_date.strftime(
-                    "%d-%m-%Y"
-                )
-            )
 
     # Comparison queries need two separate periods,
     # so they use four date arguments.
@@ -575,8 +565,15 @@ async def process_chat_message(
 
 
     # Normal tools use one selected company.
-    if company_name and tool_name != "get_company_comparison":
-        arguments["company_name"] = company_name
+    if tool_name != "get_company_comparison":
+        explicit_companies = _extract_allowed_companies(
+            cleaned_message,
+            allowed_companies,
+        )
+        if explicit_companies:
+            arguments["company_name"] = explicit_companies[0]
+        elif company_name:
+            arguments["company_name"] = company_name
 
 
     log_chat_event(

@@ -24,6 +24,7 @@ from app.chatbot.tools import (
     get_top_payables_tool,
     get_financial_summary_tool,
     get_ledger_report_tool,
+    get_day_book_tool,
     get_cash_balance_tool,
     get_bank_balance_tool,
     get_bank_transactions_tool,
@@ -111,6 +112,7 @@ TOOL_FUNCTIONS = {
     "get_top_payables": get_top_payables_tool,
     "get_financial_summary": get_financial_summary_tool,
     "get_ledger_report": get_ledger_report_tool,
+    "get_day_book": get_day_book_tool,
     "get_cash_balance": get_cash_balance_tool,
     "get_bank_balance": get_bank_balance_tool,
     "get_bank_transactions": get_bank_transactions_tool,
@@ -615,6 +617,40 @@ TOOL_DEFINITIONS = [
     }
 },
     
+    # get_day_book
+{
+    "type": "function",
+    "name": "get_day_book",
+    "description": (
+        "Get Tally's Day Book: every transaction and voucher "
+        "entered on a particular date or date range, including "
+        "date, voucher type, voucher number, particulars, debit, "
+        "credit and amount. Use whenever user asks for day book, "
+        "daybook, dairy, diary, daily entries, or all vouchers for a date."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "company_name": {
+                "type": "string",
+                "description": "Optional Tally company name."
+            },
+            "from_date": {
+                "type": "string",
+                "description": "Start date in DD-MM-YYYY format."
+            },
+            "to_date": {
+                "type": "string",
+                "description": "End date in DD-MM-YYYY format."
+            },
+            "voucher_type": {
+                "type": "string",
+                "description": "Optional voucher type filter (e.g. Sales, Payment, Receipt)."
+            }
+        }
+    }
+},
+
     # get_ledger_report
     
 {
