@@ -20,43 +20,39 @@ def _format_period(from_date: str | None, to_date: str | None) -> str:
 
 
 def format_indian_currency(value) -> str:
-    try:
-        amount = float(value or 0)
-    except (TypeError, ValueError):
-        amount = 0.0
+    """
+    Indian digit grouping (12,34,567). Paise are shown whenever Tally's
+    amount has them (5,19,053.47) and omitted only when they are zero,
+    so a displayed amount never differs from the Tally figure.
+    """
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, ValueError, TypeError):
+        amount = Decimal("0")
+
+    amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     negative = amount < 0
     amount = abs(amount)
 
-    integer_part = int(round(amount))
-    number = str(integer_part)
+    integer_part, _, paise = f"{amount:.2f}".partition(".")
 
-    if len(number) <= 3:
-        formatted = number
+    if len(integer_part) <= 3:
+        formatted = integer_part
     else:
-        last_three = number[-3:]
-        remaining = number[:-3]
-
+        last_three = integer_part[-3:]
+        remaining = integer_part[:-3]
         groups = []
-
         while len(remaining) > 2:
-            groups.insert(
-                0,
-                remaining[-2:]
-            )
+            groups.insert(0, remaining[-2:])
             remaining = remaining[:-2]
-
         if remaining:
-            groups.insert(
-                0,
-                remaining
-            )
+            groups.insert(0, remaining)
+        formatted = ",".join(groups) + "," + last_three
 
-        formatted = (
-            ",".join(groups)
-            + ","
-            + last_three
-        )
+    if paise != "00":
+        formatted = f"{formatted}.{paise}"
 
     prefix = "-₹" if negative else "₹"
 
@@ -98,10 +94,17 @@ def format_tool_response(
             0
         )
 
+        if total is None:
+            return (
+                f"Tally listed {count} pending bill(s) but did not "
+                "return a total for this report, so no total is shown."
+            )
+
         return (
             f"Your total outstanding receivables are "
             f"{format_indian_currency(total)} "
-            f"across {count} pending bill(s)."
+            f"across {count} pending bill(s) "
+            "(Tally's Bills Receivable total)."
         )
 
     if tool_name == "get_payables":
@@ -115,10 +118,17 @@ def format_tool_response(
             0
         )
 
+        if total is None:
+            return (
+                f"Tally listed {count} pending bill(s) but did not "
+                "return a total for this report, so no total is shown."
+            )
+
         return (
             f"Your total outstanding payables are "
             f"{format_indian_currency(total)} "
-            f"across {count} pending bill(s)."
+            f"across {count} pending bill(s) "
+            "(Tally's Bills Payable total)."
         )
 
     if tool_name == "get_pending_invoices":
@@ -216,10 +226,17 @@ def format_tool_response(
             data.get("to_date"),
         )
 
-        return (
-            f"Your revenue{period_str} is "
+        answer = (
+            f"Your revenue (Sales Accounts in Tally){period_str} is "
             f"{format_indian_currency(revenue)}."
         )
+        direct_incomes = data.get("direct_incomes")
+        if direct_incomes:
+            answer += (
+                f" Direct Incomes are shown separately in Tally: "
+                f"{format_indian_currency(abs(direct_incomes))}."
+            )
+        return answer
 
     if tool_name == "get_expenses":
         expenses = data.get(
@@ -231,10 +248,21 @@ def format_tool_response(
             data.get("to_date"),
         )
 
-        return (
+        lines = [
             f"Your total expenses{period_str} are "
             f"{format_indian_currency(expenses)}."
-        )
+        ]
+        expense_lines = data.get("expense_lines") or []
+        if expense_lines:
+            lines.append(
+                "This total is derived by adding these Tally P&L lines:"
+            )
+            for line in expense_lines:
+                lines.append(
+                    f"- {line.get('name')}: "
+                    f"{format_indian_currency(abs(line.get('amount') or 0))}"
+                )
+        return "\n".join(lines)
 
     if tool_name == "get_net_profit":
         result_type = data.get(
@@ -804,12 +832,17 @@ def format_tool_response(
         return "\n".join(lines)
     
     if tool_name == "get_financial_summary":
-        revenue = data.get("revenue", 0)
-        expenses = data.get("expenses", 0)
-        net_profit = data.get("net_profit", 0)
-        receivables = data.get("receivables", 0)
-        payables = data.get("payables", 0)
+        revenue = data.get("revenue")
+        expenses = data.get("expenses")
+        net_profit = data.get("net_profit")
+        receivables = data.get("receivables")
+        payables = data.get("payables")
         pending_invoices = data.get("pending_invoices", 0)
+
+        def _money(value):
+            if value is None:
+                return "not returned by Tally"
+            return format_indian_currency(value)
 
         from_date = data.get("from_date")
         to_date = data.get("to_date")
@@ -824,11 +857,13 @@ def format_tool_response(
             )
 
         lines.extend([
-            f"Revenue: {format_indian_currency(revenue)}",
-            f"Expenses: {format_indian_currency(expenses)}",
+            f"Revenue (Sales Accounts): {_money(revenue)}",
+            f"Expenses (derived from Tally expense lines): {_money(expenses)}",
         ])
 
-        if net_profit >= 0:
+        if net_profit is None:
+            lines.append("Net profit / loss: not returned by Tally")
+        elif net_profit >= 0:
             lines.append(
                 f"Net profit: {format_indian_currency(net_profit)}"
             )
@@ -838,8 +873,8 @@ def format_tool_response(
             )
 
         lines.extend([
-            f"Receivables: {format_indian_currency(receivables)}",
-            f"Payables: {format_indian_currency(payables)}",
+            f"Receivables (Bills Receivable total): {_money(receivables)}",
+            f"Payables (Bills Payable total): {_money(payables)}",
             f"Pending invoices: {pending_invoices}"
         ])
 
@@ -918,205 +953,56 @@ def format_tool_response(
 
         return "\n".join(lines)
         
-    if tool_name == "get_cash_balance":
-        ledger_name = data.get(
-            "ledger_name"
-        )
+    if tool_name in ("get_cash_balance", "get_bank_balance"):
+        label = "cash" if tool_name == "get_cash_balance" else "bank"
+
+        def _balance_text(amount, side):
+            if amount is None:
+                return "not returned by Tally"
+            text = format_indian_currency(abs(amount))
+            return f"{text} {side}" if side else text
+
+        ledger_name = data.get("ledger_name")
 
         if ledger_name:
-            balance = data.get(
-                "closing_balance",
-                0
-            )
-
             return (
-                f"The current balance of {ledger_name} is "
-                f"{format_indian_currency(balance)}."
+                f"The closing balance of {ledger_name} in Tally is "
+                f"{_balance_text(data.get('closing_balance'), data.get('balance_type'))}."
             )
 
-        total_balance = data.get(
-            "total_balance",
-            0
-        )
+        lines = []
 
-        ledger_count = data.get(
-            "ledger_count",
-            0
-        )
-
-        ledgers = data.get(
-            "ledgers",
-            []
-        )
-
-        if ledger_count == 1 and ledgers:
-            # Use the already calculated total balance here.
-            # The tool has already converted Tally's debit sign correctly.
-            return (
-                f"Your current cash balance is "
-                f"{format_indian_currency(total_balance)}."
+        group_totals = data.get("group_totals") or []
+        for group in group_totals:
+            lines.append(
+                f"{group.get('group')} (Tally group closing balance): "
+                f"{_balance_text(group.get('closing_balance'), group.get('balance_type'))}"
             )
 
-        lines = [
-            (
-                f"Your total cash balance is "
-                f"{format_indian_currency(total_balance)} "
-                f"across {ledger_count} cash ledger(s)."
-            )
-        ]
-
-        for ledger in ledgers:
-            name = ledger.get(
-                "name",
-                "Cash"
+        if not group_totals:
+            lines.append(
+                f"Tally did not return a {label} group closing balance."
             )
 
-            # Tally may return cash debit balances as negative values.
-            # Show them as positive available cash amounts.
-            balance = abs(
-                ledger.get(
-                    "closing_balance",
-                    0
+        ledgers = data.get("ledgers") or []
+        if ledgers:
+            lines.append("")
+            lines.append(f"{label.title()} ledgers ({len(ledgers)}):")
+            for ledger in ledgers:
+                lines.append(
+                    f"- {ledger.get('name')}: "
+                    f"{_balance_text(ledger.get('closing_balance'), ledger.get('balance_type'))}"
                 )
-            )
 
+        if tool_name == "get_bank_balance" and len(group_totals) > 1:
+            lines.append("")
             lines.append(
-                f"{name}: "
-                f"{format_indian_currency(balance)}"
+                "Bank Accounts and Bank OD A/c are shown as Tally reports "
+                "them and are not added together."
             )
 
         return "\n".join(lines)
 
-    if tool_name == "get_cash_balance":
-        ledger_name = data.get(
-            "ledger_name"
-        )
-
-        if ledger_name:
-            balance = data.get(
-                "closing_balance",
-                0
-            )
-
-            return (
-                f"The current balance of {ledger_name} is "
-                f"{format_indian_currency(balance)}."
-            )
-
-        total_balance = data.get(
-            "total_balance",
-            0
-        )
-
-        ledger_count = data.get(
-            "ledger_count",
-            0
-        )
-
-        ledgers = data.get(
-            "ledgers",
-            []
-        )
-
-        if ledger_count == 1 and ledgers:
-            ledger = ledgers[0]
-
-            return (
-                f"Your current cash balance is "
-                f"{format_indian_currency(
-                    ledger.get('closing_balance', 0)
-                )}."
-            )
-
-        lines = [
-            (
-                f"Your total cash balance is "
-                f"{format_indian_currency(total_balance)} "
-                f"across {ledger_count} cash ledger(s)."
-            )
-        ]
-
-        for ledger in ledgers:
-            name = ledger.get(
-                "name",
-                "Cash"
-            )
-
-            balance = ledger.get(
-                "closing_balance",
-                0
-            )
-
-            lines.append(
-                f"{name}: "
-                f"{format_indian_currency(balance)}"
-            )
-
-        return "\n".join(lines)
-
-
-    if tool_name == "get_bank_balance":
-        ledger_name = data.get(
-            "ledger_name"
-        )
-
-        if ledger_name:
-            balance = data.get(
-                "closing_balance",
-                0
-            )
-
-            return (
-                f"The current balance of {ledger_name} is "
-                f"{format_indian_currency(balance)}."
-            )
-
-        total_balance = data.get(
-            "total_balance",
-            0
-        )
-
-        ledger_count = data.get(
-            "ledger_count",
-            0
-        )
-
-        ledgers = data.get(
-            "ledgers",
-            []
-        )
-
-        lines = [
-            (
-                f"Your total bank balance is "
-                f"{format_indian_currency(total_balance)} "
-                f"across {ledger_count} bank account(s)."
-            )
-        ]
-
-        for ledger in ledgers:
-            name = ledger.get(
-                "name",
-                "Bank account"
-            )
-
-            # Tally returns normal bank debit balances with a negative sign.
-            # Reverse that sign before showing the balance to the user.
-            balance = -float(
-                ledger.get(
-                    "closing_balance",
-                    0
-                )
-            )
-
-            lines.append(
-                f"{name}: "
-                f"{format_indian_currency(balance)}"
-            )
-
-        return "\n".join(lines)
-
-    
     if tool_name == "get_bank_transactions":
         ledger_name = data.get(
             "ledger_name",
@@ -2268,12 +2154,12 @@ def format_tool_response(
         for ledger in ledgers:
             lines.append(
                 f"- {ledger.get('ledger_name', 'TDS Ledger')}: "
-                f"₹{abs(ledger.get('closing_balance', 0)):,.2f}"
+                f"{format_indian_currency(abs(ledger.get('closing_balance', 0)))}"
             )
 
         lines.append(
             f"Total TDS Balance: "
-            f"₹{data.get('total_tds', 0):,.2f}"
+            f"{format_indian_currency(data.get('total_tds', 0))}"
         )
 
         return "\n".join(lines)
@@ -2297,8 +2183,8 @@ def format_tool_response(
                 f"{entry.get('ledger_name', 'TDS Ledger')} | "
                 f"{entry.get('voucher_type', 'Voucher')} "
                 f"#{entry.get('voucher_number') or entry.get('voucher_no') or '-'} | "
-                f"Debit: ₹{abs(entry.get('debit', 0) or 0):,.2f} | "
-                f"Credit: ₹{abs(entry.get('credit', 0) or 0):,.2f}"
+                f"Debit: {format_indian_currency(abs(entry.get('debit', 0) or 0))} | "
+                f"Credit: {format_indian_currency(abs(entry.get('credit', 0) or 0))}"
             )
 
         return "\n".join(lines)
@@ -2310,9 +2196,9 @@ def format_tool_response(
 
         lines = [
             "Cash Flow Summary:",
-            f"Total Inflow: ₹{total_inflow:,.2f}",
-            f"Total Outflow: ₹{total_outflow:,.2f}",
-            f"Net Cash Flow: ₹{net_flow:,.2f}",
+            f"Total Inflow: {format_indian_currency(total_inflow)}",
+            f"Total Outflow: {format_indian_currency(total_outflow)}",
+            f"Net Cash Flow: {format_indian_currency(net_flow)}",
         ]
 
         transactions = data.get("transactions", [])
@@ -2329,8 +2215,8 @@ def format_tool_response(
                     f"{entry.get('ledger_name', 'Ledger')} | "
                     f"{entry.get('voucher_type', 'Voucher')} "
                     f"#{entry.get('voucher_number') or entry.get('voucher_no') or '-'} | "
-                    f"Debit: ₹{abs(entry.get('debit', 0) or 0):,.2f} | "
-                    f"Credit: ₹{abs(entry.get('credit', 0) or 0):,.2f}"
+                    f"Debit: {format_indian_currency(abs(entry.get('debit', 0) or 0))} | "
+                    f"Credit: {format_indian_currency(abs(entry.get('credit', 0) or 0))}"
                 )
 
         return "\n".join(lines)
@@ -2351,9 +2237,9 @@ def format_tool_response(
 
         lines = [
             "Profitability Summary:",
-            f"Revenue: ₹{revenue:,.2f}",
-            f"Expenses: ₹{expenses:,.2f}",
-            f"Net {status}: ₹{abs(net_profit):,.2f}",
+            f"Revenue: {format_indian_currency(revenue)}",
+            f"Expenses: {format_indian_currency(expenses)}",
+            f"Net {status}: {format_indian_currency(abs(net_profit))}",
             f"Profit Margin: {profit_margin:.2f}%",
         ]
 
@@ -2374,7 +2260,7 @@ def format_tool_response(
             lines.append(
                 f"{index}. "
                 f"{item.get('ledger_name', 'Expense')} - "
-                f"₹{item.get('amount', 0):,.2f}"
+                f"{format_indian_currency(item.get('amount', 0))}"
             )
 
         return "\n".join(lines)
@@ -2405,7 +2291,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {party_name} - "
-                f"₹{abs(float(amount)):,.2f}"
+                f"{format_indian_currency(abs(float(amount)))}"
             )
 
         return "\n".join(lines)
@@ -2436,7 +2322,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {party_name} - "
-                f"₹{abs(float(amount)):,.2f}"
+                f"{format_indian_currency(abs(float(amount)))}"
             )
 
         return "\n".join(lines)
@@ -2457,14 +2343,14 @@ def format_tool_response(
             "Period Comparison:",
             "",
             "Current Period:",
-            f"Revenue: ₹{current.get('revenue', 0):,.2f}",
-            f"Expenses: ₹{current.get('expenses', 0):,.2f}",
-            f"Net Profit/Loss: ₹{current.get('net_profit', 0):,.2f}",
+            f"Revenue: {format_indian_currency(current.get('revenue', 0))}",
+            f"Expenses: {format_indian_currency(current.get('expenses', 0))}",
+            f"Net Profit/Loss: {format_indian_currency(current.get('net_profit', 0))}",
             "",
             "Previous Period:",
-            f"Revenue: ₹{previous.get('revenue', 0):,.2f}",
-            f"Expenses: ₹{previous.get('expenses', 0):,.2f}",
-            f"Net Profit/Loss: ₹{previous.get('net_profit', 0):,.2f}",
+            f"Revenue: {format_indian_currency(previous.get('revenue', 0))}",
+            f"Expenses: {format_indian_currency(previous.get('expenses', 0))}",
+            f"Net Profit/Loss: {format_indian_currency(previous.get('net_profit', 0))}",
             "",
             "Change:",
             f"Revenue: {format_change(changes.get('revenue'))}",
@@ -2497,7 +2383,7 @@ def format_tool_response(
         # We will reconcile Dr/Cr presentation during live testing.
         return (
             f"{ledger_name} closing balance is "
-            f"₹{abs(balance):,.2f}."
+            f"{format_indian_currency(abs(balance))}."
         )
 
 
@@ -2595,7 +2481,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {customer_name} - "
-                f"₹{net_sales:,.2f}"
+                f"{format_indian_currency(net_sales)}"
             )
 
         total_net_sales = float(
@@ -2609,7 +2495,7 @@ def format_tool_response(
         lines.append("")
         lines.append(
             f"Total Net Sales: "
-            f"₹{total_net_sales:,.2f}"
+            f"{format_indian_currency(total_net_sales)}"
         )
 
         return "\n".join(lines)
@@ -2652,7 +2538,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {supplier_name} - "
-                f"₹{net_purchases:,.2f}"
+                f"{format_indian_currency(net_purchases)}"
             )
 
         total_net_purchases = float(
@@ -2666,7 +2552,7 @@ def format_tool_response(
         lines.append("")
         lines.append(
             f"Total Net Purchases: "
-            f"₹{total_net_purchases:,.2f}"
+            f"{format_indian_currency(total_net_purchases)}"
         )
 
         return "\n".join(lines)
@@ -2706,7 +2592,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {item_name} - "
-                f"₹{net_sales:,.2f}"
+                f"{format_indian_currency(net_sales)}"
             )
 
         total_net_sales = float(
@@ -2720,7 +2606,7 @@ def format_tool_response(
         lines.append("")
         lines.append(
             f"Total Net Sales: "
-            f"₹{total_net_sales:,.2f}"
+            f"{format_indian_currency(total_net_sales)}"
         )
 
         return "\n".join(lines)
@@ -2761,7 +2647,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {item_name} - "
-                f"₹{net_purchases:,.2f}"
+                f"{format_indian_currency(net_purchases)}"
             )
 
         total_net_purchases = float(
@@ -2775,7 +2661,7 @@ def format_tool_response(
         lines.append("")
         lines.append(
             f"Total Net Purchases: "
-            f"₹{total_net_purchases:,.2f}"
+            f"{format_indian_currency(total_net_purchases)}"
         )
 
         return "\n".join(lines)
@@ -2803,7 +2689,7 @@ def format_tool_response(
             lines.append(
                 f"{index}. "
                 f"{item.get('stock_item_name', 'Item')} - "
-                f"₹{float(item.get('net_sales', 0) or 0):,.2f}"
+                f"{format_indian_currency(float(item.get('net_sales', 0) or 0))}"
             )
 
         return "\n".join(lines)
@@ -2832,7 +2718,7 @@ def format_tool_response(
             lines.append(
                 f"{index}. "
                 f"{item.get('stock_item_name', 'Item')} - "
-                f"₹{float(item.get('net_sales', 0) or 0):,.2f}"
+                f"{format_indian_currency(float(item.get('net_sales', 0) or 0))}"
             )
 
         return "\n".join(lines)
@@ -2934,7 +2820,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {customer_name} | "
-                f"Net Sales: ₹{net_sales:,.2f} | "
+                f"Net Sales: {format_indian_currency(net_sales)} | "
                 f"Sales Contribution: {contribution:.2f}%"
             )
 
@@ -2984,7 +2870,7 @@ def format_tool_response(
 
             lines.append(
                 f"{index}. {product_name} | "
-                f"Net Sales: ₹{net_sales:,.2f} | "
+                f"Net Sales: {format_indian_currency(net_sales)} | "
                 f"Sales Contribution: {contribution:.2f}%"
             )
 
@@ -3020,18 +2906,13 @@ def format_tool_response(
             tds.get("total_tds", 0) or 0
         )
 
-        combined_tax_amount = float(
-            data.get("combined_tax_amount", 0) or 0
-        )
-
         lines = [
             "Tax Liability Overview:",
             "",
-            f"GST Input: ₹{input_tax:,.2f}",
-            f"GST Output: ₹{output_tax:,.2f}",
-            f"Net GST Payable: ₹{net_gst_payable:,.2f}",
-            f"TDS Amount: ₹{total_tds:,.2f}",
-            f"Combined Tax Amount: ₹{combined_tax_amount:,.2f}",
+            f"GST Input: {format_indian_currency(input_tax)}",
+            f"GST Output: {format_indian_currency(output_tax)}",
+            f"Net GST Payable: {format_indian_currency(net_gst_payable)}",
+            f"TDS Amount: {format_indian_currency(total_tds)}",
         ]
 
         note = data.get("note")
@@ -3052,7 +2933,7 @@ def format_tool_response(
         lines = [
             "TDS Receivable:",
             "",
-            f"Total TDS Receivable: ₹{total:,.2f}",
+            f"Total TDS Receivable: {format_indian_currency(total)}",
         ]
 
         if ledgers:
@@ -3073,7 +2954,7 @@ def format_tool_response(
                 )
 
                 lines.append(
-                    f"- {ledger_name}: ₹{amount:,.2f}"
+                    f"- {ledger_name}: {format_indian_currency(amount)}"
                 )
 
         return "\n".join(lines)
@@ -3088,7 +2969,7 @@ def format_tool_response(
         lines = [
             "TDS Payable:",
             "",
-            f"Total TDS Payable: ₹{total:,.2f}",
+            f"Total TDS Payable: {format_indian_currency(total)}",
         ]
 
         if ledgers:
@@ -3109,7 +2990,7 @@ def format_tool_response(
                 )
 
                 lines.append(
-                    f"- {ledger_name}: ₹{amount:,.2f}"
+                    f"- {ledger_name}: {format_indian_currency(amount)}"
                 )
 
         return "\n".join(lines)
@@ -3143,9 +3024,9 @@ def format_tool_response(
 
             lines.extend([
                 f"{from_date} to {to_date}",
-                f"Revenue: ₹{revenue:,.2f}",
-                f"Total Expenses: ₹{total_expenses:,.2f}",
-                f"Net Profit: ₹{net_profit:,.2f}",
+                f"Revenue: {format_indian_currency(revenue)}",
+                f"Total Expenses: {format_indian_currency(total_expenses)}",
+                f"Net Profit: {format_indian_currency(net_profit)}",
                 "",
             ])
 
@@ -3175,7 +3056,7 @@ def format_tool_response(
                 value = company.get(key)
                 if value is None:
                     return "not available"
-                return f"₹{float(value):,.2f}"
+                return f"{format_indian_currency(float(value))}"
 
             lines.extend([
                 company_name,

@@ -32,6 +32,15 @@ from app.tally.parsers.common import (
 )
 
 
+_debug_logger = __import__("logging").getLogger(__name__)
+
+
+def _debug_print(*parts, **_ignored) -> None:
+    """Former print() diagnostics: DEBUG level only, never stdout."""
+    if _debug_logger.isEnabledFor(10):
+        _debug_logger.debug(" ".join(str(part) for part in parts))
+
+
 _TRADING_PREFIX_RE = re.compile(r"^(add:|less:)\s*", re.IGNORECASE)
 
 
@@ -236,13 +245,13 @@ def _parse_dspacc_rows(root, preserve_sign=False):
 
         pending_name = None
 
-    print("\n========== TRIAL BALANCE / GROUP SUMMARY - RAW SIGN DEBUG ==========")
+    _debug_print("\n========== TRIAL BALANCE / GROUP SUMMARY - RAW SIGN DEBUG ==========")
     for row in debug_rows:
-        print(
+        _debug_print(
             f'{row["name"]!r}: debit_text={row["debit_text"]!r}  '
             f'credit_text={row["credit_text"]!r}'
         )
-    print("========== END RAW SIGN DEBUG ==========\n")
+    _debug_print("========== END RAW SIGN DEBUG ==========\n")
 
     return rows
 
@@ -967,13 +976,13 @@ def parse_balance_sheet_report(xml_text: str):
 
     # Same convention as the other financial fetchers: leave the raw
     # values in the console so signs can be checked against Tally.
-    print("\n========== BALANCE SHEET - RAW LINES ==========")
+    _debug_print("\n========== BALANCE SHEET - RAW LINES ==========")
     for item in raw:
-        print(
+        _debug_print(
             f'{item["name"]!r}: BSMAINAMT={item["main_text"]!r}  '
             f'BSSUBAMT={item["sub_text"]!r}'
         )
-    print("========== END BALANCE SHEET - RAW LINES ==========\n")
+    _debug_print("========== END BALANCE SHEET - RAW LINES ==========\n")
 
     # ---- 2. Group sub-lines under their parent line ----
     lines = []

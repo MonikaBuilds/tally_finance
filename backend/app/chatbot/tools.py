@@ -31,9 +31,29 @@ from app.financial.service import (
     build_pending_invoices_from_reports
 )
 
-from app.financial.calculations import (
-    build_dashboard_financials
+from app.tally.native_reports import (
+    BANK_GROUPS,
+    CASH_GROUP,
+    dr_cr,
+    fetch_native_balances,
+    fetch_native_outstanding,
+    fetch_native_profit_loss_summary,
+    group_identity,
+    ledgers_under_groups,
 )
+
+import logging
+
+
+_debug_logger = __import__("logging").getLogger(__name__)
+
+
+def _debug_print(*parts, **_ignored) -> None:
+    """Former print() diagnostics: DEBUG level only, never stdout."""
+    if _debug_logger.isEnabledFor(10):
+        _debug_logger.debug(" ".join(str(part) for part in parts))
+
+_log = logging.getLogger(__name__)
 
 
 def _success(data: dict) -> dict:
@@ -128,118 +148,123 @@ def _parse_tally_quantity(value: str | None) -> float:
     except ValueError:
         return 0.0
     
+def _bills_from_native(native: dict, bill_type: str) -> dict:
+    """
+    Shape Tally's native Bills Receivable / Payable report for the tools.
+
+    Amounts are Tally's own per-bill Pending Amounts (an advance keeps its
+    negative sign) and the total is the report's own footer - never a
+    Python sum.
+    """
+    total_key = (
+        "total_receivable"
+        if bill_type == "receivable"
+        else "total_payable"
+    )
+
+    items = []
+    for bill in native.get("bills", []):
+        amount = bill.get("amount")
+        items.append({
+            "party": bill.get("party"),
+            "bill_reference": bill.get("reference"),
+            "bill_date": bill.get("bill_date"),
+            "due_date": bill.get("due_date"),
+            "overdue_days": bill.get("days_overdue") or 0,
+            "outstanding_amount": amount,
+            "raw_amount": bill.get("raw"),
+            "balance": amount,
+            "status": "pending",
+            "type": bill_type,
+            "original_voucher_type": None,
+            "original_voucher_number": None,
+            "transactions": [],
+        })
+
+    total = native.get("total")
+    if total is None and not items:
+        # Tally printed no pending bills at all.
+        total = 0.0
+
+    return {
+        total_key: total,
+        "raw_total": native.get("raw_total"),
+        "total_source": "Tally report footer (Pending Amount)",
+        "count": len(items),
+        "bills": items,
+        "as_of": native.get("requested_as_of"),
+        "tally_from_date": native.get("tally_from_date"),
+        "tally_to_date": native.get("tally_to_date"),
+    }
+
+
 async def _load_receivables(
-    company_name: str | None = None
+    company_name: str | None = None,
+    as_of: date | None = None,
 ):
-    receivable_bills = await fetch_bills_receivable(
-        company_name=company_name
+    native = await fetch_native_outstanding(
+        "receivable", company_name, as_of
     )
-
-    allocations = await fetch_bill_allocations(
-        company_name=company_name
-    )
-
-    outstanding = build_outstanding_summary(
-        allocations
-    )
-
-    return build_receivables_from_tally_report(
-        receivable_bills,
-        outstanding
-    )
+    return _bills_from_native(native, "receivable")
 
 
 async def _load_payables(
-    company_name: str | None = None
+    company_name: str | None = None,
+    as_of: date | None = None,
 ):
-    payable_bills = await fetch_bills_payable(
-        company_name=company_name
+    native = await fetch_native_outstanding(
+        "payable", company_name, as_of
     )
+    return _bills_from_native(native, "payable")
 
-    allocations = await fetch_bill_allocations(
-        company_name=company_name
-    )
 
-    outstanding = build_outstanding_summary(
-        allocations
-    )
-
-    return build_payables_from_tally_report(
-        payable_bills,
-        outstanding
-    )
-    
-async def _timed_call(name: str, coro):
-    start = time.perf_counter()
-
-    try:
-        result = await coro
-        duration = time.perf_counter() - start
-
-        # Temporary log to check how long each Tally request takes.
-        print(f"OUTSTANDING DEBUG: {name} completed in {duration:.2f}s")
-
-        return result
-
-    except Exception as exc:
-        duration = time.perf_counter() - start
-
-        print(
-            f"OUTSTANDING DEBUG: {name} failed after "
-            f"{duration:.2f}s -> {type(exc).__name__}: {exc}"
-        )
-        raise
-    
 async def _load_outstanding_data(
     company_name: str | None = None,
+    as_of: date | None = None,
 ):
     """
-    Load receivables, payables and bill allocations from Tally.
+    Load native Bills Receivable and Bills Payable from Tally.
 
-    These reports can be heavy for Tally, so we request them
-    one at a time instead of sending all three together.
+    Requests stay sequential because Tally serves one report at a time.
     """
-
-    # Tally may process heavy XML reports slowly when several
-    # requests arrive at the same time, so keep these sequential.
-    receivable_bills = await _timed_call(
-        "receivables",
-        fetch_bills_receivable(
-            company_name=company_name,
-        ),
-    )
-
-    payable_bills = await _timed_call(
-        "payables",
-        fetch_bills_payable(
-            company_name=company_name,
-        ),
-    )
-
-    allocations = await _timed_call(
-        "bill_allocations",
-        fetch_bill_allocations(
-            company_name=company_name,
-        ),
-    )
-
-    # Bill allocations tell us how much is still outstanding
-    # after receipts, payments and other adjustments.
-    outstanding = build_outstanding_summary(
-        allocations,
-    )
-
-    receivables = build_receivables_from_tally_report(
-        receivable_bills,
-        outstanding,
-    )
-
-    payables = build_payables_from_tally_report(
-        payable_bills,
-        outstanding,
-    )
-
+    receivables = await _load_receivables(company_name, as_of)
+    payables = await _load_payables(company_name, as_of)
     return receivables, payables
+
+
+class PeriodNotVerified(Exception):
+    """Tally used a different period than the one requested."""
+
+    def __init__(self, summary: dict):
+        self.summary = summary
+        super().__init__(_period_mismatch_message(summary))
+
+
+def _period_mismatch_message(summary: dict) -> str:
+    requested = (
+        f"{summary.get('requested_from_date')} to "
+        f"{summary.get('requested_to_date')}"
+    )
+    if summary.get("tally_from_date") and summary.get("tally_to_date"):
+        reported = (
+            f"{summary['tally_from_date']} to {summary['tally_to_date']}"
+        )
+        return (
+            f"Tally did not return Profit & Loss for {requested} "
+            f"(Tally reported the period {reported}). This usually means "
+            "there are no entries in that period, or the period is outside "
+            "the company's books. No figures are shown so that a different "
+            "period is never presented as the one you asked for."
+        )
+    return (
+        f"Tally did not confirm the Profit & Loss period for {requested}, "
+        "so no figures are shown."
+    )
+
+
+def _amount(line: dict | None) -> float | None:
+    return line.get("amount") if line else None
+
 
 async def _load_profit_loss_summary(
     company_name: str | None = None,
@@ -247,62 +272,84 @@ async def _load_profit_loss_summary(
     to_date: date | None = None,
 ) -> dict:
     """
-    Load only the Profit & Loss data required for revenue,
-    expenses and net-profit queries.
+    Revenue, expenses and net profit from Tally's native Profit & Loss.
 
-    These queries do not need receivables, payables or bill allocations,
-    so keeping this path lightweight avoids unnecessary Tally requests.
+    - revenue: Tally's "Sales Accounts" line (closing stock is NOT revenue)
+    - net_profit: Tally's own Nett Profit / Nett Loss row (loss is negative)
+    - expenses: Tally prints no single expense total, so this is the sum of
+      its Purchase, Direct Expenses and Indirect Expenses lines and is
+      reported as a derived figure together with those native lines.
+
+    Raises PeriodNotVerified when Tally substituted another period.
     """
-
-    profit_loss = await fetch_profit_loss(
-        from_date=from_date,
-        to_date=to_date,
-        company_name=company_name,
+    native = await fetch_native_profit_loss_summary(
+        company_name, from_date, to_date
     )
 
-    profit_loss_rows = [
-        {
-            **item,
-            "main_amount": item.get("amount", 0.0),
-        }
-        for item in (
-            profit_loss.get("left", [])
-            + profit_loss.get("right", [])
+    if not native["period_verified"]:
+        raise PeriodNotVerified(native)
+
+    lines = native["lines"]
+
+    revenue = _amount(lines["sales_accounts"])
+
+    expense_lines = [
+        line
+        for line in (
+            lines["purchase_accounts"],
+            lines["direct_expenses"],
+            lines["indirect_expenses"],
         )
+        if line and line.get("amount") is not None
     ]
-
-    return build_dashboard_financials(
-        profit_loss=profit_loss_rows,
-        receivables={},
-        payables={},
-        pending_invoices={},
-        tally_summary=profit_loss.get("summary"),
+    expenses = (
+        round(sum(abs(line["amount"]) for line in expense_lines), 2)
+        if expense_lines
+        else 0.0
     )
+
+    if native["nett_profit"] and native["nett_profit"].get("amount") is not None:
+        net_profit = native["nett_profit"]["amount"]
+    elif native["nett_loss"] and native["nett_loss"].get("amount") is not None:
+        net_profit = -abs(native["nett_loss"]["amount"])
+    else:
+        net_profit = None
+
+    return {
+        "revenue": revenue if revenue is not None else 0.0,
+        "revenue_source": "Tally P&L line 'Sales Accounts'",
+        "direct_incomes": _amount(lines["direct_incomes"]),
+        "indirect_incomes": _amount(lines["indirect_incomes"]),
+        "expenses": expenses,
+        "expenses_source": (
+            "Derived: sum of Tally P&L lines "
+            + ", ".join(line["name"] for line in expense_lines)
+            if expense_lines
+            else "No expense lines in Tally for this period"
+        ),
+        "expense_lines": expense_lines,
+        "net_profit": net_profit,
+        "net_profit_source": "Tally P&L Nett Profit / Nett Loss row",
+        "closing_stock": _amount(lines["closing_stock"]),
+        "tally_from_date": native["tally_from_date"],
+        "tally_to_date": native["tally_to_date"],
+    }
+
 
 async def _load_financial_summary(
     company_name: str | None = None,
     from_date: date | None = None,
     to_date: date | None = None
 ) -> dict:
-    profit_loss = await fetch_profit_loss(
+    summary = await _load_profit_loss_summary(
+        company_name=company_name,
         from_date=from_date,
         to_date=to_date,
-        company_name=company_name
     )
 
-    profit_loss_rows = [
-        {
-            **item,
-            "main_amount": item.get("amount", 0.0),
-        }
-        for item in (
-            profit_loss.get("left", [])
-            + profit_loss.get("right", [])
-        )
-    ]
-
     receivables, payables = await _load_outstanding_data(
-        company_name=company_name
+        company_name=company_name,
+        as_of=to_date,
     )
 
     pending_invoices = build_pending_invoices_from_reports(
@@ -310,13 +357,12 @@ async def _load_financial_summary(
         payables
     )
 
-    return build_dashboard_financials(
-        profit_loss=profit_loss_rows,
-        receivables=receivables,
-        payables=payables,
-        pending_invoices=pending_invoices,
-        tally_summary=profit_loss.get("summary"),
-    )
+    return {
+        **summary,
+        "receivables": receivables.get("total_receivable"),
+        "payables": payables.get("total_payable"),
+        "pending_invoices": pending_invoices.get("count", 0),
+    }
 
 def _build_aging_summary(
     bills: list[dict],
@@ -448,168 +494,20 @@ async def get_pending_invoices_tool(
     return _success(pending)
 
 
-async def get_invoice_status_tool(
-    invoice_reference: str,
-    company_name: str | None = None,
-) -> dict:
-    """
-    Search for an invoice in the current Tally
-    receivable and payable outstanding data.
-    """
-
-    if (
-        not invoice_reference
-        or not invoice_reference.strip()
-    ):
-        return _no_data(
-            "Please provide an invoice or bill reference."
-        )
-
-    receivables, payables = await _load_outstanding_data(
-        company_name=company_name
-    )
-
-    requested_reference = (
-        invoice_reference.strip().casefold()
-    )
-
-    matches = []
-
-    for bill in receivables.get(
-        "bills",
-        [],
-    ) or []:
-        bill_reference = str(
-            bill.get(
-                "bill_reference",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if (
-            bill_reference.casefold()
-            != requested_reference
-        ):
-            continue
-
-        outstanding_amount = float(
-            bill.get(
-                "outstanding_amount",
-                0,
-            )
-            or 0
-        )
-
-        overdue_days = int(
-            bill.get(
-                "overdue_days",
-                0,
-            )
-            or 0
-        )
-
-        status = (
-            "overdue"
-            if overdue_days > 0
-            else "outstanding"
-        )
-
-        matches.append({
-            "party": bill.get("party"),
-            "bill_reference": bill_reference,
-            "bill_date": bill.get("bill_date"),
-            "due_date": bill.get("due_date"),
-            "outstanding_amount": round(
-                outstanding_amount,
-                2,
-            ),
-            "overdue_days": overdue_days,
-            "type": bill.get("type"),
-            "status": status,
-        })
-
-    for bill in payables.get(
-        "bills",
-        [],
-    ) or []:
-        bill_reference = str(
-            bill.get(
-                "bill_reference",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if (
-            bill_reference.casefold()
-            != requested_reference
-        ):
-            continue
-
-        outstanding_amount = float(
-            bill.get(
-                "outstanding_amount",
-                0,
-            )
-            or 0
-        )
-
-        overdue_days = int(
-            bill.get(
-                "overdue_days",
-                0,
-            )
-            or 0
-        )
-
-        status = (
-            "overdue"
-            if overdue_days > 0
-            else "outstanding"
-        )
-
-        matches.append({
-            "party": bill.get("party"),
-            "bill_reference": bill_reference,
-            "bill_date": bill.get("bill_date"),
-            "due_date": bill.get("due_date"),
-            "outstanding_amount": round(
-                outstanding_amount,
-                2,
-            ),
-            "overdue_days": overdue_days,
-            "type": bill.get("type"),
-            "status": status,
-        })
-
-    if not matches:
-        return _no_data(
-            "This invoice was not found in the current "
-            "outstanding receivable or payable data. "
-            "Its paid or cancelled status cannot be "
-            "confirmed from the outstanding report alone."
-        )
-
-    return _success({
-        "invoice_reference": invoice_reference.strip(),
-        "matches": matches,
-        "count": len(matches),
-    })
     
 async def get_overdue_invoices_tool(
     company_name: str | None = None
 ) -> dict:
     # Temporary logs to see where the Tally request is getting stuck.
-    print("OVERDUE: starting outstanding fetch")
+    _debug_print("OVERDUE: starting outstanding fetch")
 
     receivables, payables = await _load_outstanding_data(
         company_name=company_name
     )
 
-    print("OVERDUE: outstanding fetch completed")
-    print("OVERDUE: receivables =", len(receivables))
-    print("OVERDUE: payables =", len(payables))
+    _debug_print("OVERDUE: outstanding fetch completed")
+    _debug_print("OVERDUE: receivables =", len(receivables))
+    _debug_print("OVERDUE: payables =", len(payables))
 
     pending = build_pending_invoices_from_reports(
         receivables,
@@ -763,26 +661,32 @@ async def get_revenue_tool(
 ) -> dict:
     # Revenue/expense/profit values come from the P&L report.
     # Avoid loading unrelated outstanding data for these simple queries.
-    summary = await _load_profit_loss_summary(
-        company_name=company_name,
-        from_date=from_date,
-        to_date=to_date,
-    )
+    try:
+        summary = await _load_profit_loss_summary(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except PeriodNotVerified as exc:
+        return _no_data(str(exc))
 
     return _success({
         "revenue": summary.get(
             "revenue",
             0.0
         ),
+        "revenue_source": summary.get("revenue_source"),
+        "direct_incomes": summary.get("direct_incomes"),
+        # Without requested dates, report the period Tally actually used.
         "from_date": (
             from_date.isoformat()
             if from_date
-            else None
+            else summary.get("tally_from_date")
         ),
         "to_date": (
             to_date.isoformat()
             if to_date
-            else None
+            else summary.get("tally_to_date")
         )
     })
 
@@ -792,26 +696,33 @@ async def get_expenses_tool(
     from_date: date | None = None,
     to_date: date | None = None
 ) -> dict:
-    summary = await _load_financial_summary(
-        company_name=company_name,
-        from_date=from_date,
-        to_date=to_date
-    )
+    # Expenses only need the P&L, not receivables or payables.
+    try:
+        summary = await _load_profit_loss_summary(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date
+        )
+    except PeriodNotVerified as exc:
+        return _no_data(str(exc))
 
     return _success({
         "expenses": summary.get(
             "expenses",
             0.0
         ),
+        "expenses_source": summary.get("expenses_source"),
+        "expense_lines": summary.get("expense_lines", []),
+        # Without requested dates, report the period Tally actually used.
         "from_date": (
             from_date.isoformat()
             if from_date
-            else None
+            else summary.get("tally_from_date")
         ),
         "to_date": (
             to_date.isoformat()
             if to_date
-            else None
+            else summary.get("tally_to_date")
         )
     })
 
@@ -821,16 +732,22 @@ async def get_net_profit_tool(
     from_date: date | None = None,
     to_date: date | None = None
 ) -> dict:
-    summary = await _load_financial_summary(
-        company_name=company_name,
-        from_date=from_date,
-        to_date=to_date
-    )
+    try:
+        summary = await _load_profit_loss_summary(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date
+        )
+    except PeriodNotVerified as exc:
+        return _no_data(str(exc))
 
-    net_profit = summary.get(
-        "net_profit",
-        0.0
-    )
+    net_profit = summary.get("net_profit")
+
+    if net_profit is None:
+        return _no_data(
+            "Tally's Profit & Loss did not include a Nett Profit or "
+            "Nett Loss row for this period."
+        )
 
     result_type = (
         "profit"
@@ -842,15 +759,16 @@ async def get_net_profit_tool(
         "net_profit": net_profit,
         "result_type": result_type,
         "amount": abs(net_profit),
+        # Without requested dates, report the period Tally actually used.
         "from_date": (
             from_date.isoformat()
             if from_date
-            else None
+            else summary.get("tally_from_date")
         ),
         "to_date": (
             to_date.isoformat()
             if to_date
-            else None
+            else summary.get("tally_to_date")
         )
     })
 
@@ -1178,166 +1096,6 @@ async def get_day_book_tool(
     })
 
 
-async def get_bank_transactions_tool(
-    ledger_name: str,
-    company_name: str | None = None,
-    from_date: date | None = None,
-    to_date: date | None = None,
-) -> dict:
-    """
-    Return transaction history for a cash or bank ledger
-    using actual Tally ledger voucher data.
-    """
-
-    if not ledger_name or not ledger_name.strip():
-        return _no_data(
-            "Please provide a cash or bank ledger name."
-        )
-
-    ledgers = await fetch_ledger_list(
-        company_name=company_name
-    )
-
-    available_ledger_names = [
-        ledger["name"]
-        for ledger in ledgers
-        if ledger.get("name")
-    ]
-
-    resolution = resolve_name(
-        requested_name=ledger_name,
-        available_names=available_ledger_names,
-    )
-
-    if resolution.status == "not_found":
-        return _no_data(
-            "No matching cash or bank ledger was found in Tally."
-        )
-
-    if resolution.status == "ambiguous":
-        return {
-            "success": False,
-            "source": "tally",
-            "message": (
-                "Multiple matching ledgers were found. "
-                "Please provide a more specific ledger name."
-            ),
-            "data": {
-                "matches": resolution.matches or [],
-            },
-        }
-
-    if resolution.status != "resolved":
-        return _no_data(
-            "Unable to resolve the requested ledger."
-        )
-
-    resolved_ledger = resolution.value
-
-    report = await fetch_ledger_report(
-        ledger_name=resolved_ledger,
-        company_name=company_name,
-        from_date=from_date,
-        to_date=to_date,
-    )
-
-    if not isinstance(report, dict):
-        return _no_data(
-            "No transaction data was found for this ledger."
-        )
-
-    entries = report.get(
-        "entries",
-        [],
-    ) or []
-
-    transactions = []
-
-    total_debit = 0.0
-    total_credit = 0.0
-
-    for entry in entries:
-        debit = float(
-            entry.get(
-                "debit",
-                0,
-            )
-            or 0
-        )
-
-        credit = float(
-            entry.get(
-                "credit",
-                0,
-            )
-            or 0
-        )
-
-        total_debit += debit
-        total_credit += credit
-
-        transactions.append({
-            "date": entry.get("date"),
-            "voucher_type": entry.get("voucher_type"),
-            "voucher_number": entry.get("voucher_number"),
-            "particulars": entry.get("particulars"),
-            "narration": entry.get("narration"),
-            "debit": round(debit, 2),
-            "credit": round(credit, 2),
-            "running_balance": entry.get(
-                "running_balance"
-            ),
-        })
-
-    if not transactions:
-        return _no_data(
-            "No transactions were found for the selected ledger "
-            "and period."
-        )
-
-    return _success({
-        "ledger_name": resolved_ledger,
-        "opening_balance": round(
-            float(
-                report.get(
-                    "opening_balance",
-                    0,
-                )
-                or 0
-            ),
-            2,
-        ),
-        "closing_balance": round(
-            float(
-                report.get(
-                    "closing_balance",
-                    0,
-                )
-                or 0
-            ),
-            2,
-        ),
-        "total_debit": round(
-            total_debit,
-            2,
-        ),
-        "total_credit": round(
-            total_credit,
-            2,
-        ),
-        "transactions": transactions,
-        "count": len(transactions),
-        "from_date": (
-            from_date.isoformat()
-            if from_date
-            else None
-        ),
-        "to_date": (
-            to_date.isoformat()
-            if to_date
-            else None
-        ),
-    })
     
 
 # Customer/Supplier Statement Tool
@@ -1636,32 +1394,33 @@ async def get_period_comparison_tool(
     #
     # Both periods are independent, so fetch them concurrently
     # instead of waiting for the first period before loading the second.
-    first_summary, second_summary = await asyncio.gather(
-        _load_profit_loss_summary(
-            company_name=company_name,
-            from_date=first_from_date,
-            to_date=first_to_date,
-        ),
-        _load_profit_loss_summary(
-            company_name=company_name,
-            from_date=second_from_date,
-            to_date=second_to_date,
-        ),
-    )
-
-    first_value = float(
-        first_summary.get(
-            normalized_metric,
-            0.0
+    try:
+        first_summary, second_summary = await asyncio.gather(
+            _load_profit_loss_summary(
+                company_name=company_name,
+                from_date=first_from_date,
+                to_date=first_to_date,
+            ),
+            _load_profit_loss_summary(
+                company_name=company_name,
+                from_date=second_from_date,
+                to_date=second_to_date,
+            ),
         )
-    )
+    except PeriodNotVerified as exc:
+        return _no_data(str(exc))
 
-    second_value = float(
-        second_summary.get(
-            normalized_metric,
-            0.0
+    if (
+        first_summary.get(normalized_metric) is None
+        or second_summary.get(normalized_metric) is None
+    ):
+        return _no_data(
+            "Tally did not return this figure for both periods, "
+            "so they cannot be compared."
         )
-    )
+
+    first_value = float(first_summary[normalized_metric])
+    second_value = float(second_summary[normalized_metric])
 
     difference = first_value - second_value
 
@@ -1712,14 +1471,21 @@ async def get_financial_summary_tool(
     """
 
     # Load the complete financial summary only once.
-    financial_summary = await _load_financial_summary(
-        company_name=company_name,
-        from_date=from_date,
-        to_date=to_date,
-    )
+    try:
+        financial_summary = await _load_financial_summary(
+            company_name=company_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except PeriodNotVerified as exc:
+        return _no_data(str(exc))
 
-    # Reuse the values already calculated by build_dashboard_financials().
-    # This avoids duplicate Tally requests and improves response time.
+    def _value(key):
+        value = financial_summary.get(key)
+        return round(float(value), 2) if value is not None else None
+
+    # Every figure below is a native Tally value except "expenses",
+    # which is labelled as derived in expenses_source.
     return _success({
         "from_date": (
             from_date.isoformat()
@@ -1731,96 +1497,58 @@ async def get_financial_summary_tool(
             if to_date
             else None
         ),
-        "revenue": round(
-            float(
-                financial_summary.get(
-                    "revenue",
-                    0.0,
-                )
-            ),
-            2,
-        ),
-        "expenses": round(
-            float(
-                financial_summary.get(
-                    "expenses",
-                    0.0,
-                )
-            ),
-            2,
-        ),
-        "net_profit": round(
-            float(
-                financial_summary.get(
-                    "net_profit",
-                    0.0,
-                )
-            ),
-            2,
-        ),
-        "receivables": round(
-            float(
-                financial_summary.get(
-                    "receivables",
-                    0.0,
-                )
-            ),
-            2,
-        ),
-        "payables": round(
-            float(
-                financial_summary.get(
-                    "payables",
-                    0.0,
-                )
-            ),
-            2,
-        ),
+        "revenue": _value("revenue"),
+        "expenses": _value("expenses"),
+        "expenses_source": financial_summary.get("expenses_source"),
+        "net_profit": _value("net_profit"),
+        "receivables": _value("receivables"),
+        "payables": _value("payables"),
         "pending_invoices": int(
-            financial_summary.get(
-                "pending_invoices",
-                0,
-            )
+            financial_summary.get("pending_invoices", 0) or 0
         ),
     })
-    
+
+
 async def _load_ledgers_by_parent(
     parent_names: set[str],
     company_name: str | None = None
 ) -> list[dict]:
     """
-    Load ledgers from Tally whose parent group matches
-    one of the supplied accounting groups.
+    Load ledgers from Tally that belong to one of the supplied accounting
+    groups at any depth (a bank ledger under "Bank Accounts > HDFC Group"
+    is included, not only direct children).
     """
 
     ledgers = await fetch_ledger_list(
         company_name=company_name
     )
-    
-    # TEMPORARY DEBUG:
-    # Print the ledger name and its parent group so we can check
-    # how Tally is actually classifying bank accounts.
-    for ledger in ledgers:
-        print(
-            "LEDGER DEBUG:",
-            ledger.get("name"),
-            "| parent:",
-            ledger.get("parent"),
-        )
 
     normalized_parents = {
         parent.strip().casefold()
         for parent in parent_names
     }
 
-    return [
+    direct = [
         ledger
         for ledger in ledgers
-        if (
-            ledger.get("parent", "")
-            .strip()
-            .casefold()
-            in normalized_parents
+        if (ledger.get("parent") or "").strip().casefold()
+        in normalized_parents
+    ]
+
+    # Ledgers whose parent is a sub-group need the group hierarchy.
+    try:
+        groups = await fetch_native_balances("Group", company_name)
+    except Exception:
+        _log.warning(
+            "Group hierarchy unavailable; using direct parent groups only",
+            exc_info=True,
+        )
+        return direct
+
+    return [
+        ledger
+        for ledger, _root in ledgers_under_groups(
+            groups, ledgers, set(parent_names)
         )
     ]
 
@@ -2221,125 +1949,118 @@ async def get_cost_centre_analysis_tool(
     })
     
     
-async def get_cash_balance_tool(
+def _signed_dr(amount):
+    """Tally exports Dr as negative; show Dr balances as positive numbers."""
+    return None if amount is None else round(-float(amount), 2)
+
+
+async def _native_money_balances(
+    root_groups: set[str],
+    label: str,
     ledger_name: str | None = None,
-    company_name: str | None = None
+    company_name: str | None = None,
 ) -> dict:
     """
-    Return current Cash-in-Hand ledger balances from Tally.
+    Cash / bank balances straight from Tally.
+
+    Totals are the closing balances Tally itself reports for the
+    group (sub-groups included). Ledger balances are Tally's own
+    ledger closing balances. Balances are shown Dr-positive with a
+    Dr/Cr side, which is only Tally's sign convention made readable.
     """
+    groups = await fetch_native_balances("Group", company_name)
+    ledgers = await fetch_native_balances("Ledger", company_name)
 
-    cash_ledgers = await _load_ledgers_by_parent(
-        parent_names={
-            "Cash-in-Hand",
-        },
-        company_name=company_name
-    )
+    matched = ledgers_under_groups(groups, ledgers, root_groups)
 
-    if not cash_ledgers:
-        return _no_data(
-            "No Cash-in-Hand ledger was found in Tally."
-        )
+    if not matched:
+        return _no_data(f"No {label} ledger was found in Tally.")
 
-    # If the user asked for one particular cash ledger,
-    # resolve it safely against actual Tally ledger names.
+    def ledger_row(ledger, root):
+        amount, side = dr_cr(ledger.get("amount"))
+        return {
+            "name": ledger.get("name"),
+            "parent": ledger.get("parent"),
+            "group": root,
+            "closing_balance": _signed_dr(ledger.get("amount")),
+            "balance_type": side,
+            "raw": ledger.get("raw"),
+        }
+
+    rows = [ledger_row(ledger, root) for ledger, root in matched]
+
     if ledger_name and ledger_name.strip():
-        available_names = [
-            ledger["name"]
-            for ledger in cash_ledgers
-            if ledger.get("name")
-        ]
-
         resolution = resolve_name(
             requested_name=ledger_name,
-            available_names=available_names
+            available_names=[row["name"] for row in rows if row["name"]],
         )
-
-        if resolution.status == "not_found":
-            return _no_data(
-                "No matching cash ledger was found in Tally."
-            )
 
         if resolution.status == "ambiguous":
             return {
                 "success": False,
                 "source": "tally",
                 "message": (
-                    "Multiple matching cash ledgers were found. "
-                    "Please provide a more specific ledger name."
+                    f"Multiple matching {label} ledgers were found. "
+                    "Please provide a more specific name."
                 ),
-                "data": {
-                    "matches": resolution.matches or []
-                }
+                "data": {"matches": resolution.matches or []},
             }
 
         if resolution.status != "resolved":
-            return _no_data(
-                "Unable to resolve the requested cash ledger."
-            )
+            return _no_data(f"No matching {label} ledger was found in Tally.")
 
-        resolved_name = resolution.value
-
-        selected_ledger = next(
-            (
-                ledger
-                for ledger in cash_ledgers
-                if ledger.get("name") == resolved_name
-            ),
-            None
-        )
-
-        if selected_ledger is None:
-            return _no_data(
-                "No matching cash ledger was found in Tally."
-            )
+        row = next(r for r in rows if r["name"] == resolution.value)
 
         return _success({
-            "ledger_name": selected_ledger.get("name"),
-            # Tally may return Cash-in-Hand debit balances as negative values.
-            # For the user, show the actual available cash as a positive amount.
-            "closing_balance": round(
-                abs(
-                    float(
-                        selected_ledger.get(
-                            "closing_balance",
-                            0.0
-                        )
-                    )
-                ),
-                2
-            ),
+            "ledger_name": row["name"],
+            "closing_balance": row["closing_balance"],
+            "balance_type": row["balance_type"],
             "ledger_count": 1,
-            "ledgers": [
-                selected_ledger
-            ]
+            "ledgers": [row],
+            "balance_source": "Tally ledger closing balance",
         })
 
-    # Cash-in-Hand is an asset balance.
-    # Tally can represent its debit balance with a negative sign,
-    # so we convert each cash balance to a positive usable amount.
-    total_balance = sum(
-        abs(
-            float(
-                ledger.get(
-                    "closing_balance",
-                    0.0
-                )
-            )
+    group_totals = []
+    for name in sorted(root_groups):
+        group = next(
+            (g for g in groups if group_identity(g).casefold() == name.casefold()),
+            None,
         )
-        for ledger in cash_ledgers
+        if group is None or group.get("amount") is None:
+            continue
+        group_totals.append({
+            "group": group_identity(group),
+            "closing_balance": _signed_dr(group["amount"]),
+            "balance_type": dr_cr(group["amount"])[1],
+            "raw": group.get("raw"),
+        })
+
+    primary = next(
+        (g for g in group_totals if g["group"] in (CASH_GROUP, "Bank Accounts")),
+        group_totals[0] if group_totals else None,
     )
 
     return _success({
-        "total_balance": round(
-            total_balance,
-            2
+        "total_balance": primary["closing_balance"] if primary else None,
+        "balance_type": primary["balance_type"] if primary else None,
+        "total_source": (
+            f"Tally group closing balance: {primary['group']}"
+            if primary else "Tally did not return a group closing balance"
         ),
-        "ledger_count": len(
-            cash_ledgers
-        ),
-        "ledgers": cash_ledgers
+        "group_totals": group_totals,
+        "ledger_count": len(rows),
+        "ledgers": rows,
     })
+
+
+async def get_cash_balance_tool(
+    ledger_name: str | None = None,
+    company_name: str | None = None
+) -> dict:
+    """Cash-in-Hand balance from Tally (group total and each ledger)."""
+    return await _native_money_balances(
+        {CASH_GROUP}, "cash", ledger_name, company_name
+    )
 
 
 async def get_bank_balance_tool(
@@ -2347,117 +2068,13 @@ async def get_bank_balance_tool(
     company_name: str | None = None
 ) -> dict:
     """
-    Return current bank ledger balances from Tally.
+    Bank balances from Tally. "Bank Accounts" and "Bank OD A/c" are shown
+    as Tally's separate group totals; they are not added together.
     """
-
-    bank_ledgers = await _load_ledgers_by_parent(
-        parent_names={
-            "Bank Accounts",
-            "Bank OD A/c",
-        },
-        company_name=company_name
+    return await _native_money_balances(
+        set(BANK_GROUPS), "bank", ledger_name, company_name
     )
 
-    if not bank_ledgers:
-        return _no_data(
-            "No bank ledger was found in Tally."
-        )
-
-    # A specific bank/account was requested.
-    if ledger_name and ledger_name.strip():
-        available_names = [
-            ledger["name"]
-            for ledger in bank_ledgers
-            if ledger.get("name")
-        ]
-
-        resolution = resolve_name(
-            requested_name=ledger_name,
-            available_names=available_names
-        )
-
-        if resolution.status == "not_found":
-            return _no_data(
-                "No matching bank ledger was found in Tally."
-            )
-
-        if resolution.status == "ambiguous":
-            return {
-                "success": False,
-                "source": "tally",
-                "message": (
-                    "Multiple matching bank ledgers were found. "
-                    "Please provide a more specific bank or account name."
-                ),
-                "data": {
-                    "matches": resolution.matches or []
-                }
-            }
-
-        if resolution.status != "resolved":
-            return _no_data(
-                "Unable to resolve the requested bank ledger."
-            )
-
-        resolved_name = resolution.value
-
-        selected_ledger = next(
-            (
-                ledger
-                for ledger in bank_ledgers
-                if ledger.get("name") == resolved_name
-            ),
-            None
-        )
-
-        if selected_ledger is None:
-            return _no_data(
-                "No matching bank ledger was found in Tally."
-            )
-
-        return _success({
-            "ledger_name": selected_ledger.get("name"),
-            # Tally represents debit balances with a negative sign.
-            # Reverse the Tally sign so the user sees the actual bank balance.
-            "closing_balance": round(
-                -float(
-                    selected_ledger.get(
-                        "closing_balance",
-                        0.0
-                    )
-                ),
-                2
-            ),
-            "ledger_count": 1,
-            "ledgers": [
-                selected_ledger
-            ]
-        })
-
-    # Reverse Tally's accounting sign for the user-facing bank balance.
-    # A normal debit bank balance becomes positive, while a credit
-    # balance such as an overdraft can remain negative.
-    total_balance = sum(
-        -float(
-            ledger.get(
-                "closing_balance",
-                0.0
-            )
-        )
-        for ledger in bank_ledgers
-    )
-
-    return _success({
-        "total_balance": round(
-            total_balance,
-            2
-        ),
-        "ledger_count": len(
-            bank_ledgers
-        ),
-        "ledgers": bank_ledgers
-    })
-    
 async def get_bank_transactions_tool(
     ledger_name: str | None = None,
     company_name: str | None = None,
@@ -3844,7 +3461,7 @@ async def get_supplier_statement_tool(
 
     resolved_name = resolution.value
 
-    print(
+    _debug_print(
         "SUPPLIER NAME DEBUG:",
         "requested=", repr(party_name),
         "| available=", [repr(name) for name in available_names],
@@ -5044,11 +4661,15 @@ async def get_cash_flow_summary_tool(
             "No cash or bank ledgers were found in Tally."
         )
 
+    money_names = {
+        (ledger.get("name") or "").strip().casefold()
+        for ledger in money_ledgers
+    }
+
     total_inflow = 0.0
     total_outflow = 0.0
     transactions = []
-
-    seen_vouchers = set()
+    internal_transfers = []
 
     for ledger in money_ledgers:
         ledger_name = ledger.get("name")
@@ -5072,29 +4693,22 @@ async def get_cash_flow_summary_tool(
                 entry.get("credit", 0) or 0
             )
 
-            # The same voucher can appear through more than one
-            # cash or bank ledger, so avoid counting it twice.
-            voucher_key = (
-                entry.get("date"),
-                entry.get("voucher_number")
-                or entry.get("voucher_no"),
-                entry.get("voucher_type"),
-                debit,
-                credit,
-            )
+            row = {**entry, "ledger_name": ledger_name}
 
-            if voucher_key in seen_vouchers:
+            # Cash deposited into a bank (or moved between two bank
+            # accounts) is a contra entry: money moves between the
+            # business's own cash/bank ledgers, so it is neither an
+            # inflow nor an outflow. Each ledger's own entry is kept
+            # (no cross-ledger de-duplication, which could drop real
+            # entries that merely look alike).
+            counter = (entry.get("particulars") or "").strip().casefold()
+            if counter in money_names:
+                internal_transfers.append(row)
                 continue
-
-            seen_vouchers.add(voucher_key)
 
             total_inflow += abs(debit)
             total_outflow += abs(credit)
-
-            transactions.append({
-                **entry,
-                "ledger_name": ledger_name,
-            })
+            transactions.append(row)
 
     net_flow = (
         total_inflow
@@ -5102,10 +4716,15 @@ async def get_cash_flow_summary_tool(
     )
 
     return _success({
-        "total_inflow": total_inflow,
-        "total_outflow": total_outflow,
-        "net_flow": net_flow,
+        "total_inflow": round(total_inflow, 2),
+        "total_outflow": round(total_outflow, 2),
+        "net_flow": round(net_flow, 2),
+        "calculation_note": (
+            "Derived from Tally cash and bank ledger entries; "
+            "transfers between your own cash/bank ledgers are excluded."
+        ),
         "transactions": transactions,
+        "internal_transfers": internal_transfers,
         "count": len(transactions),
         "from_date": (
             from_date.isoformat()
@@ -5195,11 +4814,6 @@ async def get_tax_liability_tool(
     # Combined overview
     # --------------------------------------------------------
 
-    combined_tax_amount = (
-        max(net_gst, 0.0)
-        + max(total_tds, 0.0)
-    )
-
     return _success({
         "gst": {
             "input_tax": round(
@@ -5221,10 +4835,6 @@ async def get_tax_liability_tool(
                 2
             ),
         },
-        "combined_tax_amount": round(
-            combined_tax_amount,
-            2
-        ),
         "from_date": (
             from_date.isoformat()
             if from_date
@@ -5236,9 +4846,9 @@ async def get_tax_liability_tool(
             else None
         ),
         "note": (
-            "Combined tax amount is an informational overview "
-            "based on existing GST and TDS results and should "
-            "not be treated as a statutory filing calculation."
+            "GST and TDS are shown separately as returned by the "
+            "GST and TDS ledgers in Tally. They are not added together "
+            "because that combined figure does not exist in Tally."
         ),
     })
 # ============================================================

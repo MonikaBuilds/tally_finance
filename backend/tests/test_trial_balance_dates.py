@@ -1,3 +1,4 @@
+import pytest
 from datetime import date
 
 from fastapi.testclient import TestClient
@@ -5,6 +6,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.api import reports
 from app.tally.xml_builders import build_trial_balance_request
+
+# Synthetic test users: see tests/conftest.py
+pytestmark = pytest.mark.usefixtures("signed_in_superadmin")
 
 
 client = TestClient(app)
@@ -89,6 +93,8 @@ def test_trial_balance_purchase_bills_pending_only_receipt_notes(monkeypatch):
                     "date": "2025-04-01",
                     "voucher_type": "Receipt Note",
                     "voucher_number": "1",
+                    # The route groups by Tally's tracking number.
+                    "tracking_number": "1",
                     "stock_item": "SmartMind AI",
                     "party": "Eagle Paradise Pvt. Ltd.",
                     "quantity": 30,

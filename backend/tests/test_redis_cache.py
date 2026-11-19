@@ -23,6 +23,9 @@ from app.cache import (
 )
 from app.cache.keys import clean_segment, hash_params
 
+# Synthetic test users: see tests/conftest.py
+pytestmark = pytest.mark.usefixtures("token_only_auth")
+
 TEST_USER_ORGS = {
     "user_a": "tenant_a",
     "user_b": "tenant_b",
@@ -293,29 +296,58 @@ async def test_force_refresh_bypasses_cache():
 
 @pytest.mark.asyncio
 async def test_background_refresher_skips_when_tally_offline():
-    """Background refresher pre-flight check prevents redundant attempts when Tally is offline."""
+    """A recently used dashboard is not refreshed while Tally is offline."""
+    from datetime import date
+    from app.cache import refresher as refresher_module
     from app.cache.refresher import TallyBackgroundRefresher
+
+    refresher_module._recent_dashboards.clear()
+    refresher_module.note_dashboard_access("org-a", "Test Co", date(2025, 4, 1), date(2026, 3, 31))
 
     worker = TallyBackgroundRefresher()
     with patch.object(worker, "_is_tally_reachable", AsyncMock(return_value=False)):
-        with patch("app.tally.service.fetch_companies", AsyncMock()) as mock_fetch:
+        with patch("app.tally.dashboard.fetch_dashboard_reports", AsyncMock()) as mock_dash:
             await worker.run_refresh_cycle()
-            mock_fetch.assert_not_called()
+            mock_dash.assert_not_called()
+    refresher_module._recent_dashboards.clear()
 
 
 @pytest.mark.asyncio
-async def test_background_refresher_executes_when_tally_online():
-    """Background refresher executes companies and dashboard refresh when Tally is online."""
+async def test_background_refresher_idle_makes_no_tally_calls():
+    """With no recent dashboard use, the refresher sends nothing to Tally."""
+    from app.cache import refresher as refresher_module
     from app.cache.refresher import TallyBackgroundRefresher
+
+    refresher_module._recent_dashboards.clear()
+    worker = TallyBackgroundRefresher()
+    with patch.object(worker, "_is_tally_reachable", AsyncMock(return_value=True)) as reach:
+        with patch("app.tally.dashboard.fetch_dashboard_reports", AsyncMock()) as mock_dash:
+            await worker.run_refresh_cycle()
+            reach.assert_not_called()
+            mock_dash.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_background_refresher_warms_the_users_real_org_key():
+    """The refresher warms the exact dashboard key a real user requested."""
+    from datetime import date
+    from app.cache import refresher as refresher_module
+    from app.cache.refresher import TallyBackgroundRefresher
+
+    refresher_module._recent_dashboards.clear()
+    refresher_module.note_dashboard_access("org-real-uuid", "Test Co", date(2025, 4, 1), date(2026, 3, 31))
 
     worker = TallyBackgroundRefresher()
     with patch.object(worker, "_is_tally_reachable", AsyncMock(return_value=True)):
-        with patch("app.tally.service.fetch_companies", AsyncMock(return_value=[{"name": "Test Co"}])) as mock_fetch:
-            with patch("asyncio.sleep", AsyncMock()):
-                with patch("app.tally.dashboard.fetch_dashboard_reports", AsyncMock(return_value=({}, {}))) as mock_dash:
-                    await worker.run_refresh_cycle()
-                    mock_fetch.assert_called_once_with(force_refresh=True, org_id="default")
-                    mock_dash.assert_called_once()
+        with patch("asyncio.sleep", AsyncMock()):
+            with patch("app.tally.dashboard.fetch_dashboard_reports", AsyncMock(return_value=({"x": 1}, {}))), \
+                 patch("app.api.dashboard_mapper.map_dashboard_summary", return_value={}), \
+                 patch("app.cache.manager.cache_manager.get_or_fetch", AsyncMock()) as mock_get:
+                await worker.run_refresh_cycle()
+                mock_get.assert_called_once()
+                assert "org-real-uuid" in mock_get.call_args.kwargs["cache_key"]
+                assert mock_get.call_args.kwargs["metadata"]["org_id"] == "org-real-uuid"
+    refresher_module._recent_dashboards.clear()
 
 
 @pytest.mark.asyncio

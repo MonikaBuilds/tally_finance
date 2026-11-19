@@ -1,44 +1,45 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
 import { BarChart3, Loader2 } from 'lucide-react'
 
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
-import Ledger from './pages/Ledger'
-import LedgerMonthDetail from './pages/LedgerMonthDetail'
-import VoucherDetail from './pages/Voucherdetail'
-import ProfitLoss from './pages/ProfitLoss'
-import GroupSummary from './pages/GroupSummary'
-import DayBook from './pages/DayBook'
-import Receivables from './pages/Receivables'
-import Payables from './pages/Payables'
-import PendingInvoices from './pages/PendingInvoices'
-import TrialBalance from './pages/TrialBalance'
-import TrialBalanceGroup from './pages/trialBalance/TrialBalanceGroup'
-import TrialBalanceOpeningStock from './pages/trialBalance/TrialBalanceOpeningStock'
-import TrialBalancePurchaseBillsPending from './pages/trialBalance/TrialBalancePurchaseBillsPending'
-import BalanceSheet from './pages/BalanceSheet'
-import BalanceSheetGroup from './pages/Balancesheet/BalanceSheetGroup'
-import ClosingStockSummary from './pages/ClosingStockSummary'
-import Inventory from './pages/Inventory'
-import StockItemMonthlySummary from './pages/StockItemMonthlySummary'
-import StockItemVouchers from './pages/StockItemVouchers'
-import StockItemBillsPending from './pages/StockItemBillsPending'
-import InventoryVoucherDetail from './pages/InventoryVoucherDetail'
-import StockGroupItems from './pages/StockGroupItems'
-import StockSummaryDrill from './pages/StockSummaryDrill'
-import RegisterVouchers from './pages/RegisterVouchers'
-import LocationSummary from './pages/LocationSummary'
-import LocationMonthlySummary from './pages/LocationMonthlySummary'
-import LocationVouchers from './pages/LocationVouchers'
-import TallyStatus from './pages/TallyStatus'
-import Chatbot from './pages/Chatbot'
+const Ledger = lazy(() => import('./pages/Ledger'))
+const LedgerMonthDetail = lazy(() => import('./pages/LedgerMonthDetail'))
+const VoucherDetail = lazy(() => import('./pages/Voucherdetail'))
+const ProfitLoss = lazy(() => import('./pages/ProfitLoss'))
+const GroupSummary = lazy(() => import('./pages/GroupSummary'))
+const DayBook = lazy(() => import('./pages/DayBook'))
+const Receivables = lazy(() => import('./pages/Receivables'))
+const Payables = lazy(() => import('./pages/Payables'))
+const PendingInvoices = lazy(() => import('./pages/PendingInvoices'))
+const TrialBalance = lazy(() => import('./pages/TrialBalance'))
+const TrialBalanceGroup = lazy(() => import('./pages/trialBalance/TrialBalanceGroup'))
+const TrialBalanceOpeningStock = lazy(() => import('./pages/trialBalance/TrialBalanceOpeningStock'))
+const TrialBalancePurchaseBillsPending = lazy(() => import('./pages/trialBalance/TrialBalancePurchaseBillsPending'))
+const BalanceSheet = lazy(() => import('./pages/BalanceSheet'))
+const BalanceSheetGroup = lazy(() => import('./pages/Balancesheet/BalanceSheetGroup'))
+const ClosingStockSummary = lazy(() => import('./pages/ClosingStockSummary'))
+const Inventory = lazy(() => import('./pages/Inventory'))
+const StockItemMonthlySummary = lazy(() => import('./pages/StockItemMonthlySummary'))
+const StockItemVouchers = lazy(() => import('./pages/StockItemVouchers'))
+const StockItemBillsPending = lazy(() => import('./pages/StockItemBillsPending'))
+const InventoryVoucherDetail = lazy(() => import('./pages/InventoryVoucherDetail'))
+const StockGroupItems = lazy(() => import('./pages/StockGroupItems'))
+const StockSummaryDrill = lazy(() => import('./pages/StockSummaryDrill'))
+const RegisterVouchers = lazy(() => import('./pages/RegisterVouchers'))
+const LocationSummary = lazy(() => import('./pages/LocationSummary'))
+const LocationMonthlySummary = lazy(() => import('./pages/LocationMonthlySummary'))
+const LocationVouchers = lazy(() => import('./pages/LocationVouchers'))
+const TallyStatus = lazy(() => import('./pages/TallyStatus'))
+const Chatbot = lazy(() => import('./pages/Chatbot'))
 import Login from './pages/Login'
-import UserManagement from './pages/UserManagement'
-import ReportsIndex from './pages/ReportsIndex'
+const UserManagement = lazy(() => import('./pages/UserManagement'))
+const ReportsIndex = lazy(() => import('./pages/ReportsIndex'))
 
 import { apiGet, apiPost } from './api/client'
 import { clearBrowserCache } from './utils/browserCache'
+import { clearChatHistory } from './utils/chatHistory'
 
 
 // Old paths that no longer have their own route. The other old
@@ -178,6 +179,7 @@ function App() {
     sessionStorage.removeItem(
       'tfi.dashboard.date_filter'
     )
+    clearChatHistory()
 
     setCurrentUser(null)
     setIsAuthenticated(false)
@@ -216,7 +218,15 @@ function App() {
     roles.includes('admin')
 
 
+  // Report pages are loaded on first visit instead of all at sign-in.
   return (
+    <Suspense
+      fallback={
+        <div className="loader" role="status">
+          <Loader2 size={20} className="spin" /> Loading…
+        </div>
+      }
+    >
     <Routes>
       <Route element={<Layout onLogout={handleLogout} />}>
         <Route
@@ -401,6 +411,7 @@ function App() {
         ))}
       </Route>
     </Routes>
+    </Suspense>
   )
 }
 

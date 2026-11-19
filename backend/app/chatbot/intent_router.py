@@ -4,6 +4,15 @@ from calendar import monthrange
 from datetime import date
 
 
+_debug_logger = __import__("logging").getLogger(__name__)
+
+
+def _debug_print(*parts, **_ignored) -> None:
+    """Former print() diagnostics: DEBUG level only, never stdout."""
+    if _debug_logger.isEnabledFor(10):
+        _debug_logger.debug(" ".join(str(part) for part in parts))
+
+
 # Queries containing these words usually need more context
 # or a specialized tool, so Gemini can handle them.
 #
@@ -82,6 +91,23 @@ def _clean_ledger_name(name: str) -> str:
     return name
 
 
+# "dairy"/"diary" alone is how many users ask for the Day Book, but the same
+# word appears in party and item names ("Amul Dairy", "dairy products").
+# Treat it as the Day Book only when it is the thing being asked for.
+_BARE_DIARY_RE = re.compile(
+    r"^(?:(?:please\s+)?(?:show|give|open|get|display|view)\s+)?"
+    r"(?:me\s+)?(?:the\s+|my\s+|our\s+)?"
+    r"(?:(?:today'?s|yesterday'?s|daily)\s+)?"
+    r"(?:dairy|diary)"
+    r"(?:\s+(?:for|of|on|from)\s+[\w\s\-/,']+)?"
+    r"(?:\s+please)?[.?!]?$"
+)
+
+
+def _is_bare_diary_request(text: str) -> bool:
+    return bool(_BARE_DIARY_RE.match(text.strip()))
+
+
 def detect_local_intent(
     message: str,
 ) -> str | dict | None:
@@ -110,21 +136,32 @@ def detect_local_intent(
     # ledger or transaction regexes so queries like
     # "Show me the Profit and Loss statement for this financial year"
     # are never intercepted as ledger lookups.
-    if re.search(
+    #
+    # A comparison ("compare P&L this month vs last month") is not a request
+    # for one statement, so it continues to the comparison routing below.
+    is_comparison = bool(
+        re.search(
+            r"\b(compare|comparison|versus|vs\.?)\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+
+    if not is_comparison and re.search(
         r"\b(profit\s+and\s+loss|profit\s*&\s*loss|\bp&l\b|p\s+and\s+l)\b",
         message,
         flags=re.IGNORECASE,
     ):
         return "get_profit_loss"
 
-    if re.search(
+    if not is_comparison and re.search(
         r"\bbalance\s+sheet\b",
         message,
         flags=re.IGNORECASE,
     ):
         return "get_balance_sheet"
 
-    if re.search(
+    if not is_comparison and re.search(
         r"\btrial\s+balance\b",
         message,
         flags=re.IGNORECASE,
@@ -136,7 +173,7 @@ def detect_local_intent(
         r"\b(day\s*book|daybook|day\s*book\s*dairy|day\s*book\s*diary|daily\s*dairy|daily\s*diary)\b",
         message,
         flags=re.IGNORECASE,
-    ) or re.search(r"\b(?:dairy|diary)\b", message, flags=re.IGNORECASE):
+    ) or _is_bare_diary_request(text):
         return "get_day_book"
 
     # --------------------------------------------------
@@ -364,7 +401,7 @@ def detect_local_intent(
     )
 
     if comparison_match:
-        print("LOCAL COMPARISON MATCHED:", comparison_match.group(0))
+        _debug_print("LOCAL COMPARISON MATCHED:", comparison_match.group(0))
         metric_text = (
             comparison_match
             .group(1)
@@ -1329,7 +1366,17 @@ def detect_local_intent(
     ]
 
     # Return the first strong local match.
+    statement_tools = {
+        "get_profit_loss",
+        "get_balance_sheet",
+        "get_trial_balance",
+    }
+
     for pattern, tool_name in patterns:
+        if is_comparison and tool_name in statement_tools:
+            # "Compare P&L ..." is a comparison, not one statement.
+            continue
+
         if re.search(
             pattern,
             text,

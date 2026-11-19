@@ -52,7 +52,11 @@ async def _cached_report(
 ) -> CacheResult[T]:
     reports_mod = sys.modules.get("app.api.reports")
     resolve_fn = getattr(reports_mod, "_resolve_org_id", _resolve_org_id) if reports_mod else _resolve_org_id
-    effective_org_id = resolve_fn(current_user)
+    # A MySQL lookup: run it in a worker thread so one slow query does not
+    # stall every other request on the event loop.
+    from starlette.concurrency import run_in_threadpool
+
+    effective_org_id = await run_in_threadpool(resolve_fn, current_user)
 
     is_force = is_force_refresh(force_refresh=force_refresh, refresh=refresh)
     cache_key = build_cache_key(

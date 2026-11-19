@@ -6,6 +6,7 @@ import Sidebar from './Sidebar'
 import BrowserCacheNotice from '../common/BrowserCacheNotice'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { getSelectedCompany, setSelectedCompany } from '../../api/client'
+import { canOpen, readCurrentUser, requiredPermission } from '../../utils/permissions'
 
 const SIDEBAR_STORAGE_KEY = 'tfi.sidebar.expanded'
 
@@ -117,8 +118,17 @@ function Layout({ onLogout }) {
         <main className="app-content">
           <div className="content-inner">
             <BrowserCacheNotice />
-            {/* Remount the page on company change so it refetches. */}
-            <Outlet key={company || 'default'} context={{ onLogout }} />
+            {canOpen(readCurrentUser(), location.pathname) ? (
+              /* Remount the page on company change so it refetches. */
+              <Outlet key={company || 'default'} context={{ onLogout }} />
+            ) : (
+              <div className="error-message" role="alert">
+                You do not have the{' '}
+                <strong>{requiredPermission(location.pathname)}</strong>{' '}
+                permission needed for this page. Please contact your
+                administrator to request access.
+              </div>
+            )}
           </div>
         </main>
       </div>

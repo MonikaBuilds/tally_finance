@@ -12,10 +12,15 @@ async def test_financial_summary(monkeypatch):
         from_date=None,
         to_date=None
     ):
+        # TEST FIXTURE: shape returned by _load_financial_summary (native
+        # P&L lines + native Bills Receivable/Payable footers).
         return {
             "revenue": 741000,
             "expenses": 520000,
-            "net_profit": 221000
+            "net_profit": 221000,
+            "receivables": 80000,
+            "payables": 117000,
+            "pending_invoices": 2,
         }
 
     async def fake_receivables(company_name=None):
@@ -99,10 +104,14 @@ async def test_financial_summary_without_dates(monkeypatch):
         from_date=None,
         to_date=None
     ):
+        # TEST FIXTURE (see test above).
         return {
             "revenue": 100000,
             "expenses": 75000,
-            "net_profit": 25000
+            "net_profit": 25000,
+            "receivables": 20000,
+            "payables": 15000,
+            "pending_invoices": 1,
         }
 
     async def fake_receivables(company_name=None):

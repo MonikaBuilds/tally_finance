@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 
 import { NAV_SECTIONS } from './navConfig'
+import { canOpen } from '../../utils/permissions'
 
 
 function getCurrentUser() {
@@ -197,8 +198,9 @@ function Sidebar({
             {section.links
               .filter(
                 (link) =>
-                  link.to !== '/admin/users' ||
-                  canManageUsers
+                  (link.to !== '/admin/users' ||
+                    canManageUsers) &&
+                  canOpen(user, link.to)
               )
               .map((link) => {
                 const Icon = link.icon

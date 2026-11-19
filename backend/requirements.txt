@@ -1,17 +1,21 @@
-fastapi
-uvicorn
-httpx
-python-dotenv
-pydantic
-pydantic-settings
-pytest
-openpyxl
-reportlab
+# Exact versions verified with this codebase. Upgrade deliberately and
+# re-run the test suite (pinned versions keep builds reproducible).
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+python-dotenv==1.2.3
+pydantic==2.13.4
+pydantic-settings==2.15.0
+openpyxl==3.1.5
+reportlab==5.0.1
 
-PyJWT 
-google-genai
-pytest-asyncio
+PyJWT==2.13.0
+google-genai==2.20.0
 
 # database
-mysql-connector-python
-redis>=5.0.0
+mysql-connector-python==26.7.0
+redis==8.1.0
+
+# tests
+pytest==9.1.1
+pytest-asyncio==1.4.0

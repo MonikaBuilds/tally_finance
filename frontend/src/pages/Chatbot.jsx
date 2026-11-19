@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bot, Loader2, Send, User } from 'lucide-react'
 import PageHeader from '../components/layout/PageHeader'
 import { apiPost } from '../api/client'
+import { loadChatHistory, saveChatHistory } from '../utils/chatHistory'
 
 const SUGGESTIONS = [
   'What is my revenue this month?',
@@ -44,29 +45,37 @@ function getSelectedCompany() {
   return null
 }
 
+const WELCOME_MESSAGE = {
+  role: 'assistant',
+  content:
+    "Hi! How can I assist you today? Ask me about your Profit & Loss, " +
+    'receivables, payables, pending invoices, or any other report — ' +
+    "I'll pull the numbers straight from Tally.",
+}
+
+function newSessionId() {
+  try {
+    return typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `sess_${Date.now()}`
+  } catch {
+    return `sess_${Date.now()}`
+  }
+}
+
 function Chatbot() {
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content:
-        "Hi! How can I assist you today? Ask me about your Profit & Loss, " +
-        'receivables, payables, pending invoices, or any other report — ' +
-        "I'll pull the numbers straight from Tally.",
-    },
-  ])
+  // Restore this tab's conversation for the selected company, so leaving
+  // the page does not lose the chat or break follow-up questions.
+  const [stored] = useState(() => loadChatHistory(getSelectedCompany()))
+
+  const [messages, setMessages] = useState(
+    () => stored?.messages?.length ? stored.messages : [WELCOME_MESSAGE],
+  )
 
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [sessionId] = useState(() => {
-    try {
-      return typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `sess_${Date.now()}`
-    } catch {
-      return `sess_${Date.now()}`
-    }
-  })
+  const [sessionId] = useState(() => stored?.sessionId || newSessionId())
 
   const bottomRef = useRef(null)
 
@@ -75,6 +84,10 @@ function Chatbot() {
       behavior: 'smooth',
     })
   }, [messages, loading])
+
+  useEffect(() => {
+    saveChatHistory(getSelectedCompany(), sessionId, messages)
+  }, [messages, sessionId])
 
   async function sendMessage(text) {
     const trimmed = text.trim()

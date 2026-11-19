@@ -47,9 +47,7 @@
    <COLLECTION ISMSTDEPTYPE="Yes" MSTDEPTYPE="8">
     <LEDGER NAME="Apex Office Solutions" RESERVEDNAME="">
      <PARENT TYPE="String">Sundry Creditors</PARENT>
-     <CLOSINGBALANCE TYPE="Amount">939900.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Sundry Creditors</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-3308100.00</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Apex Office Solutions</NAME>
@@ -60,8 +58,6 @@
     <LEDGER NAME="Bajaj Finance" RESERVEDNAME="">
      <PARENT TYPE="String">Loans (Liability)</PARENT>
      <CLOSINGBALANCE TYPE="Amount">500000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Loans (Liability)</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Bajaj Finance</NAME>
@@ -72,8 +68,6 @@
     <LEDGER NAME="Cash" RESERVEDNAME="">
      <PARENT TYPE="String">Cash-in-Hand</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-10000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Cash-in-Hand</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Cash</NAME>
@@ -83,9 +77,7 @@
     </LEDGER>
     <LEDGER NAME="Cost of Sub- Contracting" RESERVEDNAME="">
      <PARENT TYPE="String">Direct Expenses</PARENT>
-     <CLOSINGBALANCE TYPE="Amount">-6305000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Direct Expenses</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-2305000.00</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Cost of Sub- Contracting</NAME>
@@ -96,8 +88,6 @@
     <LEDGER NAME="Domestic Professional Services" RESERVEDNAME="">
      <PARENT TYPE="String">Sales Accounts</PARENT>
      <CLOSINGBALANCE TYPE="Amount">7410000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Sales Accounts</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Domestic Professional Services</NAME>
@@ -108,8 +98,6 @@
     <LEDGER NAME="Eagle Paradise Pvt. Ltd." RESERVEDNAME="">
      <PARENT TYPE="String">Sundry Debtors</PARENT>
      <CLOSINGBALANCE TYPE="Amount">616200.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Sundry Debtors</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Eagle Paradise Pvt. Ltd.</NAME>
@@ -120,8 +108,6 @@
     <LEDGER NAME="HDFC Bank" RESERVEDNAME="">
      <PARENT TYPE="String">Bank Accounts</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-3285000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Bank Accounts</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>HDFC Bank</NAME>
@@ -131,9 +117,7 @@
     </LEDGER>
     <LEDGER NAME="Input CGST" RESERVEDNAME="">
      <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
-     <CLOSINGBALANCE TYPE="Amount">-567450.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Duties &amp; Taxes</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-243450.00</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Input CGST</NAME>
@@ -143,9 +127,7 @@
     </LEDGER>
     <LEDGER NAME="Input SGST" RESERVEDNAME="">
      <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
-     <CLOSINGBALANCE TYPE="Amount">-567450.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Duties &amp; Taxes</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-243450.00</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Input SGST</NAME>
@@ -156,8 +138,6 @@
     <LEDGER NAME="Office Exp" RESERVEDNAME="">
      <PARENT TYPE="String">Indirect Expenses</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-50000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Indirect Expenses</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Office Exp</NAME>
@@ -168,8 +148,6 @@
     <LEDGER NAME="Office Rent Exp" RESERVEDNAME="">
      <PARENT TYPE="String">Indirect Expenses</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-200000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Indirect Expenses</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Office Rent Exp</NAME>
@@ -180,8 +158,6 @@
     <LEDGER NAME="Office Rent Paid" RESERVEDNAME="">
      <PARENT TYPE="String">Indirect Expenses</PARENT>
      <CLOSINGBALANCE TYPE="Amount"></CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Indirect Expenses</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Office Rent Paid</NAME>
@@ -192,8 +168,6 @@
     <LEDGER NAME="Output CGST" RESERVEDNAME="">
      <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
      <CLOSINGBALANCE TYPE="Amount">666900.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Duties &amp; Taxes</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Output CGST</NAME>
@@ -204,8 +178,6 @@
     <LEDGER NAME="Output SGST" RESERVEDNAME="">
      <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
      <CLOSINGBALANCE TYPE="Amount">666900.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Duties &amp; Taxes</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Output SGST</NAME>
@@ -215,9 +187,7 @@
     </LEDGER>
     <LEDGER NAME="Profit &amp; Loss A/c" RESERVEDNAME="Profit &amp; Loss A/c">
      <PARENT TYPE="String">&#4; Primary</PARENT>
-     <CLOSINGBALANCE TYPE="Amount">-265000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">&#4; Primary</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-519053.47</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Profit &amp; Loss A/c</NAME>
@@ -228,8 +198,6 @@
     <LEDGER NAME="Rent Payable" RESERVEDNAME="">
      <PARENT TYPE="String">Provisions</PARENT>
      <CLOSINGBALANCE TYPE="Amount">200000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Provisions</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Rent Payable</NAME>
@@ -239,9 +207,7 @@
     </LEDGER>
     <LEDGER NAME="Software" RESERVEDNAME="">
      <PARENT TYPE="String">Purchase Accounts</PARENT>
-     <CLOSINGBALANCE TYPE="Amount"></CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Purchase Accounts</CHATPARENTGROUP>
+     <CLOSINGBALANCE TYPE="Amount">-400000.00</CLOSINGBALANCE>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Software</NAME>
@@ -252,8 +218,6 @@
     <LEDGER NAME="Software- Installment" RESERVEDNAME="">
      <PARENT TYPE="String">Sundry Creditors</PARENT>
      <CLOSINGBALANCE TYPE="Amount"></CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Sundry Creditors</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Software- Installment</NAME>
@@ -264,8 +228,6 @@
     <LEDGER NAME="Sweeper Salary" RESERVEDNAME="">
      <PARENT TYPE="String">Indirect Expenses</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-5000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Indirect Expenses</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Sweeper Salary</NAME>
@@ -276,8 +238,6 @@
     <LEDGER NAME="Sweeper Salary Payable" RESERVEDNAME="">
      <PARENT TYPE="String">Provisions</PARENT>
      <CLOSINGBALANCE TYPE="Amount">5000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Provisions</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Sweeper Salary Payable</NAME>
@@ -288,8 +248,6 @@
     <LEDGER NAME="Travelling Expense-" RESERVEDNAME="">
      <PARENT TYPE="String">Indirect Expenses</PARENT>
      <CLOSINGBALANCE TYPE="Amount">-15000.00</CLOSINGBALANCE>
-     <OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE>
-     <CHATPARENTGROUP TYPE="String">Indirect Expenses</CHATPARENTGROUP>
      <LANGUAGENAME.LIST>
       <NAME.LIST TYPE="String">
        <NAME>Travelling Expense-</NAME>

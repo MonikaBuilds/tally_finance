@@ -301,8 +301,8 @@ FLUSH PRIVILEGES;
 
 1. Open your browser and go to `http://localhost:5173` (or `http://<SERVER-IP>:5173`).
 2. Log in with the default Super Admin credentials:
-   * **Username**: `admin`
-   * **Password**: `Admin@2026!`
+   * **Username**: `admin` (or `INITIAL_ADMIN_USERNAME`)
+   * **Password**: the value you set in `INITIAL_ADMIN_PASSWORD`, or - if you left it empty - the one-time random password printed in the backend console on first start-up. Change it after signing in.
 3. Select your active Tally company from the top dropdown.
 4. Your live dashboard, P&L, Balance Sheet, Godown Monthly Summary, and AI Chat are now running!
 
@@ -363,7 +363,7 @@ A reference template is available in `backend/.env.example`.
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `INITIAL_ADMIN_USERNAME` | `admin` | Initial superadmin username |
-| `INITIAL_ADMIN_PASSWORD` | `Admin@2026!` | Initial superadmin password |
+| `INITIAL_ADMIN_PASSWORD` | *(random)* | Initial superadmin password. When empty, a random one-time password is generated and printed once in the backend console. |
 | `INITIAL_ADMIN_COMPANY` | `ABC Pvt Ltd` | **Must exactly match** your active open Tally company name |
 
 **AI Assistant (Optional)**
@@ -398,7 +398,7 @@ A reference template is available in `backend/.env.example`.
 When the backend starts against a clean database for the first time, it automatically creates the Super Admin account:
 
 * **Username**: `admin`
-* **Password**: `Admin@2026!`
+* **Password**: `INITIAL_ADMIN_PASSWORD`, or a random one-time password printed in the backend console when that is empty
 * **Roles**: `superadmin` and `admin` with all permissions (`financial`, `inventory`, `banking`, `tax`).
 
 > [!IMPORTANT]
@@ -531,6 +531,6 @@ tally_finance/
 ## 15. Security Notes
 
 * **Secret Hygiene**: Keep `.env` files private. Generate unique random strings for `CHAT_JWT_SECRET`.
-* **Change Default Passwords**: Immediately rotate the `admin` / `Admin@2026!` password upon initial login.
+* **Change Default Passwords**: Immediately change the initial `admin` password after the first login.
 * **Port Isolation**: Keep ports `9000` (Tally Prime), `3306` (MySQL), and `6379` (Redis) bound strictly to `127.0.0.1`. Never expose them to the public internet.
 * **Database Backups**: Schedule regular backups of MySQL (`mysqldump`). All users, permissions, and organizations reside in MySQL.

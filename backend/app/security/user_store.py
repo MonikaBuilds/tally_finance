@@ -79,7 +79,7 @@ def bootstrap_initial_admin() -> str | None:
 
     Reads configuration from environment variables:
     - INITIAL_ADMIN_USERNAME (default: 'admin')
-    - INITIAL_ADMIN_PASSWORD (default: 'Admin@2026!')
+    - INITIAL_ADMIN_PASSWORD (random one-time password when unset)
     - INITIAL_ADMIN_COMPANY (default: 'ABC Pvt Ltd')
     - INITIAL_ADMIN_ORG_ID (default: 'e7747b1f-36c9-4ea1-85d9-965f5c55d679')
 
@@ -127,7 +127,15 @@ def bootstrap_initial_admin() -> str | None:
         connection.close()
 
     admin_username = os.getenv("INITIAL_ADMIN_USERNAME", "admin").strip() or "admin"
-    admin_password = os.getenv("INITIAL_ADMIN_PASSWORD", "Admin@2026!").strip() or "Admin@2026!"
+    admin_password = os.getenv("INITIAL_ADMIN_PASSWORD", "").strip()
+    generated_password = False
+
+    if not admin_password or admin_password == "Admin@2026!":
+        # Never bootstrap with the password published in the README.
+        import secrets
+
+        admin_password = secrets.token_urlsafe(12)
+        generated_password = True
     admin_company = os.getenv("INITIAL_ADMIN_COMPANY", "ABC Pvt Ltd").strip() or "ABC Pvt Ltd"
 
     user_id = create_user(
@@ -154,6 +162,15 @@ def bootstrap_initial_admin() -> str | None:
         admin_username,
         user_id,
     )
+
+    if generated_password:
+        # Shown once, on the server console only, at first start-up.
+        logger.warning(
+            "Initial admin password for '%s' was generated: %s  "
+            "Sign in and change it immediately.",
+            admin_username,
+            admin_password,
+        )
     return user_id
 
 
@@ -276,6 +293,8 @@ def delete_user(
 
         connection.commit()
 
+        _invalidate_auth_state(clean_user_id)
+
         return deleted
 
     except Exception:
@@ -327,6 +346,8 @@ def set_user_active_status(
         )
 
         connection.commit()
+
+        _invalidate_auth_state(clean_user_id)
 
         if not is_active:
             from app.security.refresh_store import revoke_all_user_sessions
@@ -553,6 +574,76 @@ def user_belongs_to_organization(
         cursor.close()
         connection.close()
 
+@dataclass(frozen=True)
+class UserAccessState:
+    is_active: bool
+    organization_id: str | None
+    companies: tuple[str, ...]
+
+
+def get_user_access_state(
+    user_id: str,
+) -> UserAccessState | None:
+    """
+    Current account status, organization and company list in ONE query.
+
+    Used on every authenticated request so that deactivation and company
+    changes take effect immediately instead of when the token expires.
+    """
+    clean_user_id = (user_id or "").strip()
+
+    if not clean_user_id:
+        return None
+
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                u.is_active,
+                u.organization_id,
+                uc.company_name
+            FROM users u
+            LEFT JOIN user_companies uc
+                ON uc.user_id = u.user_id
+            WHERE u.user_id = %s
+            ORDER BY uc.company_name
+            """,
+            (clean_user_id,),
+        )
+
+        rows = cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+    if not rows:
+        return None
+
+    return UserAccessState(
+        is_active=bool(rows[0]["is_active"]),
+        organization_id=rows[0]["organization_id"],
+        companies=tuple(
+            row["company_name"]
+            for row in rows
+            if row["company_name"]
+        ),
+    )
+
+
+def _invalidate_auth_state(user_id: str | None = None) -> None:
+    """Drop the per-request auth cache after an account change."""
+    try:
+        from app.security.auth import invalidate_user_state
+
+        invalidate_user_state(user_id)
+    except Exception:
+        logger.debug("Auth state cache invalidation skipped", exc_info=True)
+
+
 def get_user_companies(
     user_id: str,
 ) -> tuple[str, ...]:
@@ -648,6 +739,7 @@ def set_user_companies(
         # Invalidate active refresh sessions so client tokens are synchronized
         from app.security.refresh_store import revoke_all_user_sessions
         revoke_all_user_sessions(clean_user_id)
+        _invalidate_auth_state(clean_user_id)
 
         return tuple(clean_companies)
 

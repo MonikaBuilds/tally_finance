@@ -46,12 +46,16 @@ DATE_ARGUMENTS = {
     "previous_to_date",
 }
 
-# These tools summarize or combine Tally rows in application code. Keep
-# this explicit so callers and the UI can distinguish those figures from
-# values returned as rows in a Tally report.
+# Derived-figure policy
+# ---------------------
+# Native tools return amounts exactly as a Tally report prints them
+# (report footers, group/ledger closing balances, Nett Profit rows).
+# The tools listed here show a figure Tally does not print as one number
+# (a ranking, an ageing bucket, a comparison, a cash-flow or GST net,
+# an expense total). Their answers are always labelled as derived so a
+# user never mistakes them for a native Tally total.
 APPLICATION_AGGREGATION_TOOLS = {
-    "get_receivables",
-    "get_payables",
+    "get_expenses",
     "get_aged_receivables",
     "get_aged_payables",
     "get_pending_invoices",
@@ -59,13 +63,10 @@ APPLICATION_AGGREGATION_TOOLS = {
     "get_highest_payable",
     "get_overdue_receivables",
     "get_overdue_payables",
-    "get_financial_summary",
     "get_party_outstanding_summary",
     "get_outstanding_summary",
     "get_top_receivables",
     "get_top_payables",
-    "get_cash_balance",
-    "get_bank_balance",
     "get_bank_transactions",
     "get_customer_statement",
     "get_supplier_statement",

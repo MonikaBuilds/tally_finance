@@ -93,13 +93,10 @@ def login(
     through an HttpOnly cookie.
     """
 
-    result = authenticate_user(
-        request.username,
-        request.password,
-    )
-
     # Brute-force protection: refuse once this address+username has used
-    # up its failed attempts inside the configured window.
+    # up its failed attempts inside the configured window. This is checked
+    # BEFORE the (deliberately slow) password hash, so a blocked attacker
+    # cannot keep the server busy hashing guesses.
     client_host = (
         http_request.client.host if http_request.client else ""
     )
@@ -116,6 +113,11 @@ def login(
                 "Please wait and try again."
             ),
         )
+
+    result = authenticate_user(
+        request.username,
+        request.password,
+    )
 
     if result is None:
         login_rate_limiter.register_failure(

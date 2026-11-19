@@ -193,6 +193,8 @@ async def test_gemini_timeout_uses_configured_openrouter_fallback(monkeypatch):
     monkeypatch.setattr(gemini_client, "FALLBACK_MODEL_NAME", None)
     monkeypatch.setattr(gemini_client, "OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(gemini_client, "OPENROUTER_MODEL", "test/model")
+    # The fallback is opt-in; this test is about the configured case.
+    monkeypatch.setattr(gemini_client, "OPENROUTER_FALLBACK_ENABLED", True)
     monkeypatch.setattr(gemini_client.httpx, "AsyncClient", FakeHttpClient)
 
     result = await gemini_client.select_tool("Show trial balance")
