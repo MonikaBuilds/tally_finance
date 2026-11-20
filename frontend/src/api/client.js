@@ -83,6 +83,19 @@ function getCookie(name) {
 }
 
 
+// Clear the readable CSRF cookie on sign-out / session expiry.
+//
+// The access and refresh tokens are HttpOnly and are cleared by the
+// backend; only this non-secret cookie is reachable from JavaScript.
+// The name comes from configuration, so a renamed cookie is still
+// cleared here instead of leaving a stale token behind.
+export function clearCsrfCookie() {
+  document.cookie =
+    `${encodeURIComponent(CSRF_COOKIE_NAME)}=; ` +
+    "Max-Age=0; path=/; SameSite=Lax";
+}
+
+
 // Users assigned to several companies must name one on every report
 // request, so the selected company is attached here once instead of
 // in each page.

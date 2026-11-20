@@ -130,7 +130,9 @@ function Dashboard() {
   const financialYear = useCompanyFinancialYear()
   const [filter, setFilter] = useState(getInitialDashboardFilter)
 
-  // Align initial dashboard date range with the company's active financial year in Tally
+  // Align initial dashboard date range with the company's active financial year in Tally.
+  // The company's books period is fetched asynchronously, so the filter can
+  // only be aligned once it arrives.
   useEffect(() => {
     if (financialYear.ready && financialYear.from && financialYear.to) {
       const saved = sessionStorage.getItem('tfi.dashboard.date_filter')
@@ -140,6 +142,7 @@ function Dashboard() {
           toDate: financialYear.to,
           selectedPreset: 'fy',
         }
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setFilter(companyFilter)
         saveDashboardFilter(companyFilter)
       }

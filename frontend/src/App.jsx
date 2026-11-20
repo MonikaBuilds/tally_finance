@@ -37,7 +37,7 @@ import Login from './pages/Login'
 const UserManagement = lazy(() => import('./pages/UserManagement'))
 const ReportsIndex = lazy(() => import('./pages/ReportsIndex'))
 
-import { apiGet, apiPost } from './api/client'
+import { apiGet, apiPost, clearCsrfCookie } from './api/client'
 import { clearBrowserCache } from './utils/browserCache'
 import { clearChatHistory } from './utils/chatHistory'
 
@@ -95,9 +95,9 @@ function App() {
 
         sessionStorage.removeItem('chat_user')
         sessionStorage.removeItem('selected_company')
-        // Explicitly clear non-HttpOnly CSRF cookie on client side as well
-    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
-    clearBrowserCache()
+        // Explicitly clear the non-HttpOnly CSRF cookie on the client as well.
+        clearCsrfCookie()
+        clearBrowserCache()
 
         setCurrentUser(null)
         setIsAuthenticated(false)
@@ -122,9 +122,9 @@ function App() {
       sessionStorage.removeItem('chat_user')
       sessionStorage.removeItem('selected_company')
       sessionStorage.removeItem('tfi.dashboard.date_filter')
-      // Explicitly clear non-HttpOnly CSRF cookie on client side as well
-    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
-    clearBrowserCache()
+      // Explicitly clear the non-HttpOnly CSRF cookie on the client as well.
+      clearCsrfCookie()
+      clearBrowserCache()
       setCurrentUser(null)
       setIsAuthenticated(false)
     }
@@ -171,8 +171,8 @@ function App() {
       error
     )
   } finally {
-    // Explicitly clear non-HttpOnly CSRF cookie on client side as well
-    document.cookie = 'csrf_token=; Max-Age=0; path=/; SameSite=Lax'
+    // Explicitly clear the non-HttpOnly CSRF cookie on the client as well.
+    clearCsrfCookie()
     clearBrowserCache()
     sessionStorage.removeItem('chat_user')
     sessionStorage.removeItem('selected_company')

@@ -1,5 +1,4 @@
-import { useLocation, useNavigate } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
+import { useLocation } from 'react-router'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'
@@ -218,7 +217,6 @@ const materialMovement = (voucherType) => {
 
 function InventoryVoucherDetail() {
   const location = useLocation()
-  const navigate = useNavigate()
   const params = new URLSearchParams(location.search)
 
   const voucherType = params.get('voucher_type') || ''

@@ -100,6 +100,8 @@ function UserManagement() {
 
 
   useEffect(() => {
+    // Loads the admin lists once on mount; the results arrive async.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAdminData()
   }, [])
 

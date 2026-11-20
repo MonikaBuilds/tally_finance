@@ -91,6 +91,9 @@ function Ledger() {
     const linkedFrom = searchParams.get('from_date') || ''
     const linkedTo = searchParams.get('to_date') || ''
 
+    // The ledger list arrives from Tally asynchronously; when a deep link
+    // names a ledger, the form fields must be filled from it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLedgerName(match.name)
     setFromDate(linkedFrom)
     setToDate(linkedTo)

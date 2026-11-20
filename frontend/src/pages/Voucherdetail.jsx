@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { useSearchParams, useNavigate } from 'react-router'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { useSearchParams } from 'react-router'
+import { RefreshCw } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 
@@ -126,7 +126,6 @@ function BillAllocations({ allocations }) {
  */
 function VoucherDetail() {
   const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
   const [refreshCount, setRefreshCount] = useState(0)
 
   const voucherType = searchParams.get('voucher_type') || ''

@@ -1,5 +1,4 @@
 import { useNavigate, useParams, useSearchParams } from 'react-router'
-import { ArrowLeft } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
 import PageHeader from '../components/layout/PageHeader'

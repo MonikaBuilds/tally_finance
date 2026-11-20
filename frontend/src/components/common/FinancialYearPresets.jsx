@@ -11,7 +11,7 @@ import { financialYearRange } from '../../utils/format'
  * `from` / `to` are the dates currently applied, only used to mark the
  * button that matches them.
  */
-export function financialYearPresets(refDate = new Date()) {
+function financialYearPresets(refDate = new Date()) {
   const thisFy = financialYearRange(0, refDate)
   const lastFy = financialYearRange(-1, refDate)
 

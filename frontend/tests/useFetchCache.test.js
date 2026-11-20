@@ -185,7 +185,6 @@ test('useFetch caching: auth endpoints are never cached even if cache=true', () 
   clearBrowserCache()
 
   const authPath = '/auth/me'
-  const key = buildBrowserCacheKey(authPath)
 
   // Even if manually attempted, isCacheablePath blocks it
   assert.equal(isCacheablePath(authPath), false)
