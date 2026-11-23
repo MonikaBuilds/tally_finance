@@ -145,7 +145,10 @@ function VoucherDetail() {
     if (ledgerName) params.set('ledger_name', ledgerName)
 
     // "Refresh from Tally" bypasses both the browser and server caches.
-    if (refreshCount > 0) params.set('force_refresh', 'true')
+    if (refreshCount > 0) {
+      params.set('force_refresh', 'true')
+      params.set('refresh', String(refreshCount))
+    }
 
     return `/reports/voucher?${params.toString()}`
   }, [voucherType, voucherNumber, voucherDate, ledgerName, refreshCount])

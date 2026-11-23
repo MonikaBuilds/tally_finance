@@ -31,6 +31,8 @@ import { clearBrowserCache } from "../utils/browserCache";
 
 const SELECTED_COMPANY_KEY = "selected_company";
 
+const DOWNLOAD_URL_LIFETIME_MS = 60_000;
+
 
 // "*" is the development wildcard, not a real Tally company name.
 export function getSelectedCompany() {
@@ -248,6 +250,21 @@ async function refreshAuthentication() {
 
         return true;
       })
+      .catch((error) => {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("tfi:session-expired", {
+              detail: {
+                message:
+                  error?.message ||
+                  "Authentication session has expired.",
+              },
+            })
+          );
+        }
+
+        throw error;
+      })
       .finally(() => {
         refreshPromise = null;
       });
@@ -431,5 +448,7 @@ export async function downloadFile(
   link.click();
   link.remove();
 
-  window.URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(url);
+  }, DOWNLOAD_URL_LIFETIME_MS);
 }

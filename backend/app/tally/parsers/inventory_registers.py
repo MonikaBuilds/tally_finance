@@ -21,6 +21,7 @@ from app.tally.parsers.common import (
     _text,
     _first_text,
     format_tally_date,
+    date_number_key,
 )
 from app.tally.parsers.ledger import _inventory_entry_nodes
 from app.tally.parsers.inventory_summary import normalize_master_name
@@ -39,15 +40,25 @@ ORDER_REGISTERS = {"sales-orders", "purchase-orders"}
 
 
 def _quantity_and_unit(text: str) -> tuple[float, str]:
-    """' 15 NOS' -> (15.0, 'NOS'); '12.5 Kgs' -> (12.5, 'Kgs')."""
+    """' 15 NOS' -> (15.0, 'NOS'); '(-)5 NOS' -> (-5.0, 'NOS')."""
     text = (text or "").strip()
+
+    negative_marker = text.startswith("(-)")
+
+    if negative_marker:
+        text = text[3:].strip()
 
     match = re.match(r"^\s*([-+]?[\d,]*\.?\d+)\s*(.*)$", text)
 
     if not match:
         return 0.0, ""
 
-    return abs(to_float(match.group(1))), match.group(2).strip()
+    quantity = to_float(match.group(1))
+
+    if negative_marker and quantity > 0:
+        quantity = -quantity
+
+    return quantity, match.group(2).strip()
 
 
 def _is_yes(value: str) -> bool:
@@ -183,7 +194,7 @@ def build_voucher_register(register_key: str, vouchers: list[dict]) -> dict:
     is_order = register_key in ORDER_REGISTERS
     rows = []
 
-    for v in sorted(vouchers, key=lambda x: (x["date"] or "", x["voucher_number"])):
+    for v in sorted(vouchers, key=lambda x: (x["date"] or "", date_number_key(x["voucher_number"]))):
         entries = v["entries"]
         items = list(dict.fromkeys(e["stock_item"] for e in entries))
 
@@ -199,7 +210,7 @@ def build_voucher_register(register_key: str, vouchers: list[dict]) -> dict:
             return sum(
                 e["quantity"]
                 for e in entries
-                if (e["inward"] if e["inward"] is not None else False) == inward
+                if e["inward"] == inward
             )
 
         row = {

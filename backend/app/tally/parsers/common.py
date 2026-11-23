@@ -428,6 +428,16 @@ def _first_text(
 # DATE HELPER
 # ============================================================
 
+def date_number_key(number: str | None) -> tuple:
+    """
+    Sort key for a Tally voucher number: numeric order where the number is
+    numeric, so 9 < 10 < 11 rather than text order 10 < 11 < 9.
+    """
+    text = str(number or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return (0, int(digits), text) if digits else (1, 0, text.casefold())
+
+
 def format_tally_date(
     value: str | None,
 ):

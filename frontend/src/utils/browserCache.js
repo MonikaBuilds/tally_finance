@@ -10,6 +10,7 @@ const MEMORY_CACHE = new Map()
 const STALE_CACHE_ENTRIES = new Map()
 const STORAGE_PREFIX = 'tfi.bcache:'
 const DEFAULT_TTL_MS = 60000 // 60 seconds (1 minute)
+const MAX_MEMORY_ENTRIES = 50
 const SELECTED_COMPANY_KEY = 'selected_company'
 const CACHE_STATUS_EVENT = 'tfi:browser-cache-status'
 
@@ -87,8 +88,7 @@ export function isCacheablePath(path) {
     return true
   }
 
-  // Allow general read-only GET queries that do not mutate state
-  return !clean.startsWith('/admin')
+  return false
 }
 
 /**
@@ -196,6 +196,18 @@ export function getBrowserCache(key) {
  */
 export function setBrowserCache(key, data, ttlMs = DEFAULT_TTL_MS) {
   if (!key || data === undefined || ttlMs <= 0) return
+
+  if (MEMORY_CACHE.size >= MAX_MEMORY_ENTRIES) {
+    const cutoff = Date.now()
+    for (const [existingKey, entry] of MEMORY_CACHE) {
+      if (!entry || !entry.expiresAt || cutoff > entry.expiresAt) {
+        MEMORY_CACHE.delete(existingKey)
+      }
+    }
+    while (MEMORY_CACHE.size >= MAX_MEMORY_ENTRIES) {
+      MEMORY_CACHE.delete(MEMORY_CACHE.keys().next().value)
+    }
+  }
 
   const now = Date.now()
   const entry = {

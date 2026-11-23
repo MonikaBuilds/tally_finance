@@ -713,7 +713,10 @@ def parse_stock_movement(xml_text: str):
             )
 
             # Build a key from existing Tally fields so duplicate
-            # entries are not returned twice.
+            # entries are not returned twice. Godown, batch and direction
+            # are part of the identity: without them, two movements of the
+            # same item and quantity from different godowns collapse into
+            # one and the second disappears from the movement reports.
             key = (
                 guid,
                 voucher_date,
@@ -723,6 +726,9 @@ def parse_stock_movement(xml_text: str):
                 quantity,
                 amount,
                 tracking_number,
+                godown,
+                batch,
+                is_deemed_positive,
             )
 
             if key in seen:
@@ -886,6 +892,34 @@ def parse_inventory_register(xml_text: str):
                 )
             )
 
+            entry_godown = _first_text(
+                entry,
+                "GODOWNNAME",
+                "GODOWN",
+            )
+
+            if not entry_godown:
+                entry_godown = _first_text(
+                    entry.find(".//BATCHALLOCATIONS.LIST"),
+                    "GODOWNNAME",
+                    "GODOWN",
+                )
+
+            entry_batch = _first_text(
+                entry,
+                "BATCHNAME",
+                "BATCH",
+            )
+
+            if not entry_batch:
+                entry_batch = _first_text(
+                    entry.find(".//BATCHALLOCATIONS.LIST"),
+                    "BATCHNAME",
+                    "BATCH",
+                )
+
+            entry_deemed = _text(entry, "ISDEEMEDPOSITIVE").strip().casefold()
+
             key = (
                 guid,
                 voucher_date,
@@ -894,6 +928,9 @@ def parse_inventory_register(xml_text: str):
                 stock_item,
                 quantity,
                 amount,
+                entry_godown,
+                entry_batch,
+                entry_deemed,
             )
 
             if key in seen:
@@ -1641,7 +1678,7 @@ def _tally_amount(text, *, debit: bool):
 
 def parse_item_monthly_summary(
     xml_text: str,
-    start_year: int = 2025,
+    start_year: int | None = None,
 ) -> list[dict]:
     """
     Parse Tally's native Item Monthly Summary XML response.
@@ -1659,6 +1696,20 @@ def parse_item_monthly_summary(
     stkinfos = root.findall(".//DSPSTKINFO")
 
     import calendar
+    from datetime import date as _date
+
+    if start_year is None:
+        start_year = _date.today().year
+
+    if len(periods) != len(stkinfos):
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Item Monthly Summary: %d period nodes but %d stock-info nodes; "
+            "pairing by position may be offset.",
+            len(periods),
+            len(stkinfos),
+        )
 
     year = start_year
     previous_month = None

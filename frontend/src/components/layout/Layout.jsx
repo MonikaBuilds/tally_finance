@@ -47,7 +47,9 @@ function initialCompany(companies) {
   const stored = getSelectedCompany()
   const company = companies.includes(stored) ? stored : companies[0] || null
 
-  setSelectedCompany(company)
+  if (company !== stored) {
+    setSelectedCompany(company)
+  }
 
   return company
 }

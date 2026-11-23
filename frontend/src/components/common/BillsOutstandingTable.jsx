@@ -49,7 +49,10 @@ function onEnterOrSpace(event, action) {
  */
 function VoucherRows({ transaction, party, onOpen }) {
   const query = voucherQuery(transaction, party)
-  const { data: response } = useFetch(query ? `/reports/voucher?${query}` : null)
+  const { data: response } = useFetch(
+    query ? `/reports/voucher?${query}` : null,
+    { queue: true }
+  )
 
   const items =
     response?.success && Array.isArray(response?.voucher?.items)

@@ -11,8 +11,9 @@ import Card from '../components/common/Card'
 import DataTable from '../components/common/DataTable'
 import ExportButtons from '../components/common/ExportButtons'
 import FinancialYearPresets from '../components/common/FinancialYearPresets'
-import { formatQuantity, financialYearRange } from '../utils/format'
+import { formatQuantity } from '../utils/format'
 import { formatAmount } from '../utils/stockFormat'
+import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
 
 // ------------------------------------------------------------------
 // Shared bits
@@ -222,10 +223,10 @@ function StockSummaryTab() {
   // item's monthly summary returns to the same period. With no dates it
   // is the current financial year, worked out from today's date.
   const [searchParams, setSearchParams] = useSearchParams()
-  const thisFy = useMemo(() => financialYearRange(0), [])
+  const companyYear = useCompanyFinancialYear()
 
-  const fromDate = searchParams.get('from') || thisFy.from
-  const toDate = searchParams.get('to') || thisFy.to
+  const fromDate = searchParams.get('from') || companyYear.from
+  const toDate = searchParams.get('to') || companyYear.to
 
   // Edits made in the date inputs but not applied yet.
   const [draft, setDraft] = useState({ from: null, to: null })

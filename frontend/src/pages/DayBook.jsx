@@ -18,7 +18,10 @@ const amountFormat = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 2,
 })
 
-const formatAmount = (value) => (Number(value) ? amountFormat.format(Number(value)) : '')
+const formatAmount = (value) =>
+  value === null || value === undefined || value === ''
+    ? ''
+    : amountFormat.format(Number(value))
 
 // Tally's exception lists (Ctrl+J) plus the regular list.
 const VIEW_OPTIONS = [

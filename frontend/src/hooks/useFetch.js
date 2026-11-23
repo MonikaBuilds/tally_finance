@@ -7,6 +7,7 @@ import {
   setBrowserCache,
   updateBrowserCacheStatus,
 } from '../utils/browserCache'
+import { withRequestSlot } from '../utils/requestQueue'
 
 export function useFetch(path, options = {}) {
   const {
@@ -14,6 +15,7 @@ export function useFetch(path, options = {}) {
     cache = true,
     forceRefresh = false,
     ttlMs,
+    queue = false,
   } = options
 
   const isCacheEnabled = Boolean(cache !== false && isCacheablePath(path))
@@ -28,10 +30,12 @@ export function useFetch(path, options = {}) {
     : null
   const cached = cacheKey ? getBrowserCache(cacheKey) : null
 
+  const requestKey = cacheKey || path
+
   const [state, setState] = useState(() => {
     if (!path) {
       return {
-        path,
+        key: requestKey,
         data: null,
         loading: false,
         error: null,
@@ -42,7 +46,7 @@ export function useFetch(path, options = {}) {
     }
     if (cached && cached.data !== undefined) {
       return {
-        path,
+        key: requestKey,
         data: cached.data,
         loading: false,
         error: null,
@@ -52,7 +56,7 @@ export function useFetch(path, options = {}) {
       }
     }
     return {
-      path,
+      key: requestKey,
       data: null,
       loading: true,
       error: null,
@@ -93,9 +97,14 @@ export function useFetch(path, options = {}) {
       }, timeoutMs)
     }
 
-    apiGet(path, {
-      signal: controller.signal,
-    })
+    const request = () =>
+      apiGet(path, {
+        signal: controller.signal,
+      })
+
+    const pending = queue ? withRequestSlot(request) : request()
+
+    pending
       .then((result) => {
         if (!ignore) {
           const serverStale = Boolean(
@@ -115,7 +124,7 @@ export function useFetch(path, options = {}) {
             setBrowserCache(cacheKey, result, ttlMs)
           }
           setState({
-            path,
+            key: requestKey,
             data: result,
             loading: false,
             error: null,
@@ -151,7 +160,7 @@ export function useFetch(path, options = {}) {
             refreshing: false,
           })
           setState({
-            path,
+            key: requestKey,
             data: currentCached.data,
             loading: false,
             error: null,
@@ -164,7 +173,7 @@ export function useFetch(path, options = {}) {
 
         updateBrowserCacheStatus(reportStatusKey, null)
         setState({
-          path,
+          key: requestKey,
           data: null,
           loading: false,
           error: message,
@@ -187,7 +196,7 @@ export function useFetch(path, options = {}) {
       controller.abort()
       updateBrowserCacheStatus(reportStatusKey, null)
     }
-  }, [path, timeoutMs, forceRefresh, isForceRefresh, cacheKey, reportStatusKey, ttlMs, isCacheEnabled])
+  }, [path, timeoutMs, forceRefresh, isForceRefresh, cacheKey, requestKey, reportStatusKey, ttlMs, isCacheEnabled, queue])
 
   if (!path) {
     return {
@@ -200,7 +209,7 @@ export function useFetch(path, options = {}) {
     }
   }
 
-  if (state.path !== path) {
+  if (state.key !== requestKey) {
     if (cached && cached.data !== undefined) {
       return {
         data: cached.data,

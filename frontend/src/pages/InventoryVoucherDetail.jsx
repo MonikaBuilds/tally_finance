@@ -130,7 +130,10 @@ function physicalColumns() {
       key: 'amount',
       label: 'Amount',
       align: 'right',
-      render: (entry) => (entry.amount_value ? entryAmount(entry) : ''),
+      render: (entry) =>
+        entry.amount_value === null || entry.amount_value === undefined
+          ? ''
+          : entryAmount(entry),
     },
   ]
 }
