@@ -1,9 +1,8 @@
 import { formatAmount, isNumber } from './format'
+import { PieChart } from 'lucide-react'
 
 // Part-to-whole for the few P&L lines behind a total (2-3 rows), drawn
-// as share bars rather than a donut: short lists read better as bars.
-// Tally reports expense lines as negative (debit); the size of each
-// line is what is compared here, and the label says which side it is.
+// as financial schedule share meters.
 function BreakdownList({ items, tone, totalLabel }) {
   const rows = (items || [])
     .filter((item) => isNumber(item.value))
@@ -14,24 +13,37 @@ function BreakdownList({ items, tone, totalLabel }) {
   return (
     <div className="db-breakdown">
       <div className="db-breakdown-total">
-        <strong>{formatAmount(total)}</strong>
-        <span>{totalLabel}</span>
+        <div className="db-breakdown-total-top">
+          <PieChart size={14} className="db-breakdown-icon" aria-hidden="true" />
+          <span className="db-breakdown-caption">{totalLabel}</span>
+        </div>
+        <strong className="db-breakdown-sum">{formatAmount(total)}</strong>
       </div>
 
       <ul className="db-breakdown-list">
         {rows.map((row) => {
           const share = total > 0 ? (row.size / total) * 100 : 0
+          const shareFormatted = share.toFixed(share < 10 ? 1 : 0)
 
           return (
-            <li key={row.label}>
+            <li key={row.label} className="db-breakdown-item">
               <div className="db-breakdown-row">
-                <span className="db-breakdown-label">{row.label}</span>
-                <span className="db-breakdown-value">{formatAmount(row.size)}</span>
-                <span className="db-breakdown-share">{share.toFixed(share < 10 ? 1 : 0)}%</span>
+                <div className="db-breakdown-info">
+                  <span className="db-breakdown-dot" aria-hidden="true" />
+                  <span className="db-breakdown-label" title={row.label}>{row.label}</span>
+                </div>
+                <div className="db-breakdown-values">
+                  <span className="db-breakdown-value">{formatAmount(row.size)}</span>
+                  <span className="db-breakdown-share-badge">{shareFormatted}%</span>
+                </div>
               </div>
-              <span className="db-meter" aria-hidden="true">
-                <span className={`db-meter-fill db-meter-fill--${tone}`} style={{ width: `${share}%` }} />
-              </span>
+
+              <div className="db-meter" aria-hidden="true">
+                <div
+                  className={`db-meter-fill db-meter-fill--${tone}`}
+                  style={{ width: `${share}%` }}
+                />
+              </div>
             </li>
           )
         })}

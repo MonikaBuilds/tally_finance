@@ -11,6 +11,10 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  Scale,
+  LineChart,
+  Layers,
+  PieChart,
 } from 'lucide-react'
 
 import { useFetch } from '../hooks/useFetch'
@@ -50,14 +54,14 @@ const REPORT_NAMES = {
 // of them is non-zero, so they share a single card.
 function netResult(data) {
   if (isNumber(data.net_loss) && data.net_loss > 0) {
-    return { label: 'Net loss', key: 'net_loss', value: data.net_loss, tone: 'negative', icon: TrendingDown }
+    return { label: 'Net Loss', key: 'net_loss', value: data.net_loss, tone: 'negative', icon: TrendingDown }
   }
 
   if (isNumber(data.net_profit)) {
-    return { label: 'Net profit', key: 'net_profit', value: data.net_profit, tone: 'positive', icon: TrendingUp }
+    return { label: 'Net Profit', key: 'net_profit', value: data.net_profit, tone: 'positive', icon: TrendingUp }
   }
 
-  return { label: 'Net profit / loss', key: 'net_profit', value: null, tone: 'neutral', icon: TrendingUp }
+  return { label: 'Net Profit / Loss', key: 'net_profit', value: null, tone: 'neutral', icon: TrendingUp }
 }
 
 // "FY 2024-25" for a whole Indian financial year, otherwise the dates.
@@ -130,9 +134,7 @@ function Dashboard() {
   const financialYear = useCompanyFinancialYear()
   const [filter, setFilter] = useState(getInitialDashboardFilter)
 
-  // Align initial dashboard date range with the company's active financial year in Tally.
-  // The company's books period is fetched asynchronously, so the filter can
-  // only be aligned once it arrives.
+  // Align initial dashboard date range with company's active financial year in Tally.
   useEffect(() => {
     if (financialYear.ready && financialYear.from && financialYear.to) {
       const saved = sessionStorage.getItem('tfi.dashboard.date_filter')
@@ -149,23 +151,16 @@ function Dashboard() {
     }
   }, [financialYear.ready, financialYear.from, financialYear.to])
 
-  // Set only by the Refresh button, and cleared when the period
-  // changes: the backend then re-reads Tally instead of reusing
-  // answers from the last minute.
   const [refreshedAt, setRefreshedAt] = useState(0)
 
   const period = `from_date=${filter.fromDate}&to_date=${filter.toDate}` +
     (refreshedAt ? `&refresh=${refreshedAt}` : '')
 
-  // Headline figures come back in a few round trips; the monthly chart
-  // needs one Tally request per month, so it loads on its own.
   const { data: response, loading, error } = useFetch(
     `/dashboard/summary?${period}`,
     { timeoutMs: SUMMARY_TIMEOUT_MS },
   )
-  // Tally answers one request at a time, so the chart is only asked
-  // for once the headline figures are in; otherwise its per-month
-  // requests would queue ahead of them.
+
   const summaryReady = Boolean(response || error)
   const { data: monthly, loading: monthlyWaiting } = useFetch(
     summaryReady ? `/dashboard/monthly?${period}` : null,
@@ -174,10 +169,6 @@ function Dashboard() {
   const monthlyLoading = monthlyWaiting || (!summaryReady && !error)
   const { data: status, error: statusError } = useFetch('/tally/status', { timeoutMs: 10000 })
 
-
-
-  // Keep the last figures on screen (dimmed) while a new period loads,
-  // instead of blanking the whole page on every change.
   const [lastData, setLastData] = useState(null)
   if (response?.data && response.data !== lastData) {
     setLastData(response.data)
@@ -196,8 +187,6 @@ function Dashboard() {
   )
   const sources = data.metric_sources || {}
 
-  // The last known connection state shows at once on return visits,
-  // instead of "Checking Tally…" every time.
   const [knownStatus] = useState(readTallyStatus)
   const freshStatus = status?.connected
     ? 'connected'
@@ -207,13 +196,11 @@ function Dashboard() {
     try {
       sessionStorage.setItem(STATUS_KEY, freshStatus)
     } catch {
-      // Storage unavailable; the pill just starts at "Checking".
+      // Storage unavailable
     }
   }, [freshStatus])
   const tallyStatus = freshStatus || knownStatus || 'checking'
 
-  // Preset date ranges (7d, 1m, 3m, fy) always compute relative to today's date
-  // so clicking "7 days" selects the present 7 days (e.g. 19 Oct to 26 Oct).
   function changeFilter(next) {
     const nextFilter = typeof next === 'string' ? getPresetDateRange(next) : next
     setFilter(nextFilter)
@@ -226,7 +213,6 @@ function Dashboard() {
   const periodHint = `${formatDay(filter.fromDate)} – ${formatDay(filter.toDate)}`
   const asOnHint = `As on ${formatDay(filter.toDate)}`
   const net = netResult(data)
-
   const plPeriodHint = periodHint
 
   const kpi = (props) => (
@@ -238,8 +224,6 @@ function Dashboard() {
     />
   )
 
-  // The previous period only feeds the comparison lines; failing to
-  // read it is not worth a warning.
   const failedReports = Object.keys(data.report_errors || {})
     .filter((key) => !key.startsWith('previous_'))
     .map((key) => REPORT_NAMES[key] || key)
@@ -275,23 +259,25 @@ function Dashboard() {
         onRefresh={refresh}
         loading={loading}
         fetchedAt={data.fetched_at}
+        exportButtons={
+          <ExportButtons
+            basePath="/dashboard/export"
+            filenameBase="dashboard"
+            params={{ from_date: filter.fromDate, to_date: filter.toDate }}
+            disabled={loading}
+          />
+        }
       />
 
-      <div className="export-bar">
-        <ExportButtons
-          basePath="/dashboard/export"
-          filenameBase="dashboard"
-          params={{ from_date: filter.fromDate, to_date: filter.toDate }}
-          disabled={loading}
-        />
-      </div>
-
       {usingBackendStaleCache && !offline && (
-        <div className="db-alert" role="status">
+        <div className="db-alert db-alert--cache" role="status">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>Tally is unavailable. Showing saved dashboard figures.</span>
-          <button type="button" onClick={refresh}>
-            <RefreshCw size={14} aria-hidden="true" /> Try again
+          <div className="db-alert-content">
+            <p className="db-alert-title">Serving Cached Financial Figures</p>
+            <p className="db-alert-desc">Tally Prime is currently unreachable. Displaying cached records.</p>
+          </div>
+          <button type="button" className="db-alert-btn" onClick={refresh}>
+            <RefreshCw size={13} aria-hidden="true" /> Reconnect
           </button>
         </div>
       )}
@@ -299,11 +285,14 @@ function Dashboard() {
       {offline && (
         <div className="db-alert db-alert--error" role="alert">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>
-            <strong>{hasDashboardData ? 'Showing saved figures.' : 'Dashboard could not load.'}</strong> {error}
-          </span>
-          <button type="button" onClick={refresh}>
-            <RefreshCw size={14} aria-hidden="true" /> Try again
+          <div className="db-alert-content">
+            <p className="db-alert-title">
+              {hasDashboardData ? 'Displaying Offline Cached Records' : 'Unable to Connect to Tally Prime Gateway'}
+            </p>
+            <p className="db-alert-desc">{error}</p>
+          </div>
+          <button type="button" className="db-alert-btn" onClick={refresh}>
+            <RefreshCw size={13} aria-hidden="true" /> Retry Connection
           </button>
         </div>
       )}
@@ -313,137 +302,223 @@ function Dashboard() {
       )}
 
       {!offline && failedReports.length > 0 && (
-        <div className="db-alert" role="status">
+        <div className="db-alert db-alert--warning" role="status">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>
-            Tally did not return: {failedReports.join(', ')}. Figures that depend on
-            {failedReports.length === 1 ? ' it' : ' them'} are shown as unavailable.
-          </span>
-          <button type="button" onClick={refresh} disabled={loading}>
-            <RefreshCw size={14} aria-hidden="true" /> Retry
+          <div className="db-alert-content">
+            <p className="db-alert-title">Partial Tally Report Response</p>
+            <p className="db-alert-desc">
+              Tally Prime did not return data for: {failedReports.join(', ')}. Dependent financial metrics are marked unavailable.
+            </p>
+          </div>
+          <button type="button" className="db-alert-btn" onClick={refresh} disabled={loading}>
+            <RefreshCw size={13} aria-hidden="true" /> Retry
           </button>
         </div>
       )}
 
       <div className={`db-content${stale ? ' is-stale' : ''}`} aria-busy={loading}>
-        <section aria-labelledby="db-pl-heading">
-          <h2 id="db-pl-heading" className="db-section-title">
-            Profit &amp; loss <span>{plPeriodHint}</span>
-          </h2>
+        {/* Operating Performance (P&L) Section */}
+        <section className="db-section" aria-labelledby="db-pl-heading">
+          <div className="db-section-header">
+            <div className="db-section-title-wrap">
+              <span className="db-section-tag db-section-tag--pl">Operating Performance</span>
+              <h2 id="db-pl-heading" className="db-section-title">
+                Statement of Profit &amp; Loss
+              </h2>
+            </div>
+            <div className="db-section-meta">
+              <span className="db-section-period">{plPeriodHint}</span>
+              <span className="db-section-subtext">Accrual Accounting · Primary Books</span>
+            </div>
+          </div>
+
           <div className="db-kpi-grid">
             {kpi({
-              label: 'Sales', icon: ShoppingCart, tone: 'sales', sourceKey: 'total_sales',
-              value: data.total_sales, display: formatAmount(data.total_sales),
-              hint: 'Sales Accounts', to: '/reports/profit-loss',
+              label: 'Gross Sales / Turnover',
+              icon: ShoppingCart,
+              tone: 'sales',
+              tag: 'OPERATING REVENUE',
+              sourceKey: 'total_sales',
+              value: data.total_sales,
+              display: formatAmount(data.total_sales),
+              hint: 'Sales Accounts Ledger Group',
+              to: '/reports/profit-loss',
               delta: delta('total_sales', true),
             })}
             {kpi({
-              label: 'Purchases', icon: Receipt, tone: 'purchases', sourceKey: 'total_purchases',
-              value: data.total_purchases, display: formatAmount(data.total_purchases),
-              hint: 'Purchase Accounts', to: '/reports/profit-loss',
+              label: 'Direct Purchases',
+              icon: Receipt,
+              tone: 'purchases',
+              tag: 'COST OF GOODS (COGS)',
+              sourceKey: 'total_purchases',
+              value: data.total_purchases,
+              display: formatAmount(data.total_purchases),
+              hint: 'Purchase Accounts Ledger Group',
+              to: '/reports/profit-loss',
               delta: delta('total_purchases', null),
             })}
             {kpi({
-              label: net.label, icon: net.icon, tone: net.tone, sourceKey: net.key,
-              value: net.value, display: formatAmount(net.value),
-              hint: 'As computed by Tally', to: '/reports/profit-loss',
+              label: net.label,
+              icon: net.icon,
+              tone: net.tone,
+              tag: net.tone === 'negative' ? 'NET DEFICIT' : 'NET SURPLUS',
+              sourceKey: net.key,
+              value: net.value,
+              display: formatAmount(net.value),
+              hint: 'Net P&L as computed by Tally Prime',
+              to: '/reports/profit-loss',
               delta: previous && netChange(data, previous, previousLabel),
             })}
           </div>
         </section>
 
-        <section aria-labelledby="db-position-heading">
-          <h2 id="db-position-heading" className="db-section-title">
-            Position <span>{asOnHint}</span>
-          </h2>
-          <div className="db-kpi-grid">
+        {/* Financial Position & Working Capital Section */}
+        <section className="db-section" aria-labelledby="db-position-heading">
+          <div className="db-section-header">
+            <div className="db-section-title-wrap">
+              <span className="db-section-tag db-section-tag--position">Balance Sheet &amp; Liquidity</span>
+              <h2 id="db-position-heading" className="db-section-title">
+                Financial Position &amp; Working Capital
+              </h2>
+            </div>
+            <div className="db-section-meta">
+              <span className="db-section-period">{asOnHint}</span>
+              <span className="db-section-subtext">Closing Ledger Balances · Realizable Values</span>
+            </div>
+          </div>
+
+          <div className="db-kpi-grid db-kpi-grid--six">
             {kpi({
-              label: 'Receivables', icon: ArrowDownLeft, tone: 'neutral', sourceKey: 'receivables',
-              value: data.receivables, display: formatAmount(data.receivables),
+              label: 'Trade Receivables',
+              icon: ArrowDownLeft,
+              tone: 'neutral',
+              tag: 'CURRENT ASSET',
+              sourceKey: 'receivables',
+              value: data.receivables,
+              display: formatAmount(data.receivables),
               hint: data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.receivables.to_date)}`
-                : 'Pending bills receivable',
+                : 'Pending customer bills receivable',
               to: '/reports/receivables',
             })}
             {kpi({
-              label: 'Payables', icon: ArrowUpRight, tone: 'neutral', sourceKey: 'payables',
-              value: data.payables, display: formatAmount(data.payables),
+              label: 'Trade Payables',
+              icon: ArrowUpRight,
+              tone: 'neutral',
+              tag: 'CURRENT LIABILITY',
+              sourceKey: 'payables',
+              value: data.payables,
+              display: formatAmount(data.payables),
               hint: data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.payables.to_date)}`
-                : 'Pending bills payable',
+                : 'Pending vendor bills payable',
               to: '/reports/payables',
             })}
             {kpi({
-              label: 'Cash in hand', icon: Wallet, tone: 'neutral', sourceKey: 'cash_in_hand',
-              value: data.cash_in_hand, display: formatBalance(data.cash_in_hand),
-              hint: 'Cash-in-Hand group', to: '/reports/balance-sheet',
+              label: 'Cash in Hand',
+              icon: Wallet,
+              tone: 'cash',
+              tag: 'LIQUID ASSET (DR)',
+              sourceKey: 'cash_in_hand',
+              value: data.cash_in_hand,
+              display: formatBalance(data.cash_in_hand),
+              hint: 'Cash-in-Hand physical ledger balances',
+              to: '/reports/balance-sheet',
             })}
             {kpi({
-              label: 'Bank balance', icon: Landmark, tone: 'neutral', sourceKey: 'bank_balance',
-              value: data.bank_balance, display: formatBalance(data.bank_balance),
-              hint: 'Bank Accounts group', to: '/reports/balance-sheet',
+              label: 'Bank Accounts',
+              icon: Landmark,
+              tone: 'bank',
+              tag: 'LIQUID ASSET (DR)',
+              sourceKey: 'bank_balance',
+              value: data.bank_balance,
+              display: formatBalance(data.bank_balance),
+              hint: 'Total commercial bank closing balances',
+              to: '/reports/balance-sheet',
             })}
             {kpi({
-              label: 'GST payable', icon: Percent, tone: 'neutral', sourceKey: 'gst_payable',
-              value: data.gst_payable, display: formatAmount(data.gst_payable),
-              hint: 'Output GST less input credit', to: '/reports/trial-balance',
+              label: 'Net GST Liability',
+              icon: Percent,
+              tone: 'tax',
+              tag: 'INDIRECT STATUTORY',
+              sourceKey: 'gst_payable',
+              value: data.gst_payable,
+              display: formatAmount(data.gst_payable),
+              hint: 'Output GST minus input tax credit',
+              to: '/reports/trial-balance',
             })}
             {kpi({
-              label: 'TDS payable', icon: Percent, tone: 'neutral', sourceKey: 'tds_payable',
-              value: data.tds_payable, display: formatAmount(data.tds_payable),
-              hint: 'TDS ledger credit balances', to: '/reports/trial-balance',
+              label: 'TDS Payable',
+              icon: Percent,
+              tone: 'tax',
+              tag: 'DIRECT WITHHOLDING',
+              sourceKey: 'tds_payable',
+              value: data.tds_payable,
+              display: formatAmount(data.tds_payable),
+              hint: 'Statutory TDS credit ledger balances',
+              to: '/reports/trial-balance',
             })}
           </div>
         </section>
 
+        {/* Monthly Trend & Treasury Cash/Bank Grid */}
         <div className="db-grid db-grid--wide">
           <Panel
-            title="Sales vs purchases"
+            title="Monthly Operating Trend: Sales vs Purchases"
+            badge="P&L Cash Flow"
+            icon={LineChart}
             subtitle={
               monthly?.data?.from_date && filter.fromDate !== monthly.data.from_date
-                ? `Monthly trend — ${formatDay(monthly.data.from_date)} – ${formatDay(monthly.data.to_date)} (Tally Books)`
+                ? `Monthly trajectory — ${formatDay(monthly.data.from_date)} – ${formatDay(monthly.data.to_date)} (Tally Books)`
                 : unverifiedMonths
-                  ? `${unverifiedMonths} of ${series.length} months not shown: Tally used different dates`
-                  : "By month, from Tally's Profit & Loss"
+                  ? `${unverifiedMonths} of ${series.length} months not plotted: Tally used differing fiscal bounds`
+                  : "Month-by-month financial volume from Tally's Profit & Loss statement"
             }
             to="/reports/profit-loss"
+            linkLabel="Open Statement"
             loading={monthlyLoading}
             empty={
               hasSeries ? null
                 : monthlyLoading ? 'loading'
-                  : offline ? 'Tally could not be reached.'
+                  : offline ? 'Tally Prime could not be reached.'
                     : unverifiedMonths === series.length && series.length
-                      ? 'Tally used different dates for every month of this period, so nothing is plotted.'
-                      : 'No sales or purchases in Tally for this period.'
+                      ? 'Tally used differing dates for every month of this period; no points could be plotted.'
+                      : 'No recorded sales or purchases in Tally Prime for this period.'
             }
           >
             <IncomeExpenseChart points={series} />
           </Panel>
 
           <Panel
-            title="Cash & bank"
+            title="Treasury Liquidity & Bank Holdings"
+            badge="Assets"
+            icon={Landmark}
             subtitle={asOnHint}
             to="/reports/balance-sheet"
+            linkLabel="Balance Sheet"
             loading={loading}
             empty={emptyText(
               Array.isArray(accounts) && accounts.length > 0,
-              Array.isArray(accounts) ? 'No cash or bank ledgers in Tally.' : sources.cash_in_hand?.message,
+              Array.isArray(accounts) ? 'No cash or bank ledgers found in Tally Prime.' : sources.cash_in_hand?.message,
             )}
           >
             <CashBankList accounts={accounts || []} />
           </Panel>
         </div>
 
+        {/* Working Capital Ageing Grid */}
         <div className="db-grid">
           <Panel
-            title="Receivables"
+            title="Trade Debtors (Receivables)"
+            badge="Asset Ageing"
+            icon={Layers}
             subtitle={
               data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.receivables.to_date)} (Tally Books)`
-                : 'Ageing and largest pending bills from customers'
+                : 'Customer ageing risk spectrum & largest unsettled invoices'
             }
             to="/reports/receivables"
-            linkLabel="View all"
+            linkLabel="All Receivables"
             loading={loading}
             empty={receivablesEmpty}
           >
@@ -452,14 +527,16 @@ function Dashboard() {
           </Panel>
 
           <Panel
-            title="Payables"
+            title="Trade Creditors (Payables)"
+            badge="Liability Ageing"
+            icon={Layers}
             subtitle={
               data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.payables.to_date)} (Tally Books)`
-                : 'Ageing and largest pending bills to suppliers'
+                : 'Supplier ageing obligations & largest due payables'
             }
             to="/reports/payables"
-            linkLabel="View all"
+            linkLabel="All Payables"
             loading={loading}
             empty={payablesEmpty}
           >
@@ -468,25 +545,32 @@ function Dashboard() {
           </Panel>
         </div>
 
+        {/* Schedule Breakdown Grid */}
         <div className="db-grid">
           <Panel
-            title="Income"
+            title="Operating Revenue Schedule"
+            badge="Income Schedule"
+            icon={PieChart}
             subtitle={periodHint}
             to="/reports/profit-loss"
+            linkLabel="View P&L"
             loading={loading}
-            empty={emptyText(Boolean(data.sales_breakdown?.length), 'No income lines in Tally for this period.')}
+            empty={emptyText(Boolean(data.sales_breakdown?.length), 'No operating income lines in Tally Prime for this period.')}
           >
-            <BreakdownList items={data.sales_breakdown} tone="sales" totalLabel="Sales and other income" />
+            <BreakdownList items={data.sales_breakdown} tone="sales" totalLabel="Total Operating Turnover" />
           </Panel>
 
           <Panel
-            title="Expenses"
+            title="Expenditure & Cost Schedule"
+            badge="Expense Schedule"
+            icon={PieChart}
             subtitle={periodHint}
             to="/reports/profit-loss"
+            linkLabel="View P&L"
             loading={loading}
-            empty={emptyText(Boolean(data.expense_breakdown?.length), 'No direct or indirect expenses in Tally for this period.')}
+            empty={emptyText(Boolean(data.expense_breakdown?.length), 'No direct or indirect expenses in Tally Prime for this period.')}
           >
-            <BreakdownList items={data.expense_breakdown} tone="purchases" totalLabel="Direct and indirect expenses" />
+            <BreakdownList items={data.expense_breakdown} tone="purchases" totalLabel="Total Direct & Indirect Costs" />
           </Panel>
         </div>
       </div>

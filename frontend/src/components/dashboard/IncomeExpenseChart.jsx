@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { formatAmount, formatCompact, isNumber } from './format'
 
 const SERIES = [
-  { key: 'income', label: 'Sales', className: 'db-bar--sales' },
-  { key: 'expense', label: 'Purchases', className: 'db-bar--purchases' },
+  { key: 'income', label: 'Gross Sales / Inflow', className: 'db-bar--sales' },
+  { key: 'expense', label: 'Purchases / Outflow', className: 'db-bar--purchases' },
 ]
 
 // Round the axis to clean steps: 1, 2, 2.5 or 5 × a power of ten.
@@ -25,10 +25,9 @@ function niceTicks(min, max, count = 4) {
   return ticks
 }
 
-// Why a month has no bars, shown in its tooltip and screen-reader text.
 const MISSING_REASON = {
   unverified: 'Tally used different dates for this month',
-  no_entries: 'No sales or purchase entries',
+  no_entries: 'No sales or purchase entries recorded',
   unavailable: 'Could not be read from Tally',
 }
 
@@ -36,7 +35,6 @@ function missingReason(point) {
   return point.status === 'available' ? null : MISSING_REASON[point.status] || MISSING_REASON.unavailable
 }
 
-// "Apr 2025" -> ["Apr", "'25"]
 function monthParts(label) {
   const [month, year] = (label || '').split(' ')
   return [month, year ? `’${year.slice(-2)}` : '']
@@ -54,14 +52,11 @@ function IncomeExpenseChart({ points }) {
   const high = ticks[ticks.length - 1]
   const span = high - low || 1
 
-  // Vertical position, as % from the bottom of the plot.
   const y = (value) => ((value - low) / span) * 100
   const zero = y(0)
 
   const activePoint = active === null ? null : points[active]
 
-  // Centre the tooltip over its month, but keep it inside the plot at
-  // the edges: anchor it to the group's left or right edge there.
   let tooltipLeft = ((active + 0.5) / points.length) * 100
   let tooltipAlign = ''
   if (tooltipLeft < 20) {
@@ -74,13 +69,20 @@ function IncomeExpenseChart({ points }) {
 
   return (
     <div className="db-chart">
-      <div className="db-legend" aria-hidden="true">
-        {SERIES.map((series) => (
-          <span key={series.key} className="db-legend-item">
-            <span className={`db-legend-swatch ${series.className}`} />
-            {series.label}
+      <div className="db-chart-meta">
+        <div className="db-legend" aria-hidden="true">
+          {SERIES.map((series) => (
+            <span key={series.key} className="db-legend-item">
+              <span className={`db-legend-swatch ${series.className}`} />
+              {series.label}
+            </span>
+          ))}
+          <span className="db-legend-item db-legend-item--spread">
+            <span className="db-legend-swatch db-swatch--spread" />
+            Net Operating Spread
           </span>
-        ))}
+        </div>
+        <span className="db-chart-unit">Amounts in INR (₹)</span>
       </div>
 
       <div className="db-chart-body">
@@ -94,12 +96,14 @@ function IncomeExpenseChart({ points }) {
 
         <div className="db-chart-plot" onPointerLeave={() => setActive(null)}>
           {ticks.map((tick) => (
-            <span
+            <div
               key={tick}
               className={`db-gridline${tick === 0 ? ' db-gridline--zero' : ''}`}
               style={{ bottom: `${y(tick)}%` }}
               aria-hidden="true"
-            />
+            >
+              {tick === 0 && <span className="db-zero-tag">₹0 Ledger Base</span>}
+            </div>
           ))}
 
           <div className="db-chart-columns">
@@ -111,6 +115,10 @@ function IncomeExpenseChart({ points }) {
                 : `${point.month}: ${SERIES.map(
                   (series) => `${series.label} ${formatAmount(point[series.key], { missing: 'none' })}`
                 ).join(', ')}`
+
+              const incomeVal = isNumber(point.income) ? Number(point.income) : null
+              const expenseVal = isNumber(point.expense) ? Number(point.expense) : null
+              const netMargin = incomeVal !== null && expenseVal !== null ? incomeVal - expenseVal : null
 
               return (
                 <div
@@ -125,6 +133,7 @@ function IncomeExpenseChart({ points }) {
                   {point.status === 'unverified' && (
                     <span className="db-chart-gap" style={{ bottom: `${zero}%` }} aria-hidden="true" />
                   )}
+
                   <div className="db-chart-bars">
                     {SERIES.map((series) => {
                       const value = point[series.key]
@@ -139,62 +148,59 @@ function IncomeExpenseChart({ points }) {
                         <span
                           key={series.key}
                           className={`db-bar ${series.className}${Number(value) < 0 ? ' db-bar--negative' : ''}`}
-                          style={{ bottom: `${bottom}%`, height: `${Math.max(top - bottom, 0.6)}%` }}
+                          style={{ bottom: `${bottom}%`, height: `${Math.max(top - bottom, 0.8)}%` }}
                         />
                       )
                     })}
                   </div>
+
                   <span className="db-chart-x" aria-hidden="true">
-                    {month}
+                    <strong>{month}</strong>
                     <small>{year}</small>
                   </span>
+
+                  {active === index && (
+                    <div className={`db-tooltip${tooltipAlign}`} role="tooltip">
+                      <div className="db-tooltip-header">
+                        <span className="db-tooltip-title">{point.month}</span>
+                        <span className="db-tooltip-badge">Monthly Statement</span>
+                      </div>
+
+                      {reason ? (
+                        <span className="db-tooltip-note">{reason}</span>
+                      ) : (
+                        <div className="db-tooltip-grid">
+                          {SERIES.map((series) => (
+                            <div key={series.key} className="db-tooltip-row">
+                              <span className="db-tooltip-label-wrap">
+                                <span className={`db-tooltip-key ${series.className}`} />
+                                <span>{series.label}</span>
+                              </span>
+                              <strong>{formatAmount(point[series.key], { missing: 'none' })}</strong>
+                            </div>
+                          ))}
+
+                          {netMargin !== null && (
+                            <div className="db-tooltip-row db-tooltip-row--net">
+                              <span className="db-tooltip-label-wrap">
+                                <span className="db-tooltip-key db-tooltip-key--net" />
+                                <span>Net Operating Spread</span>
+                              </span>
+                              <strong className={netMargin >= 0 ? 'db-tone--up' : 'db-tone--down'}>
+                                {netMargin >= 0 ? '+' : ''}{formatAmount(netMargin)}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
-
-          {activePoint && (
-            <div
-              className={`db-tooltip${tooltipAlign}`}
-              style={{ left: `${tooltipLeft}%` }}
-              role="presentation"
-            >
-              <span className="db-tooltip-title">{activePoint.month}</span>
-              {missingReason(activePoint) ? (
-                <span className="db-tooltip-note">{missingReason(activePoint)}</span>
-              ) : SERIES.map((series) => (
-                <span key={series.key} className="db-tooltip-row">
-                  <span className={`db-tooltip-key ${series.className}`} />
-                  <strong>{formatAmount(activePoint[series.key], { missing: '—' })}</strong>
-                  <span>{series.label}</span>
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
-
-      <table className="visually-hidden">
-        <caption>Sales and purchases by month</caption>
-        <thead>
-          <tr>
-            <th scope="col">Month</th>
-            {SERIES.map((series) => <th key={series.key} scope="col">{series.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((point) => (
-            <tr key={point.from_date}>
-              <th scope="row">{point.month}</th>
-              {missingReason(point)
-                ? <td colSpan={SERIES.length}>{missingReason(point)}</td>
-                : SERIES.map((series) => (
-                  <td key={series.key}>{formatAmount(point[series.key], { missing: '—' })}</td>
-                ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

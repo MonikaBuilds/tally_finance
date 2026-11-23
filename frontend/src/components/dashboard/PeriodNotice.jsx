@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react'
+import { Info, Calendar, ArrowRight } from 'lucide-react'
 
 import { getPresetDateRange } from '../../utils/dashboardDateFilter'
 import { formatDay, isNumber } from './format'
@@ -32,23 +32,29 @@ function PeriodNotice({ data, filter, onFilterChange }) {
 
     return (
       <div className="db-alert db-alert--info" role="status">
-        <Info size={16} aria-hidden="true" />
-        <span>
-          <strong>
-            No transactions in Tally for {formatDay(filter.fromDate)} – {formatDay(filter.toDate)}.
-          </strong>{' '}
-          {hasTallyPeriod ? `Company records are active for ${formatDay(tally.from_date)} – ${formatDay(tally.to_date)}.` : ''}
-        </span>
+        <Info size={16} className="db-alert-icon" aria-hidden="true" />
+        <div className="db-alert-content">
+          <p className="db-alert-title">
+            No Transactions Found for Period ({formatDay(filter.fromDate)} – {formatDay(filter.toDate)})
+          </p>
+          <p className="db-alert-desc">
+            {hasTallyPeriod
+              ? `Tally Prime indicates active transaction records exist for ${formatDay(tally.from_date)} – ${formatDay(tally.to_date)}.`
+              : 'Try selecting a different fiscal period to view financial reports.'}
+          </p>
+        </div>
         {tallyUsable && (
           <button
             type="button"
+            className="db-alert-btn"
             onClick={() => onFilterChange({
               fromDate: tally.from_date,
               toDate: tally.to_date,
               selectedPreset: null,
             })}
           >
-            Show {formatDay(tally.from_date)} – {formatDay(tally.to_date)}
+            <span>Switch to Active Period ({formatDay(tally.from_date)} – {formatDay(tally.to_date)})</span>
+            <ArrowRight size={14} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -58,14 +64,21 @@ function PeriodNotice({ data, filter, onFilterChange }) {
   if (hasNoEntries(data)) {
     return (
       <div className="db-alert db-alert--info" role="status">
-        <Info size={16} aria-hidden="true" />
-        <span>
-          <strong>No entries in Tally for this period.</strong> Balances
-          below are as on {formatDay(filter.toDate)}.
-        </span>
+        <Info size={16} className="db-alert-icon" aria-hidden="true" />
+        <div className="db-alert-content">
+          <p className="db-alert-title">No Vouchers Recorded in Selected Period</p>
+          <p className="db-alert-desc">
+            Balance sheet and position values below reflect balances as on {formatDay(filter.toDate)}.
+          </p>
+        </div>
         {offerLastFy && (
-          <button type="button" onClick={() => onFilterChange('lfy')}>
-            Show FY {lastFy.fromDate.slice(0, 4)}-{lastFy.toDate.slice(2, 4)}
+          <button
+            type="button"
+            className="db-alert-btn"
+            onClick={() => onFilterChange('lfy')}
+          >
+            <Calendar size={13} aria-hidden="true" />
+            <span>Show FY {lastFy.fromDate.slice(0, 4)}-{lastFy.toDate.slice(2, 4)}</span>
           </button>
         )}
       </div>
