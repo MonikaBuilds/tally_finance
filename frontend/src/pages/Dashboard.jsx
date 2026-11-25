@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
   AlertCircle,
-  ArrowDownLeft,
-  ArrowUpRight,
+  AlertTriangle,
+  BarChart3,
+  ClipboardList,
+  HandCoins,
+  IndianRupee,
   Landmark,
   Percent,
-  Receipt,
   RefreshCw,
   ShoppingCart,
   TrendingDown,
@@ -50,7 +52,7 @@ const REPORT_NAMES = {
 // of them is non-zero, so they share a single card.
 function netResult(data) {
   if (isNumber(data.net_loss) && data.net_loss > 0) {
-    return { label: 'Net loss', key: 'net_loss', value: data.net_loss, tone: 'negative', icon: TrendingDown }
+    return { label: 'Net loss', key: 'net_loss', value: data.net_loss, tone: 'negative', icon: AlertTriangle }
   }
 
   if (isNumber(data.net_profit)) {
@@ -332,13 +334,13 @@ function Dashboard() {
           </h2>
           <div className="db-kpi-grid">
             {kpi({
-              label: 'Sales', icon: ShoppingCart, tone: 'sales', sourceKey: 'total_sales',
+              label: 'Sales & income', icon: IndianRupee, tone: 'sales', sourceKey: 'total_sales',
               value: data.total_sales, display: formatAmount(data.total_sales),
               hint: 'Sales Accounts', to: '/reports/profit-loss',
               delta: delta('total_sales', true),
             })}
             {kpi({
-              label: 'Purchases', icon: Receipt, tone: 'purchases', sourceKey: 'total_purchases',
+              label: 'Purchases', icon: ShoppingCart, tone: 'purchases', sourceKey: 'total_purchases',
               value: data.total_purchases, display: formatAmount(data.total_purchases),
               hint: 'Purchase Accounts', to: '/reports/profit-loss',
               delta: delta('total_purchases', null),
@@ -356,9 +358,9 @@ function Dashboard() {
           <h2 id="db-position-heading" className="db-section-title">
             Position <span>{asOnHint}</span>
           </h2>
-          <div className="db-kpi-grid">
+          <div className="db-kpi-grid db-kpi-grid--position">
             {kpi({
-              label: 'Receivables', icon: ArrowDownLeft, tone: 'neutral', sourceKey: 'receivables',
+              label: 'Receivables', icon: HandCoins, tone: 'receivables', sourceKey: 'receivables',
               value: data.receivables, display: formatAmount(data.receivables),
               hint: data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.receivables.to_date)}`
@@ -366,7 +368,7 @@ function Dashboard() {
               to: '/reports/receivables',
             })}
             {kpi({
-              label: 'Payables', icon: ArrowUpRight, tone: 'neutral', sourceKey: 'payables',
+              label: 'Payables', icon: ClipboardList, tone: 'payables', sourceKey: 'payables',
               value: data.payables, display: formatAmount(data.payables),
               hint: data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.payables.to_date)}`
@@ -374,22 +376,22 @@ function Dashboard() {
               to: '/reports/payables',
             })}
             {kpi({
-              label: 'Cash in hand', icon: Wallet, tone: 'neutral', sourceKey: 'cash_in_hand',
+              label: 'Cash in hand', icon: Wallet, tone: 'cash', sourceKey: 'cash_in_hand',
               value: data.cash_in_hand, display: formatBalance(data.cash_in_hand),
               hint: 'Cash-in-Hand group', to: '/reports/balance-sheet',
             })}
             {kpi({
-              label: 'Bank balance', icon: Landmark, tone: 'neutral', sourceKey: 'bank_balance',
+              label: 'Bank balance', icon: Landmark, tone: 'bank', sourceKey: 'bank_balance',
               value: data.bank_balance, display: formatBalance(data.bank_balance),
               hint: 'Bank Accounts group', to: '/reports/balance-sheet',
             })}
             {kpi({
-              label: 'GST payable', icon: Percent, tone: 'neutral', sourceKey: 'gst_payable',
+              label: 'GST payable', icon: Percent, tone: 'gst', sourceKey: 'gst_payable',
               value: data.gst_payable, display: formatAmount(data.gst_payable),
               hint: 'Output GST less input credit', to: '/reports/trial-balance',
             })}
             {kpi({
-              label: 'TDS payable', icon: Percent, tone: 'neutral', sourceKey: 'tds_payable',
+              label: 'TDS payable', icon: Percent, tone: 'tds', sourceKey: 'tds_payable',
               value: data.tds_payable, display: formatAmount(data.tds_payable),
               hint: 'TDS ledger credit balances', to: '/reports/trial-balance',
             })}
@@ -399,6 +401,7 @@ function Dashboard() {
         <div className="db-grid db-grid--wide">
           <Panel
             title="Sales vs purchases"
+            icon={BarChart3}
             subtitle={
               monthly?.data?.from_date && filter.fromDate !== monthly.data.from_date
                 ? `Monthly trend — ${formatDay(monthly.data.from_date)} – ${formatDay(monthly.data.to_date)} (Tally Books)`
@@ -422,6 +425,7 @@ function Dashboard() {
 
           <Panel
             title="Cash & bank"
+            icon={Landmark}
             subtitle={asOnHint}
             to="/reports/balance-sheet"
             loading={loading}
@@ -437,6 +441,7 @@ function Dashboard() {
         <div className="db-grid">
           <Panel
             title="Receivables"
+            icon={HandCoins}
             subtitle={
               data.report_contexts?.receivables?.to_date && !data.report_contexts?.receivables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.receivables.to_date)} (Tally Books)`
@@ -453,6 +458,7 @@ function Dashboard() {
 
           <Panel
             title="Payables"
+            icon={ClipboardList}
             subtitle={
               data.report_contexts?.payables?.to_date && !data.report_contexts?.payables?.matches_selected_as_of
                 ? `As on ${formatDay(data.report_contexts.payables.to_date)} (Tally Books)`
@@ -471,6 +477,7 @@ function Dashboard() {
         <div className="db-grid">
           <Panel
             title="Income"
+            icon={TrendingUp}
             subtitle={periodHint}
             to="/reports/profit-loss"
             loading={loading}
@@ -481,6 +488,7 @@ function Dashboard() {
 
           <Panel
             title="Expenses"
+            icon={TrendingDown}
             subtitle={periodHint}
             to="/reports/profit-loss"
             loading={loading}

@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 // Card frame shared by every dashboard table and chart. While loading
 // without any earlier data it shows a skeleton; with nothing to show it
 // explains why instead of rendering an empty frame.
-function Panel({ title, subtitle, to, linkLabel = 'View report', loading, empty, children, className }) {
+function Panel({ title, subtitle, icon: Icon, to, linkLabel = 'View report', loading, empty, children, className }) {
   let body = children
 
   if (empty) {
@@ -21,7 +21,12 @@ function Panel({ title, subtitle, to, linkLabel = 'View report', loading, empty,
   return (
     <section className={`db-panel${className ? ` ${className}` : ''}`}>
       <header className="db-panel-head">
-        <div>
+        {Icon && (
+          <span className="db-panel-icon" aria-hidden="true">
+            <Icon size={16} />
+          </span>
+        )}
+        <div className="db-panel-titles">
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>

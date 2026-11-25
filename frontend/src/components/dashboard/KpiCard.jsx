@@ -11,6 +11,11 @@ import { isNumber } from './format'
 function KpiCard({ label, icon: Icon, tone, value, display, hint, source, to, loading, offline, delta }) {
   const available = isNumber(value)
 
+  // A zero profit/loss has no meaning to colour; it reads as neutral.
+  const theme = (tone === 'positive' || tone === 'negative') && Number(value) === 0
+    ? 'neutral'
+    : tone
+
   let body
   if (available) {
     body = <span className="db-kpi-value">{display}</span>
@@ -34,11 +39,15 @@ function KpiCard({ label, icon: Icon, tone, value, display, hint, source, to, lo
   const content = (
     <>
       <div className="db-kpi-head">
-        <span className={`db-kpi-icon db-tone--${tone}`} aria-hidden="true">
-          <Icon size={16} />
+        <span className="db-kpi-icon" aria-hidden="true">
+          <Icon size={18} />
         </span>
         <span className="db-kpi-label">{label}</span>
-        {to && <ChevronRight size={14} className="db-kpi-chevron" aria-hidden="true" />}
+        {to && (
+          <span className="db-kpi-chevron" aria-hidden="true">
+            <ChevronRight size={14} />
+          </span>
+        )}
       </div>
       {body}
       {available && delta && (
@@ -50,14 +59,14 @@ function KpiCard({ label, icon: Icon, tone, value, display, hint, source, to, lo
 
   if (to) {
     return (
-      <Link to={to} className="db-kpi db-kpi--link" title={sourceNote}>
+      <Link to={to} className={`db-kpi db-kpi--link db-kpi--${theme}`} title={sourceNote}>
         {content}
       </Link>
     )
   }
 
   return (
-    <div className="db-kpi" title={sourceNote}>
+    <div className={`db-kpi db-kpi--${theme}`} title={sourceNote}>
       {content}
     </div>
   )

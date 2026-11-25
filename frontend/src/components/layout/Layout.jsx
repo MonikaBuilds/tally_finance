@@ -114,7 +114,7 @@ function Layout({ onLogout }) {
             <Menu size={20} />
           </button>
 
-          <span className="topbar-title">Tally Financial Intelligence</span>
+          <span className="topbar-title">Tally Finance</span>
         </header>
 
         <main className="app-content">

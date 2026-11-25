@@ -9,7 +9,7 @@
 
 :root {
   /* Neutrals */
-  --bg: #f6f7f9;
+  --bg: #f3f5f9;
   --surface: #ffffff;
   --surface-2: #f9fafb;
   --surface-hover: #f2f4f7;
@@ -37,6 +37,15 @@
   --warning-soft: #fffaeb;
   --info: #3056d3;
   --info-soft: #eef2fd;
+
+  /* Navy sidebar */
+  --navy-900: #0a1b36;
+  --navy-800: #0f2547;
+  --navy-700: #16335f;
+
+  /* Monetary amount text only (never backgrounds) */
+  --amount-positive: #16a34a;
+  --amount-negative: #dc2626;
 
   /* Shape & depth */
   --radius-sm: 6px;
@@ -91,6 +100,9 @@
     --warning-soft: rgba(253, 176, 34, 0.12);
     --info: #6e8cf0;
     --info-soft: rgba(110, 140, 240, 0.12);
+
+    --amount-positive: #4ade80;
+    --amount-negative: #f87171;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
@@ -229,10 +241,18 @@ textarea {
   width: var(--sidebar-collapsed);
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
   border-right: 1px solid var(--border);
+  box-shadow: 1px 0 0 rgba(15, 23, 42, 0.02), 6px 0 24px -16px rgba(15, 23, 42, 0.18);
   transition: width 0.2s var(--ease), transform 0.2s var(--ease);
 }
+
+/* The selected page is a solid pill in the same blue as the Apply
+   buttons and active tabs on the report pages. */
+.sidebar-link--active::before {
+  content: none;
+}
+
 
 .app-shell[data-sidebar='expanded'] .sidebar {
   width: var(--sidebar-expanded);
@@ -254,9 +274,10 @@ textarea {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--on-accent);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45);
 }
 
 .sidebar-brand-copy {
@@ -403,6 +424,10 @@ textarea {
   text-decoration: none;
 }
 
+.sidebar-link--active {
+  font-weight: 600;
+}
+
 .sidebar-link svg {
   flex-shrink: 0;
   color: var(--text-muted);
@@ -410,12 +435,13 @@ textarea {
 
 .sidebar-link--active,
 .sidebar-link--active:hover {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .sidebar-link--active svg {
-  color: var(--accent-text);
+  color: var(--on-accent);
 }
 
 .sidebar-footer {

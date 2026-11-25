@@ -7,8 +7,8 @@
    ========================================================== */
 
 .db {
-  --series-sales: #2a78d6;
-  --series-purchases: #eb6834;
+  --series-sales: #2563eb;
+  --series-purchases: #f97316;
   --db-gap: 16px;
 
   position: relative;
@@ -19,8 +19,8 @@
 
 @media (prefers-color-scheme: dark) {
   .db {
-    --series-sales: #3987e5;
-    --series-purchases: #d95926;
+    --series-sales: #60a5fa;
+    --series-purchases: #fb923c;
   }
 }
 
@@ -55,6 +55,7 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+  container-type: inline-size;
   transition: opacity 0.2s var(--ease);
 }
 
@@ -99,9 +100,14 @@
 .db-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .db-title-row {
@@ -113,10 +119,10 @@
 
 .db-title-row h1 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--text-h);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .db-subtitle {
@@ -134,7 +140,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 10px;
+  padding: 3px 11px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
@@ -153,7 +159,7 @@
 .db-status--connected {
   background: var(--positive-soft);
   color: var(--positive);
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--positive) 25%, transparent);
 }
 
 .db-status--connected .db-status-dot {
@@ -163,7 +169,7 @@
 .db-status--offline {
   background: var(--negative-soft);
   color: var(--negative);
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--negative) 25%, transparent);
 }
 
 .db-status--offline .db-status-dot {
@@ -179,10 +185,11 @@
 
 .db-presets {
   display: inline-flex;
-  padding: 2px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border-radius: 10px;
+  background: var(--surface-2);
 }
 
 .db-preset {
@@ -204,18 +211,24 @@
 }
 
 .db-preset[aria-pressed='true'] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--navy-800);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(10, 27, 54, 0.3);
+}
+
+.db-preset:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .db-range {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  height: 36px;
   padding: 0 4px 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--surface);
   color: var(--text-muted);
 }
@@ -245,8 +258,8 @@
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--navy-800);
+  color: #ffffff;
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -255,9 +268,9 @@
 }
 
 .db-refresh {
-  height: 34px;
-  border-color: var(--border);
-  border-radius: var(--radius);
+  height: 36px;
+  border-color: var(--border-strong);
+  border-radius: 10px;
   background: var(--surface);
   color: var(--text-h);
 }
@@ -286,8 +299,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
+  padding: 10px 14px;
+  border-radius: 10px;
   background: var(--warning-soft);
   color: var(--text);
   font-size: 13px;
@@ -330,14 +343,16 @@
 .db-section-title {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin: 0 0 10px;
-  font-size: 13px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 12px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-h);
 }
 
 .db-section-title span {
+  font-size: 13px;
   font-weight: 400;
   color: var(--text-muted);
 }
@@ -345,30 +360,61 @@
 .db-kpi-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
+/* One colour family per card. --k-badge is the icon tile, --k-value the
+   figure; the card tint, border and trend line are derived from them. */
 .db-kpi {
+  --k-badge: #64748b;
+  --k-value: var(--text-h);
+
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  padding: 16px 18px 14px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--k-badge) 22%, var(--border));
+  border-radius: 16px;
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--k-badge) 11%, var(--surface)) 0%,
+    color-mix(in srgb, var(--k-badge) 3%, var(--surface)) 100%
+  );
   box-shadow: var(--shadow-sm);
   color: inherit;
   text-decoration: none;
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), border-color 0.18s var(--ease);
 }
 
-.db-kpi--link {
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+.db-kpi--sales { --k-badge: #2563eb; --k-value: #15803d; }
+.db-kpi--purchases { --k-badge: #ca8a04; --k-value: #a16207; }
+.db-kpi--positive { --k-badge: #16a34a; --k-value: var(--amount-positive); }
+.db-kpi--negative { --k-badge: #dc2626; --k-value: var(--amount-negative); }
+.db-kpi--receivables { --k-badge: #16a34a; --k-value: #15803d; }
+.db-kpi--payables { --k-badge: #7c3aed; --k-value: #6d28d9; }
+.db-kpi--cash { --k-badge: #0891b2; --k-value: #0e7490; }
+.db-kpi--bank { --k-badge: #2563eb; --k-value: #1d4ed8; }
+.db-kpi--gst { --k-badge: #d97706; --k-value: #b45309; }
+.db-kpi--tds { --k-badge: #475569; --k-value: #334155; }
+
+@media (prefers-color-scheme: dark) {
+  .db-kpi--sales { --k-value: #4ade80; }
+  .db-kpi--purchases { --k-value: #facc15; }
+  .db-kpi--receivables { --k-value: #4ade80; }
+  .db-kpi--payables { --k-value: #a78bfa; }
+  .db-kpi--cash { --k-value: #22d3ee; }
+  .db-kpi--bank { --k-value: #60a5fa; }
+  .db-kpi--gst { --k-value: #fbbf24; }
+  .db-kpi--tds { --k-value: #cbd5e1; }
 }
 
 .db-kpi--link:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--k-badge) 45%, var(--border));
+  box-shadow: 0 12px 24px -10px color-mix(in srgb, var(--k-badge) 38%, transparent), var(--shadow-md);
 }
 
 .db-kpi--link:focus-visible {
@@ -379,43 +425,53 @@
 .db-kpi-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .db-kpi-icon {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius);
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
   flex-shrink: 0;
+  background: var(--k-badge);
+  color: #ffffff;
+  box-shadow: 0 4px 10px -3px color-mix(in srgb, var(--k-badge) 55%, transparent);
 }
 
 .db-kpi-label {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--text);
 }
 
 .db-kpi-chevron {
-  color: var(--text-subtle);
-  opacity: 0;
-  transition: opacity 0.15s var(--ease);
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--k-badge) 12%, transparent);
+  color: var(--k-badge);
+  transition: transform 0.18s var(--ease), background 0.18s var(--ease);
 }
 
-.db-kpi--link:hover .db-kpi-chevron,
-.db-kpi--link:focus-visible .db-kpi-chevron {
-  opacity: 1;
+.db-kpi--link:hover .db-kpi-chevron {
+  transform: translateX(2px);
+  background: color-mix(in srgb, var(--k-badge) 22%, transparent);
 }
 
 .db-kpi-value {
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--text-h);
+  margin-top: 2px;
+  font-size: clamp(20px, 1.9vw, 28px);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--k-value);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
@@ -434,48 +490,27 @@
   overflow: hidden;
 }
 
-/* Change against the previous period. Colour marks good/bad only
-   where it is unambiguous; the arrow and words carry the direction. */
+/* Change against the previous period: a small pill, coloured only
+   where good/bad is unambiguous. The arrow and words carry direction. */
 .db-delta {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .db-delta--up {
-  color: var(--positive);
+  background: color-mix(in srgb, var(--amount-positive) 12%, transparent);
+  color: var(--amount-positive);
 }
 
 .db-delta--down {
-  color: var(--negative);
-}
-
-/* Icon tints: series hues for the two charted measures, semantic
-   tokens for profit and loss, neutral for balances. */
-.db-tone--sales {
-  background: color-mix(in srgb, var(--series-sales) 14%, transparent);
-  color: var(--series-sales);
-}
-
-.db-tone--purchases {
-  background: color-mix(in srgb, var(--series-purchases) 14%, transparent);
-  color: var(--series-purchases);
-}
-
-.db-tone--positive {
-  background: var(--positive-soft);
-  color: var(--positive);
-}
-
-.db-tone--negative {
-  background: var(--negative-soft);
-  color: var(--negative);
-}
-
-.db-tone--neutral {
-  background: var(--surface-2);
-  color: var(--text-muted);
+  background: color-mix(in srgb, var(--amount-negative) 12%, transparent);
+  color: var(--amount-negative);
 }
 
 /* ---------- Panels ---------- */
@@ -493,13 +528,19 @@
 .db-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
-  padding: 16px;
+  padding: 20px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+
+.db-panel:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
 }
 
 .db-panel-head {
@@ -507,6 +548,24 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-panel-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--series-sales) 12%, transparent);
+  color: var(--series-sales);
+}
+
+.db-panel-titles {
+  flex: 1;
+  min-width: 0;
 }
 
 .db-panel-head h2 {
@@ -524,14 +583,20 @@
 
 .db-panel-link {
   flex-shrink: 0;
-  font-size: 13px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--accent-text);
   text-decoration: none;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 
 .db-panel-link:hover {
-  text-decoration: underline;
+  background: var(--accent-soft);
+  border-color: transparent;
+  text-decoration: none;
 }
 
 .db-panel-skeleton {
@@ -559,7 +624,8 @@
 .db-table-scroll {
   max-height: 320px;
   overflow: auto;
-  margin: 0 -4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
 .db-table {
@@ -571,18 +637,20 @@
 .db-table th {
   position: sticky;
   top: 0;
-  padding: 6px 4px;
-  background: var(--surface);
+  padding: 8px 8px;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-align: left;
   white-space: nowrap;
 }
 
 .db-table td {
-  padding: 8px 4px;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
   vertical-align: middle;
@@ -590,6 +658,10 @@
 
 .db-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.db-table tbody tr:hover td {
+  background: var(--surface-2);
 }
 
 .db-table .db-num {
@@ -656,9 +728,17 @@
 
 .db-legend {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   font-size: 12px;
-  color: var(--text-muted);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.db-legend-item {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 
 .db-legend-item {
@@ -670,7 +750,7 @@
 .db-legend-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 50%;
 }
 
 .db-chart-body {
@@ -707,12 +787,13 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 1px;
-  background: var(--border);
+  height: 0;
+  border-top: 1px dashed var(--border);
+  background: none;
 }
 
 .db-gridline--zero {
-  background: var(--border-strong);
+  border-top: 1px solid var(--border-strong);
 }
 
 .db-chart-columns {
@@ -749,7 +830,7 @@
 .db-chart-bars .db-bar {
   position: absolute;
   width: min(24px, 36%);
-  border-radius: 4px 4px 0 0;
+  border-radius: 6px 6px 0 0;
 }
 
 .db-chart-bars .db-bar:first-child {
@@ -761,7 +842,7 @@
 }
 
 .db-chart-bars .db-bar--negative {
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 6px 6px;
 }
 
 .db-chart-bars .db-bar--empty {
@@ -769,11 +850,19 @@
 }
 
 .db-bar--sales {
-  background: var(--series-sales);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--series-sales) 78%, #fff) 0%, var(--series-sales) 100%);
 }
 
 .db-bar--purchases {
-  background: var(--series-purchases);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--series-purchases) 78%, #fff) 0%, var(--series-purchases) 100%);
+}
+
+.db-chart-bars .db-bar {
+  transition: filter 0.15s var(--ease);
+}
+
+.db-chart-group.is-active .db-bar {
+  filter: brightness(1.08) saturate(1.1);
 }
 
 .db-chart-x {
@@ -867,25 +956,15 @@
 
 /* ---------- Ageing ---------- */
 
-/* Ordinal ramp (one hue, deepening with age); validated for both
-   surfaces. Dark mode runs the other way so older debt stays the most
-   prominent against the dark surface. */
+/* Ageing runs from healthy to critical: green (not due) through
+   amber and orange to red (over 90 days). The same colours are used in
+   the bar, the legend keys and the chips, so they read as one scale. */
 .db {
-  --age-1: #86b6ef;
-  --age-2: #5598e7;
-  --age-3: #2a78d6;
-  --age-4: #1c5cab;
-  --age-5: #104281;
-}
-
-@media (prefers-color-scheme: dark) {
-  .db {
-    --age-1: #184f95;
-    --age-2: #256abf;
-    --age-3: #3987e5;
-    --age-4: #6da7ec;
-    --age-5: #9ec5f4;
-  }
+  --age-1: #22c55e;
+  --age-2: #eab308;
+  --age-3: #f97316;
+  --age-4: #ef4444;
+  --age-5: #b91c1c;
 }
 
 .db-age--not_due { background: var(--age-1); }
@@ -905,13 +984,13 @@
 .db-ageing-bar {
   display: flex;
   gap: 2px;
-  height: 12px;
+  height: 14px;
 }
 
 .db-ageing-segment {
   flex-basis: 0;
   min-width: 4px;
-  border-radius: 2px;
+  border-radius: 4px;
   transition: opacity 0.15s var(--ease);
 }
 
@@ -1001,8 +1080,8 @@
 }
 
 .db-breakdown-total strong {
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
   color: var(--text-h);
   font-variant-numeric: tabular-nums;
 }
@@ -1053,8 +1132,8 @@
 
 .db-meter {
   display: block;
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border-radius: 4px;
   background: var(--surface-2);
   overflow: hidden;
 }
@@ -1062,7 +1141,7 @@
 .db-meter-fill {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .db-meter-fill--sales {
@@ -1074,6 +1153,90 @@
 }
 
 /* ---------- Responsive ---------- */
+
+/* Large soft icon filling the right side of the Sales and Purchases
+   cards. Decorative only: no data is drawn. */
+.db-kpi-watermark {
+  position: absolute;
+  right: 22px;
+  bottom: 12px;
+  color: var(--k-badge);
+  opacity: 0.14;
+  pointer-events: none;
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+
+.db-kpi--link:hover .db-kpi-watermark {
+  opacity: 0.22;
+  transform: scale(1.05) rotate(-4deg);
+}
+
+/* Net profit / net loss, as Tally reports them, filling the right side
+   of the result card. Colour is on the amount text only. */
+.db-kpi-split {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 150px;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  border: 1px solid color-mix(in srgb, var(--k-badge) 18%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.db-kpi-split li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.db-kpi-split strong {
+  font-weight: 700;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Profit & loss cards: a little smaller than before, still larger than
+   the position cards below. */
+.db-kpi-grid:not(.db-kpi-grid--position) {
+  gap: 14px;
+}
+
+.db-kpi-grid:not(.db-kpi-grid--position) .db-kpi {
+  gap: 4px;
+  min-height: 136px;
+  padding: 14px 18px 14px;
+}
+
+.db-kpi-grid:not(.db-kpi-grid--position) .db-kpi-value {
+  font-size: clamp(20px, 1.7vw, 26px);
+}
+
+.db-kpi-grid:not(.db-kpi-grid--position) .db-kpi-icon {
+  width: 34px;
+  height: 34px;
+}
+
+/* Wide screens: the six position cards sit in one row, like a KPI strip. */
+@container (min-width: 1380px) {
+  .db-kpi-grid--position {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .db-kpi-grid--position .db-kpi-value {
+    font-size: 22px;
+  }
+}
+
 
 @media (max-width: 1100px) {
   .db-grid--wide {
@@ -1155,4 +1318,52 @@
   .db-kpi-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ---------- Compact KPI cards: one even 12px rhythm ---------- */
+.db { gap: 12px; }
+.db > .export-bar { margin-bottom: 0; }
+.db-content { gap: 36px; }
+.db-section-title { margin: 0 0 8px; }
+
+.db-kpi-grid { gap: 12px; }
+.db-kpi { gap: 4px; padding: 12px 14px; border-radius: 14px; min-height: 0; }
+.db-kpi-head { gap: 8px; }
+.db-kpi-icon { width: 30px; height: 30px; border-radius: 9px; }
+.db-kpi-icon svg { width: 16px; height: 16px; }
+.db-kpi-label { font-size: 13px; }
+.db-kpi-chevron { width: 20px; height: 20px; }
+.db-kpi-value { margin-top: 0; line-height: 1.15; }
+.db-kpi-hint { -webkit-line-clamp: 1; line-height: 1.25; }
+
+/* Position: all six on one line */
+.db-kpi-grid--position { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.db-kpi-grid--position .db-kpi-value { font-size: clamp(15px, 1.35vw, 20px); }
+.db-kpi-grid--position .db-kpi-label { font-size: 12px; }
+.db-kpi-grid--position .db-kpi-hint { font-size: 11px; }
+
+/* Profit & loss: compact boxes sized to their content (no empty right
+   side), still bigger than the position cards */
+.db-kpi-grid:not(.db-kpi-grid--position) {
+  grid-template-columns: repeat(3, 290px);
+  gap: 48px;
+  justify-content: start;
+}
+.db-kpi-grid:not(.db-kpi-grid--position) .db-kpi { min-height: 0; padding: 18px 20px; gap: 6px; }
+.db-kpi-grid:not(.db-kpi-grid--position) .db-kpi-value { font-size: 32px; }
+
+@container (max-width: 899px) {
+  .db-kpi-grid--position { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 820px) {
+  .db-kpi-grid:not(.db-kpi-grid--position) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+}
+
+@media (max-width: 440px) {
+  .db-kpi-grid:not(.db-kpi-grid--position) { grid-template-columns: minmax(0, 1fr); }
+  .db-kpi-grid--position { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

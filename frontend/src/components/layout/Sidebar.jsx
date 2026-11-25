@@ -105,8 +105,8 @@ function Sidebar({
         </div>
 
         <div className="sidebar-brand-copy">
-          <strong>Tally Financial</strong>
-          <span>Intelligence</span>
+          <strong>Tally Finance</strong>
+          <span>Financial Intelligence</span>
         </div>
 
         {isMobile ? (
