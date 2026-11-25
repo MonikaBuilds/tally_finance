@@ -276,3 +276,65 @@ def test_stock_summary_formatter_with_items():
     assert "Items Breakdown:" in output
     assert "• SmartMind Enterprise License: 10 Nos @ 3,00,000/Nos | Value: ₹30,00,000" in output
     assert "• SmartMind Cloud Addon: 5 Nos @ 5,09,189.40/Nos | Value: ₹25,45,947" in output
+
+
+def test_stock_summary_shows_negated_tally_values_as_positive():
+    """
+    Tally's XML export negates inventory values even when the stock
+    quantity is positive, so an item breakdown used to read
+    "Value: -₹24,81,681.82" underneath a positive "Stock Value" total.
+    """
+    tool_result = {
+        "success": True,
+        "source": "tally",
+        "data": {
+            "total_items": 2,
+            "items_with_stock": 2,
+            "total_stock_value": -5545946.53,
+            "items": [
+                {
+                    "name": "SmartMind AI",
+                    "closing_balance": "3 NOS",
+                    "closing_rate": "827227.27/NOS",
+                    "closing_value": "-2481681.82",
+                },
+                {
+                    "name": "SmartMind AI-  Old Version",
+                    "closing_balance": "67 NOS",
+                    "closing_rate": "45735.29/NOS",
+                    "closing_value": "-3064264.71",
+                },
+            ],
+        },
+    }
+    output = format_tool_response("get_stock_summary", tool_result)
+    assert "Value: ₹24,81,681.82" in output
+    assert "Value: ₹30,64,264.71" in output
+    assert "-₹" not in output
+
+
+def test_genuinely_negative_stock_still_shows_negative():
+    """
+    The sign that decides it is the quantity: Tally negates every
+    inventory value, so a negative value on its own means nothing.
+    Negative stock (over-issued items) must still read as negative.
+    """
+    tool_result = {
+        "success": True,
+        "source": "tally",
+        "data": {
+            "total_items": 1,
+            "items_with_stock": 1,
+            "total_stock_value": -63550.0,
+            "items": [
+                {
+                    "name": "Over-issued Widget",
+                    "closing_balance": "-5 NOS",
+                    "closing_rate": "12710/NOS",
+                    "closing_value": "-63550.00",
+                },
+            ],
+        },
+    }
+    output = format_tool_response("get_stock_summary", tool_result)
+    assert "Value: -₹63,550" in output

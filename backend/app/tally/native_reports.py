@@ -217,6 +217,7 @@ async def fetch_native_profit_loss_summary(
             "sales_accounts": _line(rows, "Sales Accounts"),
             "direct_incomes": _line(rows, "Direct Incomes", "Direct Income"),
             "indirect_incomes": _line(rows, "Indirect Incomes", "Indirect Income"),
+            "cost_of_sales": _line(rows, "Cost of Sales :", "Cost of Sales", "Cost of Sales:"),
             "purchase_accounts": (
                 {"name": purchases["name"], "amount": purchases.get("amount"), "raw": purchases.get("raw")}
                 if purchases else None

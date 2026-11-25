@@ -213,7 +213,128 @@ async def test_expenses_are_labelled_derived_with_native_lines(monkeypatch):
 
     data = result["data"]
     assert data["expenses_source"].startswith("Derived: sum of Tally P&L lines")
-    assert {line["name"] for line in data["expense_lines"]} >= {"Direct Expenses", "Indirect Expenses"}
+    assert {line["name"] for line in data["expense_lines"]} >= {"Cost of Sales :", "Indirect Expenses"}
+
+
+def test_tax_liability_reads_the_keys_gst_summary_returns():
+    """
+    get_tax_liability nests get_gst_summary's payload. That tool returns
+    total_input_gst / total_output_gst, so reading gst_input / input_tax
+    left GST Input and GST Output at zero while Net GST was correct -
+    a self-contradictory reply.
+    """
+    gst = {
+        "total_input_gst": 486900.0,
+        "total_output_gst": 1333800.0,
+        "net_gst": 846900.0,
+    }
+
+    input_tax = float(
+        gst.get("total_input_gst", 0)
+        or gst.get("gst_input", 0)
+        or gst.get("input_tax", 0)
+        or 0
+    )
+    output_tax = float(
+        gst.get("total_output_gst", 0)
+        or gst.get("gst_output", 0)
+        or gst.get("output_tax", 0)
+        or 0
+    )
+
+    assert input_tax == 486900.0
+    assert output_tax == 1333800.0
+    assert output_tax - input_tax == gst["net_gst"]
+
+
+def test_overdue_invoices_reads_the_invoices_list_not_the_envelope():
+    """
+    build_pending_invoices_from_reports() returns {"count", "invoices"}.
+    Iterating that dict yields its keys ("count", "invoices"), so
+    get_overdue_invoices_tool used to raise
+    AttributeError: 'str' object has no attribute 'get'
+    on every single call.
+    """
+    pending = {
+        "count": 2,
+        "invoices": [
+            {"party": "A", "overdue_days": 10},
+            {"party": "B", "overdue_days": 0},
+        ],
+    }
+
+    overdue = [
+        invoice
+        for invoice in (pending.get("invoices") or [])
+        if invoice.get("overdue_days", 0) > 0
+    ]
+
+    assert len(overdue) == 1
+    assert overdue[0]["party"] == "A"
+
+
+def test_overdue_invoices_has_a_formatter_branch():
+    """
+    Without a branch this tool fell through to the generic
+    "retrieved successfully" message, so a correct payload still
+    produced no figures.
+    """
+    result = {
+        "success": True,
+        "source": "tally",
+        "data": {
+            "count": 2,
+            "invoices": [
+                {
+                    "party": "Apex Office Solutions",
+                    "bill_reference": "FIN/01/202526",
+                    "outstanding_amount": 3550000.0,
+                    "overdue_days": 364,
+                },
+                {
+                    "party": "Eagle Paradise Pvt. Ltd.",
+                    "bill_reference": "1",
+                    "outstanding_amount": 80000.0,
+                    "overdue_days": 364,
+                },
+            ],
+        },
+    }
+
+    answer = format_tool_response("get_overdue_invoices", result)
+
+    assert "2 overdue invoice(s)" in answer
+    assert "Apex Office Solutions" in answer
+    assert "₹35,50,000" in answer
+    assert "364 days overdue" in answer
+    assert "retrieved successfully from Tally" not in answer
+
+
+@pytest.mark.asyncio
+async def test_expenses_reconcile_with_tallys_own_nett_loss(monkeypatch):
+    """
+    Revenue minus expenses must equal Tally's own Nett Profit/Loss row.
+
+    Tally prints "Cost of Sales :" already netted from opening stock,
+    purchases, closing stock and direct expenses. Adding the separate
+    Purchase and Direct Expenses lines on top double counts them, which
+    made the chatbot report a 4,435,000 profit on a period Tally calls
+    a 519,053.47 loss.
+    """
+    monkeypatch.setattr(
+        native_reports._client, "send_xml",
+        _pl_sender("pl_fy2526.xml", "pl_fy2526.html"),
+    )
+
+    result = await tools.get_expenses_tool(
+        company_name="ABC Pvt Ltd",
+        from_date=date(2025, 4, 1),
+        to_date=date(2026, 3, 31),
+    )
+
+    data = result["data"]
+    assert data["expenses"] == 7929053.47  # Cost of Sales 76,59,053.47 + Indirect 2,70,000
+    assert round(7410000.0 - data["expenses"], 2) == -519053.47  # Tally: Nett Loss 5,19,053.47
 
 
 # ------------------------------------------------------------------

@@ -392,8 +392,9 @@ def detect_local_intent(
     # us which metric should be compared.
     comparison_match = re.search(
         r"\bcompare\s+"
-        r"(revenue|sales|expenses?|net\s+profit|profit)\s+"
-        r"(?:for\s+)?this\s+month\s+"
+        r"(?:(revenue|sales|expenses?|net\s+profit|profit)\s+(?:for\s+)?)?"
+        r"this\s+month(?:'s|s')?\s+"
+        r"(?:(revenue|sales|expenses?|net\s+profit|profit)\s+)?"
         r"(?:with|vs|versus)\s+"
         r"last\s+month\b",
         message,
@@ -405,9 +406,11 @@ def detect_local_intent(
         metric_text = (
             comparison_match
             .group(1)
-            .lower()
-            .strip()
+            or comparison_match
+            .group(2)
+            or "revenue"
         )
+        metric_text = metric_text.lower().strip()
 
         # Convert normal user wording to the metric names
         # accepted by get_period_comparison_tool().
