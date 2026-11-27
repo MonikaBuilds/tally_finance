@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, FileSpreadsheet, Loader2, Send, User } from 'lucide-react'
+import { Bot, Send, User } from 'lucide-react'
 import PageHeader from '../components/layout/PageHeader'
+import AssistantMessage from '../components/chat/AssistantMessage'
 import { apiPost, downloadFile } from '../api/client'
 import { loadChatHistory, saveChatHistory } from '../utils/chatHistory'
 
@@ -79,12 +80,29 @@ function Chatbot() {
   const [downloadErrors, setDownloadErrors] = useState({})
   const [sessionId] = useState(() => stored?.sessionId || newSessionId())
 
-  const bottomRef = useRef(null)
+  const listRef = useRef(null)
+  const hasScrolledRef = useRef(false)
 
+  // Scroll only the message list. scrollIntoView() would also scroll every
+  // ancestor (the whole page), which made the screen jump on each reply.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: 'smooth',
-    })
+    const list = listRef.current
+    if (!list) return
+
+    const behavior = hasScrolledRef.current ? 'smooth' : 'auto'
+    hasScrolledRef.current = true
+
+    const latest = list.querySelector('[data-latest-answer]')
+    const answerJustArrived =
+      !loading && messages.length > 1 && messages.at(-1)?.role === 'assistant'
+
+    if (answerJustArrived && latest) {
+      // Land on the start of a new answer, not its end, so a long table
+      // is read from its heading down instead of from the totals up.
+      list.scrollTo({ top: Math.max(latest.offsetTop - 16, 0), behavior })
+    } else {
+      list.scrollTo({ top: list.scrollHeight, behavior })
+    }
   }, [messages, loading])
 
   useEffect(() => {
@@ -181,10 +199,11 @@ function Chatbot() {
       />
 
       <div className="chat-card">
-        <div className="chat-messages">
+        <div className="chat-messages" ref={listRef}>
           {messages.map((message, index) => (
             <div
               key={index}
+              data-latest-answer={index === messages.length - 1 ? '' : undefined}
               className={
                 message.role === 'user'
                   ? 'chat-message chat-message--user'
@@ -195,47 +214,31 @@ function Chatbot() {
                 {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
               </span>
 
-              <div
-                className={
-                  message.role === 'user'
-                    ? 'chat-bubble chat-bubble--user'
-                    : message.blocked
-                      ? 'chat-bubble chat-bubble--assistant chat-bubble--blocked'
-                      : 'chat-bubble chat-bubble--assistant'
-                }
-              >
-                {message.content}
-                {(message.downloads || []).map((download) => (
-                  <div key={download.url} className="chat-download">
-                    <button type="button" className="btn btn--outline"
-                      onClick={() => downloadReport(download)}
-                      disabled={pendingDownload !== null}
-                      aria-label={download.label}>
-                      {pendingDownload === download.url ? <Loader2 size={16} className="spin" /> : <FileSpreadsheet size={16} />}
-                      {pendingDownload === download.url ? 'Preparing...' : 'Download Excel'}
-                    </button>
-                    {downloadErrors[download.url] && <div className="export-error" role="alert">{downloadErrors[download.url]}</div>}
-                  </div>
-                ))}
-                {message.isStale && (
-                  <div>
-                    <span className="chat-stale-tag" title="Data served from cached fallback while Tally was offline">
-                      Offline Cached Data
-                    </span>
-                  </div>
-                )}
-              </div>
+              {message.role === 'user' ? (
+                <div className="chat-bubble chat-bubble--user">
+                  {message.content}
+                </div>
+              ) : (
+                <AssistantMessage
+                  message={message}
+                  pendingDownload={pendingDownload}
+                  downloadErrors={downloadErrors}
+                  onDownload={downloadReport}
+                />
+              )}
             </div>
           ))}
 
           {loading && (
-            <div className="chat-message">
+            <div className="chat-message" role="status">
               <span className="chat-avatar" aria-hidden="true">
                 <Bot size={16} />
               </span>
               <div className="chat-bubble chat-bubble--assistant chat-bubble--typing">
-                <Loader2 size={14} className="spin" />
-                Thinking...
+                <span className="chat-typing-dots" aria-hidden="true">
+                  <span /><span /><span />
+                </span>
+                Reading your Tally data…
               </div>
             </div>
           )}
@@ -246,7 +249,6 @@ function Chatbot() {
             </div>
           )}
 
-          <div ref={bottomRef} />
         </div>
 
         {messages.length <= 1 && (

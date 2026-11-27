@@ -63,18 +63,20 @@ def test_sales_account_closing_balance_routes_correctly():
 @pytest.mark.asyncio
 async def test_ledger_balance_resolves_accounting_suffixes():
     """Verify Sales Account resolves to Sales A/c in Tally and returns direct Tally values."""
+    # Ledger masters carry Tally's sign: Cr positive, Dr negative.
+    # The tool returns the ledger-report convention (Dr positive).
     mock_ledgers = [
         {
             "name": "Sales A/c",
             "parent": "Sales Accounts",
             "opening_balance": 0.0,
-            "closing_balance": -7410000.0,
+            "closing_balance": 7410000.0,
         },
         {
             "name": "HDFC Bank A/c",
             "parent": "Bank Accounts",
-            "opening_balance": 50000.0,
-            "closing_balance": 450000.0,
+            "opening_balance": -50000.0,
+            "closing_balance": -450000.0,
         },
     ]
 
