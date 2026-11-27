@@ -63,6 +63,22 @@ export function formatDay(iso) {
   return `${Number(day)} ${monthNames[Number(month) - 1]} ${year}`
 }
 
+// "Nov 2025, Feb 2026" - the months of a chart series that Tally would
+// not report, so a message can name them instead of only counting them.
+export function describeUnverifiedMonths(series) {
+  const names = (series || [])
+    .filter((point) => point.status === 'unverified')
+    .map((point) => point.month || formatDay(point.from_date))
+    .filter(Boolean)
+
+  if (!names.length) return ''
+
+  if (names.length === 1) return names[0]
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
 export function formatTime(iso) {
   if (!iso) return ''
 

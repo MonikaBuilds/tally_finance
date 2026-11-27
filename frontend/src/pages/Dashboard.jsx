@@ -20,6 +20,7 @@ import { useCompanyFinancialYear } from './trialBalance/useCompanyFinancialYear'
 import {
   getInitialDashboardFilter,
   getPresetDateRange,
+  reportPathWithPeriod,
   saveDashboardFilter,
 } from '../utils/dashboardDateFilter'
 import DashboardToolbar from '../components/dashboard/DashboardToolbar'
@@ -32,7 +33,7 @@ import CashBankList from '../components/dashboard/CashBankList'
 import AgeingBar from '../components/dashboard/AgeingBar'
 import PeriodNotice from '../components/dashboard/PeriodNotice'
 import ExportButtons from '../components/common/ExportButtons'
-import { formatAmount, formatBalance, formatDay, isNumber } from '../components/dashboard/format'
+import { formatAmount, formatBalance, formatDay, describeUnverifiedMonths, isNumber } from '../components/dashboard/format'
 import '../components/dashboard/dashboard.css'
 
 // A full financial year means one Tally P&L request per month, and
@@ -225,6 +226,11 @@ function Dashboard() {
 
   const refresh = () => setRefreshedAt(Date.now())
 
+  // A KPI opens the report that produced it for the SAME period the
+  // dashboard is showing, so a custom range never lands on a report that
+  // silently falls back to the company's financial year.
+  const reportPath = (base) => reportPathWithPeriod(base, filter)
+
   const periodHint = `${formatDay(filter.fromDate)} – ${formatDay(filter.toDate)}`
   const asOnHint = `As on ${formatDay(filter.toDate)}`
   const net = netResult(data)
@@ -258,6 +264,17 @@ function Dashboard() {
   const series = monthly?.data?.income_vs_expense || []
   const hasSeries = series.some((point) => isNumber(point.income) || isNumber(point.expense))
   const unverifiedMonths = series.filter((point) => point.status === 'unverified').length
+  const unverifiedNames = describeUnverifiedMonths(series)
+
+  // Tally Prime only honours a period whose end date is the 1st, 2nd or
+  // 31st of a month; anything else is silently replaced by the company's
+  // whole book period. A month ending on the 30th or 28th therefore cannot
+  // be read on its own, and plotting Tally's substitute would label a
+  // multi-month figure as a single month.
+  const unverifiedReason =
+    'Tally Prime only reports a period ending on the 1st, 2nd or 31st, ' +
+    `so ${unverifiedNames || 'these months'} could not be read on its own. ` +
+    'They are left blank rather than plotted with another period\'s dates.'
 
   const emptyText = (hasData, message) => {
     if (hasData) return null
@@ -336,19 +353,19 @@ function Dashboard() {
             {kpi({
               label: 'Sales & income', icon: IndianRupee, tone: 'sales', sourceKey: 'total_sales',
               value: data.total_sales, display: formatAmount(data.total_sales),
-              hint: 'Sales Accounts', to: '/reports/profit-loss',
+              hint: 'Sales Accounts', to: reportPath('/reports/profit-loss'),
               delta: delta('total_sales', true),
             })}
             {kpi({
               label: 'Purchases', icon: ShoppingCart, tone: 'purchases', sourceKey: 'total_purchases',
               value: data.total_purchases, display: formatAmount(data.total_purchases),
-              hint: 'Purchase Accounts', to: '/reports/profit-loss',
+              hint: 'Purchase Accounts', to: reportPath('/reports/profit-loss'),
               delta: delta('total_purchases', null),
             })}
             {kpi({
               label: net.label, icon: net.icon, tone: net.tone, sourceKey: net.key,
               value: net.value, display: formatAmount(net.value),
-              hint: 'As computed by Tally', to: '/reports/profit-loss',
+              hint: 'As computed by Tally', to: reportPath('/reports/profit-loss'),
               delta: previous && netChange(data, previous, previousLabel),
             })}
           </div>
@@ -378,22 +395,22 @@ function Dashboard() {
             {kpi({
               label: 'Cash in hand', icon: Wallet, tone: 'cash', sourceKey: 'cash_in_hand',
               value: data.cash_in_hand, display: formatBalance(data.cash_in_hand),
-              hint: 'Cash-in-Hand group', to: '/reports/balance-sheet',
+              hint: 'Cash-in-Hand group', to: reportPath('/reports/balance-sheet'),
             })}
             {kpi({
               label: 'Bank balance', icon: Landmark, tone: 'bank', sourceKey: 'bank_balance',
               value: data.bank_balance, display: formatBalance(data.bank_balance),
-              hint: 'Bank Accounts group', to: '/reports/balance-sheet',
+              hint: 'Bank Accounts group', to: reportPath('/reports/balance-sheet'),
             })}
             {kpi({
               label: 'GST payable', icon: Percent, tone: 'gst', sourceKey: 'gst_payable',
               value: data.gst_payable, display: formatAmount(data.gst_payable),
-              hint: 'Output GST less input credit', to: '/reports/trial-balance',
+              hint: 'Output GST less input credit', to: reportPath('/reports/trial-balance'),
             })}
             {kpi({
               label: 'TDS payable', icon: Percent, tone: 'tds', sourceKey: 'tds_payable',
               value: data.tds_payable, display: formatAmount(data.tds_payable),
-              hint: 'TDS ledger credit balances', to: '/reports/trial-balance',
+              hint: 'TDS ledger credit balances', to: reportPath('/reports/trial-balance'),
             })}
           </div>
         </section>
@@ -406,7 +423,7 @@ function Dashboard() {
               monthly?.data?.from_date && filter.fromDate !== monthly.data.from_date
                 ? `Monthly trend — ${formatDay(monthly.data.from_date)} – ${formatDay(monthly.data.to_date)} (Tally Books)`
                 : unverifiedMonths
-                  ? `${unverifiedMonths} of ${series.length} months not shown: Tally used different dates`
+                  ? `${unverifiedMonths} of ${series.length} months not shown — Tally Prime only reports periods ending on the 1st, 2nd or 31st, so ${unverifiedNames} could not be read.`
                   : "By month, from Tally's Profit & Loss"
             }
             to="/reports/profit-loss"
@@ -416,7 +433,7 @@ function Dashboard() {
                 : monthlyLoading ? 'loading'
                   : offline ? 'Tally could not be reached.'
                     : unverifiedMonths === series.length && series.length
-                      ? 'Tally used different dates for every month of this period, so nothing is plotted.'
+                      ? `No month of this period could be read. ${unverifiedReason}`
                       : 'No sales or purchases in Tally for this period.'
             }
           >
