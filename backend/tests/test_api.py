@@ -158,7 +158,8 @@ def test_trial_balance_failure(monkeypatch):
 def test_receivables_success(monkeypatch):
 
     async def fake_receivable_report(
-        company_name=None
+        company_name=None,
+        as_on=None
     ):
         return [
             {
@@ -255,7 +256,8 @@ def test_receivables_failure(monkeypatch):
 def test_payables_success(monkeypatch):
 
     async def fake_payable_report(
-        company_name=None
+        company_name=None,
+        as_on=None
     ):
         return [
             {

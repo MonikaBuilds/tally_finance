@@ -130,6 +130,30 @@ export function clearDashboardFilter() {
   }
 }
 
+/**
+ * Build a report link that carries the dashboard's selected period.
+ *
+ * A KPI must open the report that produced it for the SAME period the
+ * dashboard is showing. Without the dates the report page falls back to
+ * the company's financial year, so clicking "Net profit" while looking at
+ * a custom range used to land on a default-period Profit & Loss.
+ */
+export function reportPathWithPeriod(basePath, filter) {
+  const fromDate = filter?.fromDate
+  const toDate = filter?.toDate
+
+  if (!basePath) return basePath
+
+  if (!fromDate || !toDate) return basePath
+
+  const query = new URLSearchParams({
+    from_date: fromDate,
+    to_date: toDate,
+  }).toString()
+
+  return `${basePath}?${query}`
+}
+
 export const DASHBOARD_PRESETS = [
   { key: '7d', label: '7 days' },
   { key: '1m', label: '1 month' },

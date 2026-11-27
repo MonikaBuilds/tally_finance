@@ -7,6 +7,7 @@ from app.cache.config import cache_settings
 from app.cache.keys import build_cache_key
 from app.cache.manager import cache_manager, CacheResult
 from app.tally.client import TallyClient
+from app.tally.dashboard import report_request
 from app.tally.xml_builders import (
     build_company_request,
     build_profit_loss_request,
@@ -436,12 +437,17 @@ async def fetch_bills_receivable_result(
     company_name: str | None = None,
     org_id: str | None = None,
     force_refresh: bool = False,
+    as_on: date | None = None,
 ) -> CacheResult:
     """
     Fetch Bills Receivable from Tally with Redis caching.
 
     Redis stores the exact Tally XML response.
     Parsing happens only after the cached/Tally response is retrieved.
+
+    as_on: the date the bill positions are reported for. Tally's Bills
+    Receivable report is an "as on" report, so this sets SVTODATE; the
+    overdue days Tally returns are measured from that date, not today.
     """
 
     if not org_id:
@@ -455,13 +461,15 @@ async def fetch_bills_receivable_result(
         report_name="receivables",
         company_name=company_name,
         org_id=effective_org_id,
+        params={"as_on": as_on.isoformat() if as_on else None},
     )
 
     async def _fetch():
+        request = build_bills_receivable_request(
+            company_name=company_name,
+        )
         return await client.send_xml(
-            build_bills_receivable_request(
-                company_name=company_name,
-            )
+            report_request(request, as_of=as_on) if as_on else request
         )
 
     cache_result = await cache_manager.get_or_fetch(
@@ -500,6 +508,7 @@ async def fetch_bills_receivable(
     company_name: str | None = None,
     org_id: str | None = None,
     force_refresh: bool = False,
+    as_on: date | None = None,
 ):
     """
     Fetch Bills Receivable.
@@ -516,10 +525,11 @@ async def fetch_bills_receivable(
     # existing direct-Tally behavior instead of risking
     # cross-tenant cache leakage.
     if not org_id:
+        request = build_bills_receivable_request(
+            company_name=company_name,
+        )
         response = await client.send_xml(
-            build_bills_receivable_request(
-                company_name=company_name,
-            )
+            report_request(request, as_of=as_on) if as_on else request
         )
 
         return parse_outstanding_report(
@@ -531,6 +541,7 @@ async def fetch_bills_receivable(
         company_name=company_name,
         org_id=org_id,
         force_refresh=force_refresh,
+        as_on=as_on,
     )
 
     return result.data
@@ -543,11 +554,19 @@ async def fetch_bills_receivable(
 async def fetch_bills_payable(
     company_name: str | None = None,
     timeout: float = 30.0,
+    as_on: date | None = None,
 ):
+    """
+    Fetch Bills Payable.
+
+    as_on sets SVTODATE, because this is an "as on" report: the overdue
+    days Tally returns are measured from that date, not from today.
+    """
+    request = build_bills_payable_request(
+        company_name=company_name,
+    )
     response = await client.send_xml(
-        build_bills_payable_request(
-            company_name=company_name,
-        ),
+        report_request(request, as_of=as_on) if as_on else request,
         timeout=timeout,
     )
 

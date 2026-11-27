@@ -131,10 +131,20 @@ async def get_receivables_report(
     current_user: UserContext = Depends(get_current_user),
     force_refresh: bool = False,
     refresh: str | int | None = None,
+    as_on: date | None = Query(default=None),
 ):
+    """
+    Bills receivable as on a date.
+
+    as_on is forwarded to Tally as SVTODATE. Tally's Bills Receivable is
+    an "as on" report, so the bills listed, their amounts and their
+    overdue days all describe that date. With no as_on, Tally uses its
+    own active period.
+    """
     async def _fetch():
         tally_bills = await fetch_bills_receivable(
             company_name=company_name,
+            as_on=as_on,
         )
 
         allocations = await fetch_bill_allocations(
@@ -155,7 +165,7 @@ async def get_receivables_report(
             report_name="bills_receivable",
             company_name=company_name,
             current_user=current_user,
-            params={},
+            params={"as_on": as_on.isoformat() if as_on else None},
             fetcher=_fetch,
             force_refresh=force_refresh,
             refresh=refresh,
@@ -167,6 +177,7 @@ async def get_receivables_report(
             "source": cache_res.source,
             "is_stale": cache_res.is_stale,
             "cached_at": cache_res.cached_at,
+            "as_on": as_on.isoformat() if as_on else None,
             "data": ensure_bill_vouchers(cache_res.data),
         }
 
@@ -187,10 +198,12 @@ async def export_receivables_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
+    as_on: date | None = Query(default=None),
 ):
     async def _fetch():
         tally_bills = await fetch_bills_receivable(
             company_name=company_name,
+            as_on=as_on,
         )
 
         allocations = await fetch_bill_allocations(
@@ -211,7 +224,7 @@ async def export_receivables_report(
             report_name="bills_receivable",
             company_name=company_name,
             current_user=current_user,
-            params={},
+            params={"as_on": as_on.isoformat() if as_on else None},
             fetcher=_fetch,
             ttl_name="bills_receivable",
         )
@@ -252,10 +265,20 @@ async def get_payables_report(
     current_user: UserContext = Depends(get_current_user),
     force_refresh: bool = False,
     refresh: str | int | None = None,
+    as_on: date | None = Query(default=None),
 ):
+    """
+    Bills payable as on a date.
+
+    as_on is forwarded to Tally as SVTODATE. Tally's Bills Payable is an
+    "as on" report, so the bills listed, their amounts and their overdue
+    days all describe that date. With no as_on, Tally uses its own
+    active period.
+    """
     async def _fetch():
         tally_bills = await fetch_bills_payable(
             company_name=company_name,
+            as_on=as_on,
         )
 
         allocations = await fetch_bill_allocations(
@@ -276,7 +299,7 @@ async def get_payables_report(
             report_name="bills_payable",
             company_name=company_name,
             current_user=current_user,
-            params={},
+            params={"as_on": as_on.isoformat() if as_on else None},
             fetcher=_fetch,
             force_refresh=force_refresh,
             refresh=refresh,
@@ -288,6 +311,7 @@ async def get_payables_report(
             "source": cache_res.source,
             "is_stale": cache_res.is_stale,
             "cached_at": cache_res.cached_at,
+            "as_on": as_on.isoformat() if as_on else None,
             "data": ensure_bill_vouchers(cache_res.data),
         }
 
@@ -308,10 +332,12 @@ async def export_payables_report(
     file_format: str,
     company_name: str | None = Depends(get_authorized_company),
     current_user: UserContext = Depends(get_current_user),
+    as_on: date | None = Query(default=None),
 ):
     async def _fetch():
         tally_bills = await fetch_bills_payable(
             company_name=company_name,
+            as_on=as_on,
         )
 
         allocations = await fetch_bill_allocations(
@@ -332,7 +358,7 @@ async def export_payables_report(
             report_name="bills_payable",
             company_name=company_name,
             current_user=current_user,
-            params={},
+            params={"as_on": as_on.isoformat() if as_on else None},
             fetcher=_fetch,
             ttl_name="bills_payable",
         )
