@@ -654,13 +654,18 @@ async def fetch_ledger_report(
         matched_ledgers = master.get("ledgers", [])
 
         if matched_ledgers:
-            opening_balance = float(
+            # The ledger master carries Tally's own sign (negative = Dr),
+            # but this report runs balances as opening + Debit - Credit
+            # (positive = Dr), as do the Ledger page, its Excel export and
+            # the chatbot. Flip it once here so a ₹50,000 Dr opening does
+            # not start the running balance at -₹50,000 (i.e. Cr).
+            opening_balance = -float(
                 matched_ledgers[0].get(
                     "opening_balance",
                     0,
                 )
                 or 0
-            )
+            ) + 0.0  # avoid a "-0.0" opening for ledgers with no balance
 
             closing_balance = matched_ledgers[0].get(
                 "closing_balance"

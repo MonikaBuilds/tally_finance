@@ -4098,19 +4098,25 @@ async def get_ledger_balance_tool(
     if balance_type not in {"opening", "closing"}:
         return _no_data("Balance type must be opening or closing.")
 
-    # Period balances must come from the ledger report for that period.
-    balances = matched_ledger
+    # Both paths return balances as positive = Dr, the ledger-report
+    # convention the formatter labels as Dr/Cr. Period balances come from
+    # the ledger report; the master carries Tally's sign (negative = Dr).
     if from_date or to_date:
-        balances = await fetch_ledger_report(
+        report = await fetch_ledger_report(
             ledger_name=matched_ledger["name"], company_name=company_name,
             from_date=from_date, to_date=to_date,
         )
+        opening = to_optional_float(report.get("opening_balance"))
+        closing = to_optional_float(report.get("closing_balance"))
+    else:
+        opening = _signed_dr(to_optional_float(matched_ledger.get("opening_balance")))
+        closing = _signed_dr(to_optional_float(matched_ledger.get("closing_balance")))
 
     return _success({
         "ledger_name": matched_ledger["name"],
         "parent": matched_ledger.get("parent"),
-        "opening_balance": to_optional_float(balances.get("opening_balance")),
-        "closing_balance": to_optional_float(balances.get("closing_balance")),
+        "opening_balance": opening,
+        "closing_balance": closing,
         "balance_type": balance_type,
         "from_date": from_date.isoformat() if from_date else None,
         "to_date": to_date.isoformat() if to_date else None,

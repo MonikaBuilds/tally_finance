@@ -60,6 +60,30 @@ def format_indian_currency(value) -> str:
     return f"{prefix}{formatted}"
 
 
+def format_dr_cr_balance(value) -> str:
+    """
+    A ledger-report balance the way Tally prints it: "₹6,16,200 Cr",
+    never "-₹6,16,200". A minus sign does not tell an accountant which
+    side the balance is on.
+
+    Only for balances from fetch_ledger_report, the party statement and
+    get_ledger_balance_tool, which are all positive = Dr (opening + Debit
+    - Credit; the tool converts master balances with _signed_dr).
+    Raw Tally master balances use the opposite sign (negative = Dr) and
+    must go through native_reports.dr_cr instead.
+    """
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    if round(amount, 2) == 0:
+        return format_indian_currency(0)
+
+    side = "Dr" if amount > 0 else "Cr"
+    return f"{format_indian_currency(abs(amount))} {side}"
+
+
 def _quantity_number(value):
     """Numeric part of a Tally quantity: "67 NOS" -> 67, "-3 NOS" -> -3."""
     if not value:
@@ -990,7 +1014,7 @@ def format_tool_response(
             if value is None:
                 return "not available in the Tally response"
 
-            return format_indian_currency(value)
+            return format_dr_cr_balance(value)
 
         if entry_count == 0:
             return (
@@ -1128,7 +1152,7 @@ def format_tool_response(
 
         lines.append(
             f"Opening balance: "
-            f"{format_indian_currency(opening_balance)}"
+            f"{format_dr_cr_balance(opening_balance)}"
         )
 
         lines.append("")
@@ -1195,7 +1219,7 @@ def format_tool_response(
         lines.append("")
         lines.append(
             f"Closing balance: "
-            f"{format_indian_currency(closing_balance)}"
+            f"{format_dr_cr_balance(closing_balance)}"
         )
 
         return "\n".join(lines)
@@ -1846,19 +1870,7 @@ def format_tool_response(
 
         # Show the balance direction instead of hiding
         # whether the amount is debit or credit.
-        def _statement_balance(value: float) -> str:
-            if value > 0:
-                suffix = "Dr"
-            elif value < 0:
-                suffix = "Cr"
-            else:
-                suffix = ""
-
-            amount = format_indian_currency(
-                abs(value)
-            )
-
-            return f"{amount} {suffix}".strip()
+        _statement_balance = format_dr_cr_balance
 
         lines = [
             f"{title}: {party_name}",
@@ -2457,8 +2469,8 @@ def format_tool_response(
         if balance is None:
             return f"Tally did not return a {balance_type} balance for {ledger_name}."
         period = _format_period(data.get("from_date"), data.get("to_date"))
-        # Preserve the signed amount returned by Tally.
-        return f"{ledger_name} {balance_type} balance{period} is {format_indian_currency(balance)}."
+        # get_ledger_balance_tool returns positive = Dr on both of its paths.
+        return f"{ledger_name} {balance_type} balance{period} is {format_dr_cr_balance(balance)}."
 
 
     if tool_name == "get_ledger_transactions":
@@ -2484,9 +2496,9 @@ def format_tool_response(
             f"{ledger_name} Transactions (from Tally):",
         ]
         if opening_balance is not None:
-            lines.append(f"Opening Balance: {format_indian_currency(opening_balance)}")
+            lines.append(f"Opening Balance: {format_dr_cr_balance(opening_balance)}")
         if closing_balance is not None:
-            lines.append(f"Closing Balance: {format_indian_currency(closing_balance)}")
+            lines.append(f"Closing Balance: {format_dr_cr_balance(closing_balance)}")
         lines.append(f"Total Transactions: {count}")
 
         transactions = data.get("transactions") or data.get("entries") or []
@@ -3230,7 +3242,7 @@ def format_tool_response(
             "",
             (
                 f"Opening Balance: "
-                f"{format_indian_currency(opening_balance)}"
+                f"{format_dr_cr_balance(opening_balance)}"
             ),
             "",
         ]
@@ -3304,7 +3316,7 @@ def format_tool_response(
                     ),
                     (
                         f"Balance: "
-                        f"{format_indian_currency(running_balance)}"
+                        f"{format_dr_cr_balance(running_balance)}"
                     ),
                     "",
                 ])
@@ -3312,7 +3324,7 @@ def format_tool_response(
         lines.extend([
             (
                 f"Closing Balance: "
-                f"{format_indian_currency(closing_balance)}"
+                f"{format_dr_cr_balance(closing_balance)}"
             ),
             (
                 f"Transactions: "
@@ -3440,73 +3452,6 @@ def format_tool_response(
 
         return "\n".join(lines).strip()
     
-    if tool_name == "get_bank_transactions":
-        ledger_name = data.get(
-            "ledger_name",
-            "Bank / Cash Ledger",
-        )
-
-        opening_balance = float(
-            data.get(
-                "opening_balance",
-                0,
-            )
-            or 0
-        )
-
-        closing_balance = float(
-            data.get(
-                "closing_balance",
-                0,
-            )
-            or 0
-        )
-
-        total_debit = float(
-            data.get(
-                "total_debit",
-                0,
-            )
-            or 0
-        )
-
-        total_credit = float(
-            data.get(
-                "total_credit",
-                0,
-            )
-            or 0
-        )
-
-        transactions = data.get(
-            "transactions",
-            [],
-        ) or []
-
-        lines = [
-            f"{ledger_name} Transactions:",
-            "",
-            (
-                f"Opening Balance: "
-                f"{format_indian_currency(opening_balance)}"
-            ),
-            (
-                f"Total Debit: "
-                f"{format_indian_currency(total_debit)}"
-            ),
-            (
-                f"Total Credit: "
-                f"{format_indian_currency(total_credit)}"
-            ),
-            (
-                f"Closing Balance: "
-                f"{format_indian_currency(closing_balance)}"
-            ),
-            f"Transactions: {len(transactions)}",
-        ]
-
-        return "\n".join(lines)
-
     if tool_name == "get_day_book":
         rows = data.get("rows", [])
         count = data.get("count", len(rows))
