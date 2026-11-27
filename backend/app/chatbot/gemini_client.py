@@ -132,7 +132,7 @@ _DEFINITIONS_BY_NAME = {d["name"]: d for d in TOOL_DEFINITIONS}
 _SYNONYMS = {
     "receivable": {"owe", "owes", "owed", "debtor", "debtors", "collect",
                    "collection", "due", "outstanding", "customer", "customers"},
-    "payable": {"pay", "creditor", "creditors", "supplier", "suppliers",
+    "payable": {"pay", "owe", "owes", "owed", "creditor", "creditors", "supplier", "suppliers",
                 "vendor", "vendors", "outstanding", "due"},
     "sales": {"sale", "sold", "sell", "selling", "revenue", "turnover",
               "income", "customer", "customers"},
@@ -142,6 +142,8 @@ _SYNONYMS = {
     "profit": {"loss", "margin", "earning", "earnings", "p&l", "pl"},
     "stock": {"inventory", "item", "items", "product", "products", "godown",
               "quantity", "goods"},
+    "item": {"product", "products", "goods"},
+    "selling": {"sell", "sold", "bestselling"},
     "bank": {"banks", "account", "accounts", "hdfc", "sbi", "icici", "axis"},
     "cash": {"money", "hand"},
     "gst": {"tax", "cgst", "sgst", "igst", "itc"},

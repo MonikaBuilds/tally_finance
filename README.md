@@ -454,6 +454,31 @@ The deterministic AI assistant processes questions in 4 stages:
 
 ---
 
+Chat reports include a **Download Excel** button. `Export this report to Excel`
+returns the previous successful report's download without calling the AI provider.
+Downloads contain the full structured result, including rows abbreviated in chat.
+They are immutable snapshots scoped to the user, organization and company, expire
+after one hour, and recheck current report permissions and company access when
+opened. Redis stores snapshots when available; an expiring, bounded local store
+supports Redis outages (local snapshots are lost on server restart).
+
+For monthly reports, try `Monthly sales for FY 2025-26`, `Monthly purchases`,
+`Monthly expenses`, or `Monthly net profit`. Sales/purchases/expenses are labelled
+as derived monthly ledger movements; sales returns reduce sales. Net profit uses
+Tally's own monthly net-result rows and displays **Unavailable** if Tally does not
+verify that exact period. Missing results are never substituted with zero.
+Without dates, the selected company's dates or verified native current period
+are used; if neither is available, the assistant asks for a period.
+
+Follow-ups such as `What about March?`, `And January 2025?`, `For the same period
+last year`, and `What about purchases?` reuse the report context in the same chat.
+Bare months stay in the previous report's financial year. Changing from sales to
+`Now show only cash transactions` keeps the dates and changes the report filter.
+Stock item follow-ups retain the item and period, including `Show its stock
+movements` and month changes. Chats, users and companies have separate context.
+
+---
+
 ## 11. Caching Architecture
 
 * **Fresh Response (< 300s)**: Cached JSON is delivered instantaneously in `< 1ms`.
@@ -473,6 +498,25 @@ pytest
 ```bash
 pytest tests/test_godown_monthly_direct_tally.py tests/test_parser.py tests/test_xml_builder.py
 ```
+
+For the chatbot regressions without MySQL, Redis, Gemini, or live Tally,
+run this focused suite from `backend/` with the virtual environment active
+(PowerShell):
+
+```powershell
+$env:CHAT_JWT_SECRET='offline-regression-tests-only-not-for-deployment'
+$env:REDIS_CACHE_ENABLED='false'
+python -m pytest --noconftest tests/test_reported_chat_regressions.py tests/test_native_figures.py tests/test_chatbot_nl_routing.py tests/test_chat_exports_monthly_context.py -q
+```
+
+`--noconftest` bypasses the suite's automatic MySQL user-seeding fixture.
+These tests use recorded Tally responses and mocked service calls. The
+regressions cover exact-day dates, statement date filters, ledger names
+with date ranges, pending bills, ledger listing, opening-balance follow-ups,
+opening-balance differences, profit/loss signs, monthly/context follow-ups,
+and full Excel snapshots with expiry and authorization checks. Live Tally validation
+is still required before deploying. The recorded FY 2025–26 response labels
+₹5,19,053.47 as **Nett Loss**; the code preserves explicit Tally result labels.
 
 Frontend unit tests (run from `frontend/`):
 ```bash

@@ -447,8 +447,17 @@ def format_tool_response(
             lines.append(f"• {name}: Debit {dr_str} | Credit {cr_str}")
 
         lines.append("-" * 45)
-        lines.append(f"Total Debit: {format_indian_currency(total_dr)} | Total Credit: {format_indian_currency(total_cr)}")
+        lines.append(f"Total Debit: {format_indian_currency(total_dr)} | Total Credit: {format_indian_currency(total_cr)} (derived from displayed rows)")
         return "\n".join(lines)
+
+    if tool_name == "get_balance_sheet" and data.get("opening_difference_only"):
+        amount = data.get("amount")
+        if amount is None:
+            return "Tally did not return an opening-balance difference amount."
+        period = _format_period(data.get("from_date"), data.get("to_date"))
+        side = data.get("side")
+        suffix = f" ({side.title()} side)" if side else ""
+        return f"Difference in opening balances{period}: {format_indian_currency(amount)}{suffix}."
 
     if tool_name == "get_balance_sheet":
         report = data.get("report") or {}
@@ -2141,23 +2150,24 @@ def format_tool_response(
 
         return "\n".join([
             f"Stock Item: {item_name}",
+            f"Period: {data.get('from_date') or 'start of books'} to {data.get('to_date') or 'current books'}",
             f"Group: {item.get('parent') or 'Not available'}",
             f"Unit: {item.get('base_unit') or 'Not available'}",
             (
                 f"Opening Quantity: "
-                f"{item.get('opening_balance') or 'Not available'}"
+                f"{item.get('opening_balance') if item.get('opening_balance') is not None and item.get('opening_balance') != '' else 'Not available'}"
             ),
             (
                 f"Closing Quantity: "
-                f"{item.get('closing_balance') or 'Not available'}"
+                f"{item.get('closing_balance') if item.get('closing_balance') is not None and item.get('closing_balance') != '' else 'Not available'}"
             ),
             (
                 f"Opening Rate: "
-                f"{item.get('opening_rate') or 'Not available'}"
+                f"{item.get('opening_rate') if item.get('opening_rate') is not None and item.get('opening_rate') != '' else 'Not available'}"
             ),
             (
                 f"Closing Rate: "
-                f"{item.get('closing_rate') or 'Not available'}"
+                f"{item.get('closing_rate') if item.get('closing_rate') is not None and item.get('closing_rate') != '' else 'Not available'}"
             ),
             (
                 f"Opening Value: "
@@ -2431,31 +2441,24 @@ def format_tool_response(
 
         return "\n".join(lines)
     
+    if tool_name == "get_ledger_list":
+        ledgers = data.get("ledgers") or []
+        if not ledgers:
+            return "No ledgers were found in Tally for the selected company."
+        return "\n".join([
+            f"Ledgers (from Tally): {len(ledgers)}",
+            *[f"- {ledger.get('name')} | {ledger.get('parent') or '-'}" for ledger in ledgers],
+        ])
+
     if tool_name == "get_ledger_balance":
-        data = tool_result.get(
-            "data",
-            {},
-        )
-
-        ledger_name = data.get(
-            "ledger_name",
-            "Ledger",
-        )
-
-        balance = float(
-            data.get(
-                "closing_balance",
-                0,
-            )
-            or 0
-        )
-
-        # Keep the raw sign from Tally for now.
-        # We will reconcile Dr/Cr presentation during live testing.
-        return (
-            f"{ledger_name} closing balance is "
-            f"{format_indian_currency(abs(balance))}."
-        )
+        ledger_name = data.get("ledger_name", "Ledger")
+        balance_type = data.get("balance_type", "closing")
+        balance = data.get(f"{balance_type}_balance")
+        if balance is None:
+            return f"Tally did not return a {balance_type} balance for {ledger_name}."
+        period = _format_period(data.get("from_date"), data.get("to_date"))
+        # Preserve the signed amount returned by Tally.
+        return f"{ledger_name} {balance_type} balance{period} is {format_indian_currency(balance)}."
 
 
     if tool_name == "get_ledger_transactions":
@@ -3066,6 +3069,16 @@ def format_tool_response(
 
         return "\n".join(lines)
     
+    if tool_name == "get_monthly_summary":
+        metric = data.get("metric", "revenue").replace("_", " ").title()
+        lines = [f"Monthly {metric}:", f"Period: {data.get('from_date')} to {data.get('to_date')}"]
+        for period in data.get("periods", []):
+            value = period.get("value")
+            text = format_indian_currency(value) if value is not None else "Unavailable - " + period.get("reason", "period not verified by Tally")
+            lines.append(f"- {period.get('month')}: {text}")
+        lines.append(data.get("method", ""))
+        return "\n".join(lines)
+
     if tool_name == "get_financial_trends":
         periods = data.get("periods", []) or []
 
@@ -3081,23 +3094,15 @@ def format_tool_response(
             from_date = period.get("from_date")
             to_date = period.get("to_date")
 
-            revenue = float(
-                period.get("revenue", 0) or 0
-            )
-
-            total_expenses = float(
-                period.get("total_expenses", 0) or 0
-            )
-
-            net_profit = float(
-                period.get("net_profit", 0) or 0
-            )
+            def display(key):
+                value = period.get(key)
+                return format_indian_currency(value) if value is not None else "Unavailable (not verified by Tally)"
 
             lines.extend([
                 f"{from_date} to {to_date}",
-                f"Revenue: {format_indian_currency(revenue)}",
-                f"Total Expenses: {format_indian_currency(total_expenses)}",
-                f"Net Profit: {format_indian_currency(net_profit)}",
+                f"Revenue: {display('revenue')}",
+                f"Total Expenses: {display('total_expenses')}",
+                f"Net Profit: {display('net_profit')}",
                 "",
             ])
 

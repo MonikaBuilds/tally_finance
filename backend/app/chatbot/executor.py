@@ -15,6 +15,7 @@ from app.cache.manager import cache_manager
 logger = logging.getLogger(__name__)
 
 CHATBOT_TOOL_TIMEOUT = 20.0
+CHATBOT_TOOL_TIMEOUTS = {"get_monthly_summary": 90.0}
 
 CHATBOT_MAX_CONCURRENT_TOOLS = max(
     1,
@@ -382,7 +383,7 @@ async def execute_tool(
                     tool_function(
                         **filtered_arguments
                     ),
-                    timeout=CHATBOT_TOOL_TIMEOUT,
+                    timeout=CHATBOT_TOOL_TIMEOUTS.get(tool_name, CHATBOT_TOOL_TIMEOUT),
                 )
             finally:
                 _tool_semaphore.release()

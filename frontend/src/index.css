@@ -2657,3 +2657,6 @@ textarea {
   color: var(--text-muted);
   font-weight: 500;
 }
+
+.chat-download { margin-top: 10px; white-space: normal; }
+.chat-download .btn { max-width: 100%; }

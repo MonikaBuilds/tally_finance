@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, Loader2, Send, User } from 'lucide-react'
+import { Bot, FileSpreadsheet, Loader2, Send, User } from 'lucide-react'
 import PageHeader from '../components/layout/PageHeader'
-import { apiPost } from '../api/client'
+import { apiPost, downloadFile } from '../api/client'
 import { loadChatHistory, saveChatHistory } from '../utils/chatHistory'
 
 const SUGGESTIONS = [
@@ -75,6 +75,8 @@ function Chatbot() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [pendingDownload, setPendingDownload] = useState(null)
+  const [downloadErrors, setDownloadErrors] = useState({})
   const [sessionId] = useState(() => stored?.sessionId || newSessionId())
 
   const bottomRef = useRef(null)
@@ -139,6 +141,7 @@ function Chatbot() {
           role: 'assistant',
           content: response.answer,
           intent: response.intent,
+          downloads: response.downloads || [],
           blocked:
             response.intent === 'write_operation',
           isStale: Boolean(response.is_stale || response.source === 'stale_cache'),
@@ -148,6 +151,20 @@ function Chatbot() {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function downloadReport(download) {
+    // Only relative chat-export URLs supplied by this app are downloadable.
+    if (!/^\/chat\/exports\/[a-f0-9-]+\.xlsx\?company_name=/.test(download.url)) return
+    setPendingDownload(download.url)
+    setDownloadErrors((previous) => ({ ...previous, [download.url]: null }))
+    try {
+      await downloadFile(download.url, download.filename)
+    } catch (err) {
+      setDownloadErrors((previous) => ({ ...previous, [download.url]: err.message }))
+    } finally {
+      setPendingDownload(null)
     }
   }
 
@@ -188,6 +205,18 @@ function Chatbot() {
                 }
               >
                 {message.content}
+                {(message.downloads || []).map((download) => (
+                  <div key={download.url} className="chat-download">
+                    <button type="button" className="btn btn--outline"
+                      onClick={() => downloadReport(download)}
+                      disabled={pendingDownload !== null}
+                      aria-label={download.label}>
+                      {pendingDownload === download.url ? <Loader2 size={16} className="spin" /> : <FileSpreadsheet size={16} />}
+                      {pendingDownload === download.url ? 'Preparing...' : 'Download Excel'}
+                    </button>
+                    {downloadErrors[download.url] && <div className="export-error" role="alert">{downloadErrors[download.url]}</div>}
+                  </div>
+                ))}
                 {message.isStale && (
                   <div>
                     <span className="chat-stale-tag" title="Data served from cached fallback while Tally was offline">

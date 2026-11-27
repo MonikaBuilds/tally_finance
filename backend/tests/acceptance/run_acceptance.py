@@ -210,7 +210,7 @@ CASES: list[Case] = [
     Case("SP-11", "Payments", "full", "Show payments made in FY 2025-26", {"get_payment_transactions"}, checks=["amounts"]),
     Case("SP-12", "Receipts/Payments", "full", "Show today's receipts and payments", {"get_receipt_transactions", "get_payment_transactions", "get_day_book", "get_cash_transactions", "get_bank_transactions"},
          checks=["amounts"]),
-    Case("SP-13", "Sales", "full", "Show my monthly sales", {"get_financial_trends", "get_period_trend", "get_sales_transactions", "get_revenue"}, checks=["amounts"]),
+    Case("SP-13", "Sales", "full", "Show my monthly sales", {"get_monthly_summary"}, checks=["amounts"]),
     Case("SP-14", "Sales", "full", "Top selling items in FY 2025-26", {"get_top_selling_items"}, checks=["amounts"]),
     # ---------------- Revenue / P&L ----------------
     Case("PL-01", "Profit & Loss", "full", "Generate my Profit & Loss report for FY 2025-26", {"get_profit_loss"}, checks=["amounts"]),
@@ -277,12 +277,19 @@ CASES: list[Case] = [
     Case("FU-03", "Follow-up", "full", "Show sales for December 2025", {"get_sales_transactions"}, session="fu2", checks=["amounts"]),
     Case("FU-04", "Follow-up", "full", "Now show only cash transactions", {"get_cash_transactions"}, session="fu2", expect_success=None,
          note="Should not silently carry the sales filter"),
-    Case("FU-05", "Follow-up", "full", "What about March?", ANY_LLM, session="fu2", expect_success=None,
-         note="Context-dependent; record behaviour"),
+    Case("FU-05", "Follow-up", "full", "What about March?", {"get_cash_transactions"}, session="fu2", expect_success=None,
+         note="Reuses cash report for March of the active financial year"),
     Case("FU-06", "Follow-up", "full", "Show the profit and loss for FY 2025-26", {"get_profit_loss"}, session="fu3"),
     Case("FU-07", "Follow-up", "full", "Show all items", {"get_profit_loss"}, session="fu3", checks=["amounts"]),
-    Case("FU-08", "Follow-up", "full", "Export this report to Excel", ANY_LLM, session="fu3", expect_success=None,
-         note="Chat export not implemented"),
+    Case("FU-08", "Follow-up", "full", "Export this report to Excel", {"export_excel"}, session="fu3",
+         note="Returns a scoped Excel snapshot download"),
+    Case("FU-09", "Follow-up", "full", "Monthly sales for FY 2025-26", {"get_monthly_summary"}, session="fu-monthly"),
+    Case("FU-10", "Follow-up", "full", "What about purchases?", {"get_monthly_summary"}, session="fu-monthly"),
+    Case("FU-11", "Follow-up", "full", "What about March?", {"get_monthly_summary"}, session="fu-monthly"),
+    Case("IN-06", "Stock", "full", "Show stock item details of SmartMind AI for FY 2025-26", {"get_stock_item_details"}, session="fu-stock"),
+    Case("IN-07", "Stock", "full", "Show its stock movements", {"get_stock_movement"}, session="fu-stock"),
+    Case("IN-08", "Stock", "full", "What about April?", {"get_stock_movement"}, session="fu-stock"),
+    Case("IN-09", "Stock", "full", "Show stock movement of Nonexistent Widget for FY 2025-26", {"get_stock_movement"}, expect_success=False),
     # ---------------- Safety / unsupported ----------------
     Case("SF-01", "Read-only", "full", "Delete invoice 5", set(), expect_success=False, expect_text="read-only"),
     Case("SF-02", "Read-only", "full", "Create a new payment voucher for 5000", set(), expect_success=False, expect_text="read-only"),
@@ -393,7 +400,11 @@ def run_checks(case: Case, body: dict) -> tuple[str, list[str], Any, Any]:
 
     if "amounts" in case.checks or "native" in case.checks:
         derived = answer.startswith("Derived figure")
-        unknown = [str(a) for a in answer_amounts(answer) if a not in REF["corpus"] and a != 0]
+        # Mixed native/derived summaries label derived lines individually.
+        # Compare native lines with the raw corpus, retaining checks on all
+        # unlabelled figures even when another line is explicitly derived.
+        native_lines = "\n".join(line for line in answer.splitlines() if "derived" not in line.lower())
+        unknown = [str(a) for a in answer_amounts(native_lines) if a not in REF["corpus"] and a != 0]
         if unknown and not derived:
             failures.append(f"amounts not found in Tally output: {unknown[:6]}")
 
@@ -406,6 +417,20 @@ def run_checks(case: Case, body: dict) -> tuple[str, list[str], Any, Any]:
 
     if "no_combined_tax" in case.checks and "combined tax" in answer.lower():
         failures.append("invented combined tax figure shown")
+
+    if case.id in {"SP-13", "FU-09"}:
+        periods = data.get("periods") or []
+        total = sum(row.get("value") or 0 for row in periods)
+        if len(periods) != 12 or total != 7410000:
+            failures.append(f"monthly sales {total} across {len(periods)} months does not match native FY Sales Accounts 7410000")
+    if case.id == "FU-10" and data.get("metric") != "purchases":
+        failures.append("monthly metric follow-up lost purchases")
+    if case.id == "FU-11" and (data.get("from_date"), data.get("to_date")) != ("2026-03-01", "2026-03-31"):
+        failures.append("March follow-up selected the wrong financial year")
+    if case.id == "IN-07" and (data.get("item_name"), data.get("from_date")) != ("SmartMind AI", "2025-04-01"):
+        failures.append("stock pronoun lost item/period")
+    if case.id == "FU-08" and not body.get("downloads"):
+        failures.append("chat Excel export has no download")
 
     if case.expect_count is not None:
         expected_count = case.expect_count()
@@ -480,6 +505,12 @@ async def run_async(out_dir: Path) -> None:
                     failures.append(f"success={body.get('success')} expected {case.expect_success}")
                 if intent in {"model_error", "model_timeout", "model_rate_limit", "model_configuration_error", "model_authentication_error"}:
                     failures.append(f"AI provider failure: {intent}")
+
+                if case.id == "FU-08" and body.get("downloads"):
+                    exported = await client.get("/api/v1" + body["downloads"][0]["url"])
+                    ok, reason, _ = _xlsx_contains(exported, ["7410000", "519053.47"])
+                    if not ok:
+                        failures.append("chat Excel values: " + reason)
 
                 accuracy, check_failures, exp_count, act_count = (
                     run_checks(case, body) if response.status_code == 200 else ("N/A", [], "", "")
@@ -624,8 +655,15 @@ async def api_cases(app, clients, users) -> list[dict]:
     response = await get("full", "/api/v1/reports/profit-loss/export/pdf", {"from_date": FY_FROM.isoformat(), "to_date": FY_TO.isoformat()})
     ok = response.status_code == 200 and response.content[:4] == b"%PDF"
     rows.append(_row("EX-03", "Export", "full", "P&L PDF export", "valid PDF", ok, f"HTTP {response.status_code}", severity="Medium"))
-    rows.append({**_row("EX-04", "Export", "full", "P&L PDF figures vs Tally", "PDF text matches Tally", False,
-                       "BLOCKED: no PDF text extraction library installed (pypdf)", severity="Medium"), "status": "BLOCKED"})
+    import io
+    from pypdf import PdfReader
+
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.content)).pages) if ok else ""
+    pdf_amounts = {value for raw in _NUMBER_RE.findall(pdf_text) if (value := _decimal(raw)) is not None}
+    expected_pdf_amounts = {Decimal("7410000.00"), Decimal("519053.47")}
+    pdf_matches = expected_pdf_amounts <= pdf_amounts and "Sales Accounts" in pdf_text
+    rows.append(_row("EX-04", "Export", "full", "P&L PDF figures vs Tally", "PDF text matches Tally", pdf_matches,
+                     "" if pdf_matches else "PDF is missing the recorded sales or net-loss figure", severity="Medium"))
     return rows
 
 

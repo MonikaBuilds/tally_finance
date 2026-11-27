@@ -119,6 +119,9 @@ async def test_unauthorized_tool_is_blocked(
         lambda user_id, tool_name: False,
     )
 
+    # Permission denial is a unit test; do not query MySQL for its label.
+    monkeypatch.setattr(executor, "get_required_permission", lambda tool_name: "banking")
+
     result = await execute_tool(
         "get_bank_balance",
         {},
