@@ -296,8 +296,7 @@ async def _load_profit_loss_summary(
     expense_lines = [
         line
         for line in (
-            lines["purchase_accounts"],
-            lines["direct_expenses"],
+            lines.get("cost_of_sales") or lines["purchase_accounts"],
             lines["indirect_expenses"],
         )
         if line and line.get("amount") is not None
@@ -516,7 +515,7 @@ async def get_overdue_invoices_tool(
 
     overdue = [
         invoice
-        for invoice in pending
+        for invoice in (pending.get("invoices") or [])
         if invoice.get("overdue_days", 0) > 0
     ]
 
@@ -4777,13 +4776,15 @@ async def get_tax_liability_tool(
         gst_data = gst_result.get("data", {}) or {}
 
     gst_input = float(
-        gst_data.get("gst_input", 0)
+        gst_data.get("total_input_gst", 0)
+        or gst_data.get("gst_input", 0)
         or gst_data.get("input_tax", 0)
         or 0
     )
 
     gst_output = float(
-        gst_data.get("gst_output", 0)
+        gst_data.get("total_output_gst", 0)
+        or gst_data.get("gst_output", 0)
         or gst_data.get("output_tax", 0)
         or 0
     )

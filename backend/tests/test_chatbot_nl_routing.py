@@ -19,6 +19,25 @@ def _tool(result):
     return result.get("tool_name") if isinstance(result, dict) else result
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Compare this month's revenue with last month.",
+        "Compare this month's revenue with last month",
+        "compare this month's expenses with last month",
+        "Compare revenue this month with last month",
+        "compare revenue this month vs last month",
+    ],
+)
+def test_month_comparison_phrasings_all_reach_the_comparison_tool(query):
+    """
+    The possessive form ("this month's revenue") is how people actually
+    write it. It used to fall through to the single-period revenue tool,
+    which answered for one month instead of comparing two.
+    """
+    assert _tool(detect_local_intent(query)) == "get_period_comparison"
+
+
 LOCAL_ROUTES = [
     # Day Book
     ("Show the day book for 01-04-2025", "get_day_book"),

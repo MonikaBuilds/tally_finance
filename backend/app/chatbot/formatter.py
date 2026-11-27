@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 
 
 def _format_period(from_date: str | None, to_date: str | None) -> str:
@@ -57,6 +58,44 @@ def format_indian_currency(value) -> str:
     prefix = "-₹" if negative else "₹"
 
     return f"{prefix}{formatted}"
+
+
+def _quantity_number(value):
+    """Numeric part of a Tally quantity: "67 NOS" -> 67, "-3 NOS" -> -3."""
+    if not value:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
+    if not match:
+        return None
+    try:
+        return float(match.group())
+    except ValueError:
+        return None
+
+
+def _stock_value_text(value, quantity=None) -> str:
+    """
+    Present a Tally stock value the way Tally itself shows it.
+
+    Tally's XML export negates inventory values even for ordinary
+    positive stock, while the Tally screen and the Profit & Loss
+    Closing Stock line show that same figure positive. The sign that
+    actually matters is the one on the quantity, which is how the
+    inventory parsers already decide it: negative quantity means
+    genuinely negative stock, otherwise the value is a positive
+    holding.
+    """
+    if value in (None, ""):
+        return "Not available"
+    try:
+        amount = float(str(value).replace(",", "").strip())
+    except ValueError:
+        return str(value)
+
+    quantity_number = _quantity_number(quantity)
+    if quantity_number is not None and quantity_number < 0:
+        return format_indian_currency(-abs(amount))
+    return format_indian_currency(abs(amount))
 
 
 def format_tool_response(
@@ -215,6 +254,42 @@ def format_tool_response(
             f"bill(s) totaling "
             f"{format_indian_currency(total)}."
         )
+
+    if tool_name == "get_overdue_invoices":
+        invoices = data.get("invoices") or []
+
+        if not invoices:
+            return "No overdue invoices were found in Tally."
+
+        lines = [
+            f"You have {len(invoices)} overdue invoice(s) in Tally."
+        ]
+
+        for invoice in invoices[:20]:
+            party = invoice.get("party") or "Unknown party"
+            reference = (
+                invoice.get("bill_reference")
+                or invoice.get("voucher_number")
+                or "no reference"
+            )
+            amount = invoice.get("outstanding_amount")
+            days = invoice.get("overdue_days")
+
+            amount_text = (
+                format_indian_currency(abs(amount))
+                if isinstance(amount, (int, float))
+                else "amount not returned by Tally"
+            )
+            days_text = f"{days} days overdue" if days is not None else "overdue"
+
+            lines.append(
+                f"- {party} | {reference} | {amount_text} | {days_text}"
+            )
+
+        if len(invoices) > 20:
+            lines.append(f"... and {len(invoices) - 20} more.")
+
+        return "\n".join(lines)
 
     if tool_name == "get_revenue":
         revenue = data.get(
@@ -2025,11 +2100,7 @@ def format_tool_response(
 
                 val_text = ""
                 if closing_val:
-                    try:
-                        clean_v = float(str(closing_val).replace(",", "").strip())
-                        val_text = f" | Value: {format_indian_currency(clean_v)}"
-                    except ValueError:
-                        val_text = f" | Value: {closing_val}"
+                    val_text = f" | Value: {_stock_value_text(closing_val, closing_bal)}"
 
                 rate_text = f" @ {closing_rate}" if closing_rate else ""
                 lines.append(f"• {name}: {closing_bal}{rate_text}{val_text}")
@@ -2090,11 +2161,11 @@ def format_tool_response(
             ),
             (
                 f"Opening Value: "
-                f"{item.get('opening_value') or 'Not available'}"
+                f"{_stock_value_text(item.get('opening_value'), item.get('opening_balance'))}"
             ),
             (
                 f"Closing Value: "
-                f"{item.get('closing_value') or 'Not available'}"
+                f"{_stock_value_text(item.get('closing_value'), item.get('closing_balance'))}"
             ),
         ])
 
@@ -2112,7 +2183,7 @@ def format_tool_response(
                 f"{index}. "
                 f"{item.get('name', 'Unnamed Item')} | "
                 f"Qty: {item.get('closing_balance') or 'Not available'} | "
-                f"Value: {item.get('closing_value') or 'Not available'}"
+                f"Value: {_stock_value_text(item.get('closing_value'), item.get('closing_balance'))}"
             )
 
         return "\n".join(lines)
