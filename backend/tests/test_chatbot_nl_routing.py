@@ -54,10 +54,7 @@ LOCAL_ROUTES = [
     ("Show my closing stock", "get_stock_summary"),
     ("Inventory valuation", "get_stock_summary"),
     # Outstanding
-    pytest.param(
-        "Which invoices are pending?", "get_pending_invoices",
-        marks=pytest.mark.xfail(strict=True, reason="DEF-RT-01: built-in chat suggestion not routed locally (extra AI call)"),
-    ),
+    ("Which invoices are pending?", "get_pending_invoices"),
     # Cash flow
     ("Show cash flow for this year", "get_cash_flow_summary"),
     # Returns
@@ -132,14 +129,8 @@ AI_ROUTES = [
     ("Show every sales voucher with item details", {"get_sales_transactions"}),
     ("Show my monthly sales", {"get_financial_trends", "get_period_trend", "get_sales_transactions"}),
     ("How much did we spend last month?", {"get_expenses"}),
-    pytest.param(
-        "Which products sell the most?", {"get_top_selling_items"},
-        marks=pytest.mark.xfail(strict=True, reason="DEF-LLM-01: tool pre-selection omits get_top_selling_items"),
-    ),
-    pytest.param(
-        "What do we owe Apex Office Solutions?", {"get_ledger_balance", "get_party_outstanding_summary", "get_supplier_statement", "get_payables"},
-        marks=pytest.mark.xfail(strict=True, reason="DEF-LLM-02: 'owe' maps only to receivable tools"),
-    ),
+    ("Which products sell the most?", {"get_top_selling_items"}),
+    ("What do we owe Apex Office Solutions?", {"get_ledger_balance", "get_party_outstanding_summary", "get_supplier_statement", "get_payables"}),
     ("Show TDS deducted this year", {"get_tds_summary", "get_tds_transactions"}),
 ]
 

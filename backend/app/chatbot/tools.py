@@ -8,6 +8,7 @@ import time
 
 from app.tally.service import (
     fetch_stock_item_list,
+    fetch_stock_summary as fetch_tally_stock_summary,
     fetch_stock_movement as fetch_tally_stock_movement,
     fetch_stock_valuation,
 )
@@ -16,6 +17,7 @@ from app.tally.service import (
     fetch_profit_loss,
     fetch_trial_balance,
     fetch_balance_sheet,
+    fetch_balance_sheet_report,
     fetch_bill_allocations,
     fetch_bills_receivable,
     fetch_bills_payable,
@@ -308,7 +310,7 @@ async def _load_profit_loss_summary(
     )
 
     if native["nett_profit"] and native["nett_profit"].get("amount") is not None:
-        net_profit = native["nett_profit"]["amount"]
+        net_profit = abs(native["nett_profit"]["amount"])
     elif native["nett_loss"] and native["nett_loss"].get("amount") is not None:
         net_profit = -abs(native["nett_loss"]["amount"])
     else:
@@ -810,11 +812,13 @@ async def get_profit_loss_tool(
 
 async def get_trial_balance_tool(
     company_name: str | None = None,
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
 ) -> dict:
     report = await fetch_trial_balance(
         company_name=company_name,
-        to_date=to_date
+        to_date=to_date,
+        from_date=from_date,
     )
 
     rows = report.get("rows", [])
@@ -833,11 +837,40 @@ async def get_trial_balance_tool(
 
 async def get_balance_sheet_tool(
     company_name: str | None = None,
-    to_date: date | None = None
+    to_date: date | None = None,
+    from_date: date | None = None,
+    opening_difference_only: bool = False,
 ) -> dict:
+    if opening_difference_only:
+        report = await fetch_balance_sheet_report(
+            company_name=company_name, from_date=from_date, to_date=to_date,
+        )
+        if not report.get("liabilities") and not report.get("assets"):
+            return _no_data("Tally returned no Balance Sheet rows for this period.")
+        matches = [
+            {**row, "side": side}
+            for side in ("liabilities", "assets")
+            for row in report.get(side, [])
+            if (row.get("name") or "").strip().casefold() == "difference in opening balances"
+        ]
+        if len(matches) > 1:
+            return _no_data("Tally returned multiple opening-balance differences; please check the Balance Sheet.")
+        row = matches[0] if matches else None
+        result = _success({
+            "opening_difference_only": True,
+            "amount": row.get("amount") if row else 0.0,
+            "side": row.get("side") if row else None,
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
+        })
+        if row and row.get("derived"):
+            result["calculation_method"] = "application_aggregation"
+        return result
+
     report = await fetch_balance_sheet(
         company_name=company_name,
-        to_date=to_date
+        to_date=to_date,
+        from_date=from_date,
     )
 
     rows = report.get("rows", [])
@@ -1061,6 +1094,7 @@ async def get_day_book_tool(
     from_date: date | None = None,
     to_date: date | None = None,
     voucher_type: str | None = None,
+    voucher_types: list[str] | None = None,
 ) -> dict:
     """
     Return Day Book entries (vouchers) from Tally for the requested date or period.
@@ -1071,11 +1105,15 @@ async def get_day_book_tool(
         to_date=to_date,
     )
     rows = raw.get("rows", [])
-    if voucher_type:
-        clean_vt = voucher_type.strip().casefold()
+    selected_types = {
+        value.strip().casefold()
+        for value in (voucher_types or []) + ([voucher_type] if voucher_type else [])
+        if isinstance(value, str) and value.strip()
+    }
+    if selected_types:
         rows = [
-            r for r in rows
-            if (r.get("voucher_type") or "").casefold() == clean_vt
+            row for row in rows
+            if (row.get("voucher_type") or "").casefold() in selected_types
         ]
 
     return _success({
@@ -1092,6 +1130,7 @@ async def get_day_book_tool(
             else None
         ),
         "voucher_type": voucher_type,
+        "voucher_types": voucher_types,
     })
 
 
@@ -1619,43 +1658,20 @@ async def get_financial_trends_tool(
             ),
         )
 
-        revenue = 0.0
-        expenses = 0.0
-        net_profit = 0.0
+        def verified_value(result, key):
+            value = (result.get("data") or {}).get(key) if result.get("success") else None
+            return float(value) if value is not None else None
 
-        if revenue_result.get("success"):
-            revenue = float(
-                revenue_result.get("data", {}).get(
-                    "revenue",
-                    0,
-                )
-                or 0
-            )
-
-        if expense_result.get("success"):
-            expenses = float(
-                expense_result.get("data", {}).get(
-                    "expenses",
-                    0,
-                )
-                or 0
-            )
-
-        if profit_result.get("success"):
-            net_profit = float(
-                profit_result.get("data", {}).get(
-                    "net_profit",
-                    0,
-                )
-                or 0
-            )
+        revenue = verified_value(revenue_result, "revenue")
+        expenses = verified_value(expense_result, "expenses")
+        net_profit = verified_value(profit_result, "net_profit")
 
         periods.append({
             "from_date": period_from.isoformat(),
             "to_date": period_to.isoformat(),
-            "revenue": round(revenue, 2),
-            "total_expenses": round(expenses, 2),
-            "net_profit": round(net_profit, 2),
+            "revenue": round(revenue, 2) if revenue is not None else None,
+            "total_expenses": round(expenses, 2) if expenses is not None else None,
+            "net_profit": round(net_profit, 2) if net_profit is not None else None,
         })
 
         if current_month == 12:
@@ -2645,14 +2661,24 @@ async def get_stock_movement_tool(
     company_name: str | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
+    item_name: str | None = None,
 ) -> dict:
     """
     Return inventory movement rows from Tally's stock-movement report.
     """
+    matched_item = None
+    if item_name:
+        items = await fetch_stock_item_list(company_name=company_name)
+        resolution = resolve_name(item_name, [item["name"] for item in items if item.get("name")])
+        if resolution.status != "resolved":
+            return _no_data(f"Stock item '{item_name}' was not uniquely found in Tally.")
+        matched_item = resolution.value
+
     report = await fetch_tally_stock_movement(
         company_name=company_name,
         from_date=from_date,
         to_date=to_date,
+        **({"stock_item_name": matched_item} if matched_item else {}),
     )
 
     rows = report.get("rows", []) if isinstance(report, dict) else []
@@ -2662,6 +2688,7 @@ async def get_stock_movement_tool(
         )
 
     return _success({
+        "item_name": matched_item,
         "rows": rows,
         "count": report.get("count", len(rows)),
         "from_date": (
@@ -3882,66 +3909,26 @@ async def get_stock_summary_tool(
 async def get_stock_item_details_tool(
     item_name: str,
     company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
 ) -> dict:
-    """
-    Return details of one stock item from Tally.
-    """
-
-    stock_items = await fetch_stock_item_list(
-        company_name=company_name
-    )
-
-    if not stock_items:
-        return _no_data(
-            "No stock items were found in Tally."
-        )
-
-    requested_name = " ".join(
-        item_name.strip().split()
-    ).casefold()
-
-    # First try an exact match so we do not return
-    # the wrong product when names are similar.
-    for item in stock_items:
-        current_name = " ".join(
-            item.get("name", "").strip().split()
-        ).casefold()
-
-        if current_name == requested_name:
-            return _success({
-                "item": item
-            })
-
-    # If there is no exact match, check for a partial match.
-    # This helps when the user types only part of the product name.
-    partial_matches = []
-
-    for item in stock_items:
-        current_name = item.get(
-            "name",
-            ""
-        )
-
-        if requested_name in current_name.casefold():
-            partial_matches.append(item)
-
-    # Return the item directly when there is only one clear match.
-    if len(partial_matches) == 1:
-        return _success({
-            "item": partial_matches[0]
-        })
-
-    # If multiple items match, return them so the chatbot
-    # can ask the user which product they meant.
-    if len(partial_matches) > 1:
-        return _success({
-            "multiple_matches": True,
-            "matches": partial_matches,
-        })
-
-    return _no_data(
-        f"No stock item named '{item_name}' was found in Tally."
-    )
+    """One unambiguous item, using period balances when dates are requested."""
+    items = await fetch_stock_item_list(company_name=company_name)
+    resolution = resolve_name(item_name, [item["name"] for item in items if item.get("name")])
+    if resolution.status == "ambiguous":
+        return _success({"multiple_matches": True, "matches": [{"name": name} for name in resolution.matches or []]})
+    if resolution.status != "resolved":
+        return _no_data(f"No stock item named '{item_name}' was found in Tally.")
+    item = next(dict(item) for item in items if item["name"] == resolution.value)
+    if from_date or to_date:
+        report = await fetch_tally_stock_summary(company_name=company_name, from_date=from_date, to_date=to_date)
+        row = next((row for row in report.get("rows", []) if row.get("name", "").casefold() == resolution.value.casefold()), None)
+        if row is None:
+            return _no_data("Tally returned no balances for this item in the requested period.")
+        item.update({key: row.get(key) for key in ("opening_rate", "closing_rate", "opening_value", "closing_value")})
+        item.update(opening_balance=row.get("opening_quantity"), closing_balance=row.get("closing_quantity"))
+    return _success({"item": item, "from_date": from_date.isoformat() if from_date else None,
+                     "to_date": to_date.isoformat() if to_date else None})
 
 
 def _extract_quantity_number(value: str | None) -> float | None:
@@ -4055,12 +4042,20 @@ async def get_top_stock_items_tool(
         ),
     })
     
+async def get_ledger_list_tool(company_name: str | None = None) -> dict:
+    ledgers = await fetch_ledger_list(company_name=company_name)
+    return _success({"ledgers": ledgers, "count": len(ledgers)})
+
+
 async def get_ledger_balance_tool(
     ledger_name: str,
     company_name: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    balance_type: str = "closing",
 ) -> dict:
     """
-    Return the current balance of any Tally ledger.
+    Return the requested opening or closing balance of a Tally ledger.
     """
 
     ledger_name = (ledger_name or "").strip()
@@ -4100,33 +4095,25 @@ async def get_ledger_balance_tool(
             f"Ledger '{ledger_name}' was not found in Tally."
         )
 
-    # The ledger master already contains the current
-    # opening and closing balance in most cases.
-    opening_balance = float(
-        matched_ledger.get(
-            "opening_balance",
-            0,
-        )
-        or 0
-    )
+    if balance_type not in {"opening", "closing"}:
+        return _no_data("Balance type must be opening or closing.")
 
-    closing_balance = float(
-        matched_ledger.get(
-            "closing_balance",
-            0,
+    # Period balances must come from the ledger report for that period.
+    balances = matched_ledger
+    if from_date or to_date:
+        balances = await fetch_ledger_report(
+            ledger_name=matched_ledger["name"], company_name=company_name,
+            from_date=from_date, to_date=to_date,
         )
-        or 0
-    )
 
     return _success({
-        "ledger_name": matched_ledger.get(
-            "name"
-        ),
-        "parent": matched_ledger.get(
-            "parent"
-        ),
-        "opening_balance": opening_balance,
-        "closing_balance": closing_balance,
+        "ledger_name": matched_ledger["name"],
+        "parent": matched_ledger.get("parent"),
+        "opening_balance": to_optional_float(balances.get("opening_balance")),
+        "closing_balance": to_optional_float(balances.get("closing_balance")),
+        "balance_type": balance_type,
+        "from_date": from_date.isoformat() if from_date else None,
+        "to_date": to_date.isoformat() if to_date else None,
     })
 
 

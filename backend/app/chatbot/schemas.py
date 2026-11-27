@@ -24,6 +24,12 @@ class ChatRequest(BaseModel):
     )
 
 
+class ChatDownload(BaseModel):
+    url: str
+    filename: str
+    label: str
+
+
 class ChatResponse(BaseModel):
     success: bool
     answer: str
@@ -33,3 +39,4 @@ class ChatResponse(BaseModel):
     cached_at: str | None = None
     is_stale: bool = False
     session_id: str | None = None
+    downloads: list[ChatDownload] = Field(default_factory=list)

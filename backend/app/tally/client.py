@@ -256,29 +256,43 @@ class TallyClient:
             req_timeout = httpx.Timeout(timeout=timeout, connect=conn_timeout, read=timeout)
 
             try:
-                if self._shared_client is not None:
-                    response = await self._shared_client.post(
-                        self.base_url,
-                        content=xml_payload,
-                        headers={
-                            "Content-Type": "text/xml",
-                        },
-                        timeout=req_timeout,
-                    )
+                # Tally sometimes closes an idle keep-alive connection without
+                # a response. Retry one read-only export on a fresh connection
+                # before opening the unavailable circuit for all other reports.
+                read_only_export = bool(re.search(
+                    r"<TALLYREQUEST>\s*Export(?:\s+Data)?\s*</TALLYREQUEST>",
+                    xml_payload, flags=re.IGNORECASE,
+                ))
+                for attempt in range(2):
+                    try:
+                        if self._shared_client is not None:
+                            response = await self._shared_client.post(
+                                self.base_url,
+                                content=xml_payload,
+                                headers={
+                                    "Content-Type": "text/xml",
+                                },
+                                timeout=req_timeout,
+                            )
 
-                else:
-                    # This fallback is mainly used by tests or scripts
-                    # where the FastAPI lifespan has not created the shared client.
-                    async with httpx.AsyncClient(
-                        timeout=req_timeout
-                    ) as client:
-                        response = await client.post(
-                            self.base_url,
-                            content=xml_payload,
-                            headers={
-                                "Content-Type": "text/xml",
-                            },
-                        )
+                        else:
+                            # This fallback is mainly used by tests or scripts
+                            # where the FastAPI lifespan has not created the shared client.
+                            async with httpx.AsyncClient(
+                                timeout=req_timeout
+                            ) as client:
+                                response = await client.post(
+                                    self.base_url,
+                                    content=xml_payload,
+                                    headers={
+                                        "Content-Type": "text/xml",
+                                    },
+                                )
+
+                        break
+                    except httpx.RemoteProtocolError:
+                        if attempt or not read_only_export:
+                            raise
 
                 response.raise_for_status()
 

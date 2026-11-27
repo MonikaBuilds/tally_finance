@@ -1,3 +1,4 @@
+from app.chatbot.monthly import get_monthly_summary_tool
 from app.chatbot.tools import get_ledger_transactions_tool, get_low_selling_items_tool, get_overdue_invoices_tool, get_top_selling_items_tool
 from app.chatbot.tools import (
     get_cash_flow_summary_tool,
@@ -24,6 +25,7 @@ from app.chatbot.tools import (
     get_top_payables_tool,
     get_financial_summary_tool,
     get_ledger_report_tool,
+    get_ledger_list_tool,
     get_day_book_tool,
     get_cash_balance_tool,
     get_bank_balance_tool,
@@ -86,6 +88,7 @@ from app.chatbot.tools import (
 
 
 TOOL_FUNCTIONS = {
+    "get_monthly_summary": get_monthly_summary_tool,
     "get_receivables": get_receivables_tool,
     "get_period_comparison": get_period_comparison_tool,
     "get_payables": get_payables_tool,
@@ -112,6 +115,7 @@ TOOL_FUNCTIONS = {
     "get_top_payables": get_top_payables_tool,
     "get_financial_summary": get_financial_summary_tool,
     "get_ledger_report": get_ledger_report_tool,
+    "get_ledger_list": get_ledger_list_tool,
     "get_day_book": get_day_book_tool,
     "get_cash_balance": get_cash_balance_tool,
     "get_bank_balance": get_bank_balance_tool,
@@ -174,6 +178,21 @@ TOOL_FUNCTIONS = {
 
 
 TOOL_DEFINITIONS = [
+    {
+        "type": "function", "name": "get_monthly_summary",
+        "description": "Month-wise sales, purchases, expenses, or net profit. With no dates, use the company's active financial year. Unverified native profit months remain blank.",
+        "parameters": {"type": "object", "properties": {
+            "company_name": {"type": "string"}, "from_date": {"type": "string"}, "to_date": {"type": "string"},
+            "metric": {"type": "string", "enum": ["revenue", "purchases", "expenses", "net_profit"]},
+        }},
+    },
+    {
+        "type": "function", "name": "get_ledger_list",
+        "description": "List all ledgers available in the selected Tally company.",
+        "parameters": {"type": "object", "properties": {
+            "company_name": {"type": "string"},
+        }},
+    },
     {
         "type": "function",
         "name": "get_receivables",
@@ -483,6 +502,7 @@ TOOL_DEFINITIONS = [
         "parameters": {
             "type": "object",
             "properties": {
+                "from_date": {"type": "string", "description": "Optional start date in DD-MM-YYYY format."},
                 "company_name": {
                     "type": "string",
                     "description": "Optional Tally company name."
@@ -508,6 +528,8 @@ TOOL_DEFINITIONS = [
         "parameters": {
             "type": "object",
             "properties": {
+                "from_date": {"type": "string", "description": "Optional start date in DD-MM-YYYY format."},
+                "opening_difference_only": {"type": "boolean", "description": "Return only the difference in opening balances."},
                 "company_name": {
                     "type": "string",
                     "description": "Optional Tally company name."
@@ -642,6 +664,10 @@ TOOL_DEFINITIONS = [
             "to_date": {
                 "type": "string",
                 "description": "End date in DD-MM-YYYY format."
+            },
+            "voucher_types": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Optional set of voucher types to include (e.g. Receipt and Payment)."
             },
             "voucher_type": {
                 "type": "string",
@@ -1457,6 +1483,8 @@ TOOL_DEFINITIONS = [
     "parameters": {
         "type": "object",
         "properties": {
+            "from_date": {"type": "string"},
+            "to_date": {"type": "string"},
             "item_name": {
                 "type": "string",
                 "description": (
@@ -2118,6 +2146,9 @@ TOOL_DEFINITIONS.extend([
         "parameters": {
             "type": "object",
             "properties": {
+                "from_date": {"type": "string", "description": "Optional start date in DD-MM-YYYY format."},
+                "to_date": {"type": "string", "description": "Optional end date in DD-MM-YYYY format."},
+                "balance_type": {"type": "string", "enum": ["opening", "closing"]},
                 "ledger_name": {"type": "string"},
                 "company_name": {"type": "string"},
             },
@@ -2180,6 +2211,6 @@ TOOL_DEFINITIONS.extend([
         "type": "function",
         "name": "get_stock_movement",
         "description": "Return the stock movement voucher rows from Tally for an optional period.",
-        "parameters": {"type": "object", "properties": _period_company_properties()},
+        "parameters": {"type": "object", "properties": _period_company_properties({"item_name": {"type": "string"}})},
     },
 ])

@@ -16,6 +16,11 @@ from app.chatbot.schemas import (
     ChatResponse,
 )
 from app.chatbot.service import process_chat_message
+from app.chatbot.exports import load_export, export_excel
+from app.security.permissions import can_execute_tool
+from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
+from uuid import UUID
 from app.security.user_store import get_user_organization_id
 from app.security.auth import (
     UserContext,
@@ -85,7 +90,7 @@ async def chat(
         )
 
         # Resolve the organization from the validated token (or DB fallback).
-        resolved_org = current_user.organization_id or get_user_organization_id(current_user.user_id) or "default"
+        resolved_org = str(current_user.organization_id or get_user_organization_id(current_user.user_id) or "default") or "default"
         org_id = str(resolved_org)
 
         # Process the user's financial question only after
@@ -115,6 +120,7 @@ async def chat(
             cached_at=result.get("cached_at"),
             is_stale=result.get("is_stale", False),
             session_id=result.get("session_id") or request.session_id,
+            downloads=result.get("downloads") or [],
         )
     except HTTPException:
         # Preserve expected API errors such as
@@ -139,3 +145,20 @@ async def chat(
             await user_concurrency_limiter.release(
                 current_user.user_id
             )
+
+@router.get("/chat/exports/{token}.xlsx")
+async def download_chat_excel(token: UUID, company_name: str, current_user: UserContext = Depends(get_current_user)):
+    company = authorize_company(user=current_user, requested_company=company_name)
+    org = str(current_user.organization_id or get_user_organization_id(current_user.user_id) or "default")
+    record = await load_export(current_user.user_id, org, company, str(token))
+    if record is None:
+        raise HTTPException(status_code=410, detail="This Excel snapshot has expired or is unavailable in this account/company. Ask for the report again.")
+    for included_company in (record.get("arguments") or {}).get("company_names", []):
+        authorize_company(user=current_user, requested_company=included_company)
+    permitted = await run_in_threadpool(can_execute_tool, current_user.user_id, record["tool_name"])
+    if not permitted:
+        raise HTTPException(status_code=403, detail="Your current permissions do not allow this report export.")
+    content = await run_in_threadpool(export_excel, record)
+    filename = "chat_" + record["tool_name"].removeprefix("get_") + ".xlsx"
+    return Response(content=content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})

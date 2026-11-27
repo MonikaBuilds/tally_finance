@@ -1,5 +1,7 @@
 import re
 
+from app.chatbot.context import is_follow_up
+
 from calendar import monthrange
 from datetime import date
 
@@ -70,6 +72,22 @@ INVALID_LEDGER_NAMES = {
 def _clean_ledger_name(name: str) -> str:
     if not name:
         return ""
+    # Strip a trailing date range before resolving the ledger name.
+    months = ("january|february|march|april|may|june|july|august|"
+              "september|october|november|december")
+    date_start = (
+        r"(?:\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{2}-\d{2}|"
+        r"\d{1,2}(?:st|nd|rd|th)?\s+(?:" + months + r")\b|"
+        r"(?:" + months + r")\b|(?:this|last|current|previous)\s+"
+        r"(?:month|quarter|year|financial\s+year|fy)\b|today\b|yesterday\b|"
+        r"(?:fy|financial\s+year)\s*\d)"
+    )
+    name = re.split(
+        r"\s+(?:from|between|on|as\s+on|as\s+of|for|in)\s+(?="
+        + date_start + r")|\s+(?=(?:today|yesterday|(?:this|last|current|previous)"
+        r"\s+(?:month|quarter|year|financial\s+year|fy))\b)",
+        name, maxsplit=1, flags=re.IGNORECASE,
+    )[0]
     # Strip instructions like 'with date, voucher type...', 'with details...', 'ledger'
     name = re.sub(
         r"\s+with\s+(?:date|voucher|amount|details|entries).*$",
@@ -129,6 +147,108 @@ def detect_local_intent(
     if not text:
         return None
 
+    if re.match(r"^(?:what(?:'s|\s+is)|how\s+is|tell\s+me|show(?:\s+me)?)\s+(?:the\s+)?weather\b", text):
+        return "unsupported"
+
+    if re.search(r"\b(?:export|download|save)\b.*\b(?:excel|xlsx|spreadsheet)\b", text):
+        return "follow_up_export_excel"
+
+    monthly = bool(re.search(r"\b(?:monthly|month[- ]?wise|month[- ]by[- ]month)\b|\bby\s+month\b", text))
+    if monthly:
+        metric = ("net_profit" if re.search(r"\b(?:profit|loss)\b", text)
+                  else "expenses" if re.search(r"\b(?:expenses?|spending|costs?)\b", text)
+                  else "purchases" if re.search(r"\bpurchases?\b", text)
+                  else "revenue" if re.search(r"\b(?:sales?|revenue|turnover)\b", text) else None)
+        if metric:
+            return {"tool_name": "get_monthly_summary", "arguments": {"metric": metric}}
+
+    if is_follow_up(message):
+        return "follow_up_period"
+
+    if re.search(r"^(?:show|what\s+is|what\s+are)\s+(?:me\s+)?its\s+(?:stock\s+)?(?:quantity|movement|movements)\b", text):
+        return "follow_up_stock"
+
+    if re.search(r"\breceipts?\s+and\s+payments?\b|\bpayments?\s+and\s+receipts?\b", text):
+        return {"tool_name": "get_day_book", "arguments": {
+            "voucher_types": ["Receipt", "Payment"],
+        }}
+
+    if re.search(r"^who\s+owes?\s+(?:us|me)\b", text):
+        return "get_receivables"
+
+    if re.search(r"\bwhom?\s+(?:do\s+)?(?:i|we)\s+(?:need\s+to\s+)?pay\b", text):
+        return "get_payables"
+
+    owed_party = re.search(r"\bwhat\s+(?:do\s+)?(?:we|i)\s+owe\s+(.+?)\s*$", message, re.IGNORECASE)
+    if owed_party:
+        return {"tool_name": "get_party_outstanding_summary", "arguments": {
+            "party_name": _clean_ledger_name(owed_party.group(1)),
+        }}
+
+    if (re.search(r"\breceivables?\b", text) and re.search(r"\bpayables?\b", text)
+            and not re.search(r"\b(?:compare|comparison|versus|vs)\b", text)):
+        return "get_outstanding_summary"
+
+    if re.search(r"\b(?:ageing|aging|aged)\b", text):
+        if re.search(r"\b(?:receivables?|debtors?|customers?)\b", text):
+            return "get_aged_receivables"
+        if re.search(r"\b(?:payables?|creditors?|suppliers?)\b", text):
+            return "get_aged_payables"
+
+    if re.search(r"\boverdue\b", text):
+        if re.search(r"\b(?:receivables?|debtors?|customers?)\b", text):
+            return "get_overdue_receivables"
+        if re.search(r"\b(?:payables?|creditors?|suppliers?)\b", text):
+            return "get_overdue_payables"
+
+    if re.search(r"\b(?:show|list|get|display)\s+(?:me\s+)?(?:all\s+)?bank\s+(?:transactions?|entries|statement)\b", text):
+        return "get_bank_transactions"
+
+    if re.search(r"\b(?:show|list|get|display)\s+(?:me\s+)?all\s+(?:transactions?|vouchers?|entries)\s+(?:from|between|on|for)\s+(?:\d|fy\b|this\b|last\b|today\b|yesterday\b)", text):
+        return "get_day_book"
+
+    for noun, tool in (("receipts?", "get_receipt_transactions"),
+                       ("payments?", "get_payment_transactions"),
+                       ("sales", "get_sales_transactions"),
+                       ("purchases?", "get_purchase_transactions")):
+        if re.search(
+            r"^(?:show|list|get|display)\s+(?:me\s+)?(?:my\s+|all\s+)?"
+            + noun + r"(?:\s+(?:for|from|in)\s+(?:\d|fy\b|this\b|last\b|current\b|previous\b|today\b|yesterday\b|"
+            r"january\b|february\b|march\b|april\b|may\b|june\b|july\b|august\b|september\b|october\b|november\b|december\b).*)?[.?]?$",
+            text,
+        ):
+            return tool
+
+    # These common requests need no model selection.
+    if re.fullmatch(
+        r"(?:(?:please\s+)?(?:show|list|get|display)\s+(?:me\s+)?)?"
+        r"(?:(?:all|the|my|our)\s+)*ledgers?(?:\s+list)?[.?!]?", text,
+    ):
+        return "get_ledger_list"
+
+    if re.search(r"\bdifference\s+in\s+opening\s+balances?\b", text):
+        return {"tool_name": "get_balance_sheet",
+                "arguments": {"opening_difference_only": True}}
+
+    if re.fullmatch(
+        r"(?:(?:please\s+)?(?:show|get|display|what\s+is)\s+)?"
+        r"(?:me\s+)?(?:(?:its|the|my|our)\s+)?opening\s+balance[.?!]?", text,
+    ):
+        return "follow_up_opening_balance"
+
+    if re.search(r"\b(?:invoices?|bills?)\s+(?:are\s+)?pending\b", text):
+        return "get_pending_invoices"
+
+    opening_match = re.search(
+        r"\bopening\s+balance\s+(?:of|for)\s+(.+?)\s*$", message, re.IGNORECASE,
+    )
+    if opening_match:
+        ledger_name = _clean_ledger_name(opening_match.group(1))
+        if ledger_name and ledger_name.lower() not in INVALID_LEDGER_NAMES:
+            return {"tool_name": "get_ledger_balance", "arguments": {
+                "ledger_name": ledger_name, "balance_type": "opening",
+            }}
+
     # --------------------------------------------------
     # CORE FINANCIAL REPORTS (P&L, Balance Sheet, Trial Balance)
     # --------------------------------------------------
@@ -146,6 +266,9 @@ def detect_local_intent(
             flags=re.IGNORECASE,
         )
     )
+
+    if is_comparison and re.search(r"\bprofit\s*(?:and|&)\s*loss\b|\bp&l\b", text):
+        return {"tool_name": "get_period_comparison", "arguments": {"metric": "net_profit"}}
 
     if not is_comparison and re.search(
         r"\b(profit\s+and\s+loss|profit\s*&\s*loss|\bp&l\b|p\s+and\s+l)\b",
@@ -231,7 +354,7 @@ def detect_local_intent(
     )
 
     if customer_match:
-        party_name = customer_match.group(1).strip()
+        party_name = _clean_ledger_name(customer_match.group(1))
 
         # Remove normal punctuation from the end
         # of the user's question.
@@ -257,7 +380,7 @@ def detect_local_intent(
     )
 
     if supplier_match:
-        party_name = supplier_match.group(1).strip()
+        party_name = _clean_ledger_name(supplier_match.group(1))
         party_name = party_name.rstrip(" ?")
 
         if party_name:
@@ -319,7 +442,7 @@ def detect_local_intent(
         )
 
         return {
-            "tool_name": "get_top_customers",
+            "tool_name": ("get_top_receivables" if re.search(r"\b(?:owes?|outstanding|receivables?)\b", text) else "get_top_customers"),
             "arguments": {
                 "limit": limit,
             },
@@ -598,6 +721,25 @@ def detect_local_intent(
     ):
         return "get_overdue_invoices"
     
+    # Voucher families must win over generic ledger and item-detail wording.
+    voucher_family = re.search(
+        r"\b(journal|contra)\s+(?:entries|vouchers?|transactions?)\b",
+        message, re.IGNORECASE,
+    )
+    if voucher_family:
+        return {"tool_name": "get_day_book", "arguments": {
+            "voucher_type": voucher_family.group(1).title(),
+        }}
+
+    for family, tool in (("sales?", "get_sales_transactions"),
+                         ("purchases?", "get_purchase_transactions")):
+        if re.search(
+            r"\b(?:" + family + r")\s+(?:entries|vouchers?|transactions?)\b|"
+            r"\b(?:list|show)\s+(?:all|every)\s+(?:" + family + r")(?!\s+by)\b",
+            message, re.IGNORECASE,
+        ):
+            return tool
+
     # Stock item details are deterministic when the user
     # explicitly provides the product or stock item name.
     stock_details_match = re.search(
@@ -609,7 +751,7 @@ def detect_local_intent(
     )
 
     if stock_details_match:
-        item_name = stock_details_match.group(1).strip().rstrip(". ?")
+        item_name = _clean_ledger_name(stock_details_match.group(1))
 
         if item_name and item_name.lower() not in INVALID_LEDGER_NAMES:
             return {
@@ -842,6 +984,12 @@ def detect_local_intent(
             },
         }
         
+    movement_match = re.search(r"\b(?:stock|inventory|item)\s+movement\s+(?:of|for)\s+(.+)$", message, re.IGNORECASE)
+    if movement_match:
+        item_name = _clean_ledger_name(movement_match.group(1))
+        if item_name and item_name.lower() not in INVALID_LEDGER_NAMES:
+            return {"tool_name": "get_stock_movement", "arguments": {"item_name": item_name}}
+
     # Stock movement
     if re.search(
         r"\b("
@@ -1046,8 +1194,8 @@ def detect_local_intent(
         # Pending invoices
         (
             r"\b("
-            r"pending invoice|"
-            r"pending invoices"
+            r"pending invoices?|"
+            r"pending bills?"
             r")\b",
             "get_pending_invoices",
         ),

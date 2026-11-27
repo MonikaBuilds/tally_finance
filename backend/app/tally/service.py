@@ -242,6 +242,7 @@ async def fetch_balance_sheet(
     response = await client.send_xml(
         build_balance_sheet_request(
             company_name=company_name,
+            from_date=from_date,
             to_date=to_date,
         )
     )

@@ -1,9 +1,15 @@
+import re
+from starlette.concurrency import run_in_threadpool
+from app.security.permissions import can_execute_tool
+from app.chatbot.context import follow_up_selection, FOLLOW_UP
+from app.chatbot.exports import save_export, load_export
 from app.chatbot.executor import execute_tool
 from app.chatbot.formatter import format_tool_response
 from app.chatbot.intent_router import detect_local_intent
 from app.chatbot.gemini_client import select_tool
 from app.chatbot.date_resolver import (
     resolve_date_range,
+    InvalidDateRange,
     resolve_comparison_ranges,
     get_current_financial_year_range,
 )
@@ -33,6 +39,11 @@ UNSUPPORTED_MESSAGE = (
 # today, this month, last month or a custom period.
 DATE_AWARE_TOOLS = {
     "get_day_book",
+    "get_monthly_summary",
+    "get_stock_item_details",
+    "get_trial_balance",
+    "get_balance_sheet",
+    "get_ledger_balance",
     "get_revenue",
     "get_expenses",
     "get_net_profit",
@@ -251,11 +262,60 @@ async def process_chat_message(
     try:
         # First try the fast local router.
         # This avoids calling Gemini for simple and common queries.
-        local_intent = detect_local_intent(
-            cleaned_message
-        )
+        local_intent = detect_local_intent(cleaned_message)
+        if local_intent == "unsupported":
+            return {"success": False, "source": None, "intent": "unsupported", "answer": UNSUPPORTED_MESSAGE,
+                    "data": None, "session_id": session_id}
+        session = await get_session_state(user_id, company_name, session_id) if user_id or session_id else None
 
-        if local_intent == "follow_up_show_all_items":
+        follow_match = FOLLOW_UP.match(cleaned_message)
+        if (session and session.get("last_tool") == "get_monthly_summary" and follow_match
+                and follow_match.group(1).strip(" ?.!").casefold() in {"sales", "revenue", "purchases", "expenses", "profit", "net profit"}):
+            local_intent = "follow_up_period"
+
+        if local_intent == "follow_up_export_excel":
+            session = session or await get_session_state(user_id, company_name, session_id)
+            download = (session or {}).get("last_export")
+            if not download:
+                return {"success": False, "source": "validation", "intent": "export_excel",
+                        "answer": "Ask for a financial or inventory report first, then export it to Excel.", "data": None, "session_id": session_id}
+            token = download["url"].split("/")[-1].split(".")[0]
+            record = await load_export(user_id, org_id, company_name, token)
+            if not record:
+                return {"success": False, "source": "validation", "intent": "export_excel",
+                        "answer": "The previous report snapshot has expired. Ask for that report again to export it.", "data": None, "session_id": session_id}
+            included = (record.get("arguments") or {}).get("company_names", [])
+            permitted_companies = {name.casefold() for name in allowed_companies or []}
+            if any(name.casefold() not in permitted_companies for name in included):
+                return {"success": False, "source": "authorization", "intent": "export_excel",
+                        "answer": "Your current company access does not allow this report export.", "data": None, "session_id": session_id}
+            permitted = await run_in_threadpool(can_execute_tool, user_id, record["tool_name"])
+            if not permitted:
+                return {"success": False, "source": "authorization", "intent": "export_excel",
+                        "answer": "Your current permissions do not allow this report export.", "data": None, "session_id": session_id}
+            return {"success": True, "source": record["result"].get("source", "tally"), "intent": "export_excel",
+                    "answer": "Your Excel report is ready. Use the download button below.",
+                    "downloads": [download], "data": None, "session_id": session_id}
+
+        if local_intent == "follow_up_period":
+            session = session or await get_session_state(user_id, company_name, session_id)
+            try:
+                selection = follow_up_selection(cleaned_message, session, DATE_AWARE_TOOLS)
+            except InvalidDateRange as exc:
+                return {"success": False, "source": "validation", "intent": "invalid_date", "answer": str(exc), "data": None, "session_id": session_id}
+            if not selection:
+                return {"success": False, "source": "validation", "intent": "follow_up",
+                        "answer": "Please ask for a report first, or specify the report, entity and period for this follow-up.", "data": None, "session_id": session_id}
+
+        elif local_intent == "follow_up_stock":
+            session = session or await get_session_state(user_id, company_name, session_id)
+            item = (session or {}).get("last_arguments", {}).get("item_name")
+            if not item:
+                return {"success": False, "source": "validation", "intent": "follow_up", "answer": "Please name the stock item first.", "data": None, "session_id": session_id}
+            selection = {"tool_name": "get_stock_movement" if "movement" in cleaned_message.lower() else "get_stock_item_details",
+                         "arguments": {"item_name": item, **((session or {}).get("last_period") or {})}, "error": None}
+
+        elif local_intent == "follow_up_show_all_items":
             session = await get_session_state(user_id, company_name, session_id)
             if session and session.get("last_data") and session.get("last_tool") in ("get_profit_loss", "get_trial_balance", "get_balance_sheet"):
                 tool_name = session["last_tool"]
@@ -266,6 +326,7 @@ async def process_chat_message(
                     "intent": tool_name,
                     "answer": answer,
                     "data": session["last_data"],
+                    "downloads": [session["last_export"]] if session.get("last_export") else [],
                     "session_id": session_id,
                 }
             elif session and session.get("last_tool"):
@@ -284,12 +345,29 @@ async def process_chat_message(
                     "session_id": session_id,
                 }
 
+        elif local_intent == "follow_up_opening_balance":
+            session = await get_session_state(user_id, company_name, session_id)
+            if not session or not session.get("last_entity"):
+                return {
+                    "success": False, "source": "validation", "intent": "follow_up",
+                    "answer": "Please specify the ledger or bank account whose opening balance you want.",
+                    "data": None, "session_id": session_id,
+                }
+            selection = {
+                "tool_name": "get_ledger_balance",
+                "arguments": {
+                    **(session.get("last_period") or {}),
+                    "ledger_name": session["last_entity"], "balance_type": "opening",
+                },
+                "error": None,
+            }
+
         elif local_intent == "follow_up_entity_transactions":
             session = await get_session_state(user_id, company_name, session_id)
             if session and session.get("last_entity"):
                 selection = {
-                    "tool_name": "get_ledger_transactions",
-                    "arguments": {"ledger_name": session["last_entity"]},
+                    "tool_name": "get_stock_movement" if session.get("last_arguments", {}).get("item_name") else "get_ledger_transactions",
+                    "arguments": {("item_name" if session.get("last_arguments", {}).get("item_name") else "ledger_name"): session["last_entity"], **(session.get("last_period") or {})},
                     "error": None,
                 }
             else:
@@ -307,7 +385,7 @@ async def process_chat_message(
             if session and session.get("last_entity"):
                 selection = {
                     "tool_name": "get_ledger_balance",
-                    "arguments": {"ledger_name": session["last_entity"]},
+                    "arguments": {"ledger_name": session["last_entity"], **(session.get("last_period") or {})},
                     "error": None,
                 }
             else:
@@ -496,16 +574,28 @@ async def process_chat_message(
     # Add from_date and to_date when the selected
     # financial tool supports period-wise queries.
     if tool_name in DATE_AWARE_TOOLS:
-        resolved_range = resolve_date_range(
-            cleaned_message
-        )
+        try:
+            resolved_range = None if local_intent in ("follow_up_period", "follow_up_stock") else resolve_date_range(cleaned_message)
+        except InvalidDateRange as exc:
+            return {
+                "success": False, "source": "validation", "intent": "invalid_date",
+                "answer": str(exc), "data": None, "session_id": session_id,
+            }
+
+        if (not resolved_range and local_intent not in ("follow_up_period", "follow_up_stock")
+                and re.match(r"^(?:now|also|only|and|what\s+about|how\s+about)\b", cleaned_message, re.IGNORECASE) and session):
+            for key, value in (session.get("last_period") or {}).items():
+                if value and key not in arguments:
+                    arguments[key] = value
 
         if resolved_range:
-            arguments["from_date"] = (
-                resolved_range.from_date.strftime(
-                    "%d-%m-%Y"
-                )
-            )
+            # A single-date Balance Sheet or Trial Balance is an as-of
+            # request; starting it on that day would change its balances.
+            if (tool_name in {"get_trial_balance", "get_balance_sheet"}
+                    and resolved_range.from_date == resolved_range.to_date):
+                arguments.pop("from_date", None)
+            else:
+                arguments["from_date"] = resolved_range.from_date.strftime("%d-%m-%Y")
 
             arguments["to_date"] = (
                 resolved_range.to_date.strftime(
@@ -516,9 +606,13 @@ async def process_chat_message(
     # Comparison queries need two separate periods,
     # so they use four date arguments.
     if tool_name == COMPARISON_TOOL:
-        comparison = resolve_comparison_ranges(
-            cleaned_message
-        )
+        try:
+            comparison = resolve_comparison_ranges(cleaned_message)
+        except InvalidDateRange as exc:
+            return {
+                "success": False, "source": "validation", "intent": "invalid_date",
+                "answer": str(exc), "data": None, "session_id": session_id,
+            }
 
         if comparison:
             arguments["first_from_date"] = (
@@ -549,9 +643,13 @@ async def process_chat_message(
     # current/previous argument names aligned with the comparison
     # resolver used by the local intent path.
     if tool_name == "get_period_trend":
-        comparison = resolve_comparison_ranges(
-            cleaned_message
-        )
+        try:
+            comparison = resolve_comparison_ranges(cleaned_message)
+        except InvalidDateRange as exc:
+            return {
+                "success": False, "source": "validation", "intent": "invalid_date",
+                "answer": str(exc), "data": None, "session_id": session_id,
+            }
 
         if comparison:
             arguments["current_from_date"] = (
@@ -662,6 +760,15 @@ async def process_chat_message(
     tool_result = await execute_tool(**tool_kwargs)
 
     if not tool_result.get("success"):
+        try:
+            await save_session_state(user_id, arguments.get("company_name") or company_name, {
+                "last_tool": tool_name, "last_arguments": arguments,
+                "last_period": {k: arguments.get(k) for k in ("from_date", "to_date")},
+                "last_entity": next((arguments[k] for k in ("ledger_name", "party_name", "item_name") if arguments.get(k)), None),
+                "last_export": None,
+            }, session_id=session_id)
+        except Exception:
+            pass
         log_chat_event(
             request_id=request_id,
             event="tool_failed",
@@ -706,8 +813,21 @@ async def process_chat_message(
         source=tool_result.get("source", "tally"),
     )
 
+    data = tool_result.get("data") or {}
+    effective_company = arguments.get("company_name") or company_name
+    period = {key: arguments.get(key) or data.get(key) for key in ("from_date", "to_date")}
+    if tool_name in DATE_AWARE_TOOLS:
+        arguments.update({key: value for key, value in period.items() if value})
+    download = None
+    try:
+        download = await save_export(user_id, org_id, effective_company, tool_name, arguments, tool_result, answer)
+    except Exception:
+        pass
+
     entity = None
-    if "ledger_name" in arguments:
+    if "party_name" in arguments:
+        entity = arguments["party_name"]
+    elif "ledger_name" in arguments:
         entity = arguments["ledger_name"]
     elif "customer_name" in arguments:
         entity = arguments["customer_name"]
@@ -719,7 +839,7 @@ async def process_chat_message(
     try:
         await save_session_state(
             user_id=user_id,
-            company=company_name,
+            company=effective_company,
             session_id=session_id,
             state_data={
                 "last_tool": tool_name,
@@ -734,10 +854,8 @@ async def process_chat_message(
                 ),
                 "last_arguments": arguments,
                 "last_entity": entity,
-                "last_period": {
-                    "from_date": arguments.get("from_date"),
-                    "to_date": arguments.get("to_date"),
-                },
+                "last_export": download,
+                "last_period": period,
                 "last_answer": answer,
             },
         )
@@ -754,6 +872,7 @@ async def process_chat_message(
         ),
         "data_origin": tool_result.get("data_origin"),
         "calculation_method": calculation_method,
+        "downloads": [download] if download else [],
         "cached_at": tool_result.get("cached_at"),
         "is_stale": tool_result.get("is_stale", False),
         "session_id": session_id,

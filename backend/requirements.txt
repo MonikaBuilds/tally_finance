@@ -19,3 +19,5 @@ redis==8.1.0
 # tests
 pytest==9.1.1
 pytest-asyncio==1.4.0
+
+pypdf==7.2.0
